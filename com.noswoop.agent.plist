@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.noswoop.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BINPATH__</string>
+    </array>
+
+    <!-- Start at login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart if it exits unexpectedly -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Wait before restarting after crash -->
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/noswoop.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/noswoop.log</string>
+</dict>
+</plist>
