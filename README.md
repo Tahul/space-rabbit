@@ -46,5 +46,6 @@ Based on the technique from [InstantSpaceSwitcher](https://github.com/jurplel/In
 ## Known limitations
 
 - Trackpad swipe gestures still animate (they bypass the event tap)
+- While it skips apps present in Cmd+Tab list, it will still animate to first space when selecting Finder without opened windows, it's a native behavior we can't bypass
 - Cmd+Tab to fullscreen apps may briefly flicker
 - May break on future macOS updates (uses undocumented CGEvent fields)

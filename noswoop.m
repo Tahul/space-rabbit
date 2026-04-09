@@ -505,11 +505,19 @@ static CGSSpaceID find_space_for_pid(pid_t pid) {
         CFNumberGetValue(pidNum, kCFNumberSInt32Type, &winPid);
         if (winPid != pid) continue;
 
+        /* Only consider normal (layer 0), on-screen windows */
         CFNumberRef layerNum = CFDictionaryGetValue(win, CFSTR("kCGWindowLayer"));
         if (layerNum) {
             int32_t layer = 0;
             CFNumberGetValue(layerNum, kCFNumberSInt32Type, &layer);
             if (layer != 0) continue;
+        }
+
+        CFNumberRef onscreenNum = CFDictionaryGetValue(win, CFSTR("kCGWindowIsOnscreen"));
+        if (onscreenNum) {
+            int32_t onscreen = 0;
+            CFNumberGetValue(onscreenNum, kCFNumberSInt32Type, &onscreen);
+            if (!onscreen) continue;
         }
 
         CFNumberRef widNum = CFDictionaryGetValue(win, kCGWindowNumber);

@@ -10,7 +10,10 @@ LDFLAGS   = -framework CoreGraphics -framework CoreFoundation -framework Applica
 SRC       = noswoop.m
 BIN       = noswoop
 
-.PHONY: build install uninstall clean
+VERSION  ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+REPO      = tahul/noswoop
+
+.PHONY: build install uninstall clean release
 
 build: $(BIN)
 
@@ -37,3 +40,23 @@ uninstall:
 
 clean:
 	rm -f $(BIN)
+
+# Usage: make release V=0.3.0
+release:
+ifndef V
+	$(error Usage: make release V=x.y.z)
+endif
+	@echo "==> Tagging v$(V)..."
+	git tag v$(V)
+	git push origin main --tags
+	@echo "==> Fetching tarball SHA..."
+	$(eval SHA := $(shell curl -sL https://github.com/$(REPO)/archive/refs/tags/v$(V).tar.gz | shasum -a 256 | cut -d' ' -f1))
+	@echo "==> SHA: $(SHA)"
+	@echo "==> Updating formula..."
+	sed -i '' 's|archive/refs/tags/v.*\.tar\.gz|archive/refs/tags/v$(V).tar.gz|' Formula/noswoop.rb
+	sed -i '' 's|sha256 ".*"|sha256 "$(SHA)"|' Formula/noswoop.rb
+	git add Formula/noswoop.rb
+	git commit -m "chore: update formula for v$(V)"
+	git tag -f v$(V)
+	git push origin main --tags --force
+	@echo "==> Released v$(V)"
