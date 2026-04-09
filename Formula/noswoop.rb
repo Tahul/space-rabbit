@@ -1,8 +1,8 @@
 class Noswoop < Formula
   desc "Disable macOS space-switching animation"
   homepage "https://github.com/tahul/noswoop"
-  url "https://github.com/tahul/noswoop/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "088acac3547d8e36066437964eacedf564e88d7f4c49f25e35de9fa3bd52e7e1"
+  url "https://github.com/tahul/noswoop/archive/refs/tags/v0.2.0.tar.gz"
+  sha256 "ce8e4a07b9a8a9cfabb877b0b6944ea0cbff4b14a0b10b6e4e652a4da9dd102c"
   license "Unlicense"
 
   depends_on :macos
