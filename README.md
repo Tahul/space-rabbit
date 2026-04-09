@@ -14,7 +14,7 @@ No animation, no delay, no lost focus.
 ## Install
 
 ```bash
-brew tap tahul/noswoop
+brew tap tahul/noswoop https://github.com/tahul/noswoop.git
 brew install noswoop
 brew services start noswoop
 ```
