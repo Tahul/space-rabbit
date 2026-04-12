@@ -4,7 +4,7 @@ Instant space switching on macOS.
 
 Space Rabbit removes animations when switching macOS Spaces. Reclaim hours of your time every month!
 
-📦 **[Download Space Rabbit here](https://space-rabbit.app)**
+⬇️ **[Download Space Rabbit for macOS here](https://space-rabbit.app)**
 
 ## Features
 
