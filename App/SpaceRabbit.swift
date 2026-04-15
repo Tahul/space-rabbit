@@ -108,7 +108,7 @@ final class SwoopMenu: NSObject {
         ud.register(defaults: [
             "spacerabbit.enabled":       true,
             "spacerabbit.instantSwitch": true,
-            "spacerabbit.autoFollow":    false,
+            "spacerabbit.autoFollow":    true,
             "spacerabbit.sounds":        false,
             "spacerabbit.switchCount":   0,
         ])
