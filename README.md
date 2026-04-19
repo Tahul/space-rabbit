@@ -57,29 +57,29 @@ If you don't, you will be asked for your signature key identifier when building 
 
 👉 _This procedure is only used by repository maintainers to release new versions of Space Rabbit._
 
-Prior to distributing a release, create a new Git tag so that the new version is picked up during build. Tags should be formatted as such: `v1.0.0`.
+1. Prior to distributing a release, create a new Git tag so that the new version is picked up during build. Tags should be formatted as such: `v1.0.0`.
 
-Once tagged, you can build `Space Rabbit.app`:
+2. Once tagged, you can build `Space Rabbit.app`:
 
 ```bash
 make app
 ```
 
-You can configure your signing key by creating a `local.env` file with eg.:
-
-```bash
-export SIGN_ID=Developer ID Application: Your Developer Name (IDENTIFIER_HERE)
-```
-
-Finally, it needs to be packaged and notarized into `Space-Rabbit.dmg` as such:
+3. Finally, it needs to be packaged and notarized into `Space-Rabbit.dmg` as such:
 
 ```bash
 make release
 ```
 
-When the final DMG has been packaged and notarized, simply draft a new release on [space-rabbit/releases](https://github.com/Tahul/space-rabbit/releases) and upload `Space-Rabbit.dmg`.
+4. When the final DMG has been packaged and notarized, simply draft a new release on [space-rabbit/releases](https://github.com/Tahul/space-rabbit/releases) and upload `Space-Rabbit.dmg`.
 
 The website does not need to be updated, since the download button points to the `Space-Rabbit.dmg` file from the latest release.
+
+👉 You can configure your signing key by creating a `local.env` file with eg.:
+
+```bash
+export SIGN_ID=Developer ID Application: Your Developer Name (IDENTIFIER_HERE)
+```
 
 ## How it works
 
