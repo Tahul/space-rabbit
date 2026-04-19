@@ -551,6 +551,7 @@ p.hero-sub {
    ===================================================================== */
 
 .comparison,
+.traybar,
 .features {
   /* Semi-transparent dark overlay with a subtle backdrop blur */
   background: #00000030;
@@ -561,8 +562,7 @@ p.hero-sub {
 }
 
 /* Shared centring for inner content wrappers */
-.comparison-inner,
-.features-inner {
+.section-inner {
   margin: 0 auto;
 }
 
@@ -572,15 +572,13 @@ p.hero-sub {
   max-width: 1000px;
 }
 
-/* Shared header styling for both sections */
-.comparison-header,
-.features-header {
+/* Shared header styling for all sections */
+.section-header {
   text-align: center;
   margin-bottom: 48px;
 }
 
-.comparison-header h2,
-.features-header h2 {
+.section-header h2 {
   font-size: 2rem;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -588,8 +586,7 @@ p.hero-sub {
   margin-bottom: 18px;
 }
 
-.comparison-header p,
-.features-header p {
+.section-header p {
   font-size: 16px;
   color: var(--muted);
   max-width: 540px;
@@ -597,9 +594,8 @@ p.hero-sub {
   line-height: 1.6;
 }
 
-/* Small "eyebrow" label above the comparison section heading
-   (e.g. "TIME SAVED") */
-.comparison-eyebrow {
+/* Small "eyebrow" label above the section heading (e.g. "TIME SAVED") */
+.section-eyebrow {
   font-size: 11px;
   font-weight: 600;
   color: var(--text);
@@ -675,6 +671,7 @@ p.hero-sub {
 .desktop-mock {
   position: relative;
   overflow: hidden;
+  user-select: none;
   aspect-ratio: 380 / 240;
   background: linear-gradient(
     135deg,
@@ -821,6 +818,7 @@ p.hero-sub {
   font-variant-numeric: tabular-nums;
   padding: 12px 16px;
   color: #fff;
+  user-select: none;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
@@ -922,7 +920,23 @@ p.hero-sub {
 
 
 /* =====================================================================
-   8. Features Section
+   8. Tray Bar Section
+   ===================================================================== */
+
+.traybar-inner {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.traybar-screenshot {
+  display: block;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+/* =====================================================================
+   9. Features Section
    =====================================================================
    A grid of feature cards.  4 columns on desktop, 2 on tablets,
    1 on mobile (see responsive section below).
@@ -1286,18 +1300,18 @@ body.light .btn-download:active {
 
 /* Section backgrounds: nearly transparent white tint */
 body.light .comparison,
+body.light .traybar,
 body.light .features {
   background: #ffffff1a;
 }
 
 /* Section headings in light mode */
-body.light .comparison-header h2,
-body.light .features-header h2 {
+body.light .section-header h2 {
   color: #1c1c2e;
 }
 
 /* Eyebrow label in light mode */
-body.light .comparison-eyebrow {
+body.light .section-eyebrow {
   color: #1c1c2e;
   background: rgba(0, 0, 0, 0.05);
   border-color: rgba(0, 0, 0, 0.10);
