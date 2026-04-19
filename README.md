@@ -33,7 +33,15 @@ For the Cmd+Tab feature, turn off macOS's built-in animated space switching:
 
 ## Uninstall
 
-Quit Space Rabbit from the menu bar, then delete **Space Rabbit.app** from your Applications folder.
+1. Quit Space Rabbit from the menu bar.
+2. Delete **Space Rabbit.app** from your Applications folder.
+3. Remove the login item in **System Settings → General → Login Items** if you had enabled it.
+
+> **If you had "Instant Dock hide" enabled:** Space Rabbit writes a setting directly to macOS's Dock preferences to make the Dock hide animation instant. Deleting the app does not revert this change. To restore the original Dock behavior, run the following command in Terminal:
+>
+> ```bash
+> defaults delete com.apple.dock autohide-time-modifier && killall Dock
+> ```
 
 ## Build from source
 

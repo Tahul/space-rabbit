@@ -66,6 +66,7 @@ var gEnabled:              Bool         = true
 var gInstantSwitchEnabled: Bool         = true
 var gAutoFollowEnabled:    Bool         = true
 var gSoundsEnabled:        Bool         = false
+var gLastSpaceSwitchTime:  Date         = .distantPast
 var gSwitchCount:          Int          = 0
 var gSwitchCountSaved:     Int          = 0
 var gKeyLeft:              Int64        = 123
@@ -462,8 +463,11 @@ final class GeneralViewController: NSViewController {
     private var autoFollowControl:    NSSwitch!
     private var soundsControl:        NSSwitch!
     private var launchAtLoginControl: NSSwitch!
-    private var launchStatusLabel:    NSTextField!
-    private var launchWarningBanner:  NSView!
+    private var launchStatusLabel:      NSTextField!
+    private var launchWarningBanner:    NSView!
+    private var instantDockHideControl: NSSwitch!
+    private var dockResetDivider:       NSView!
+    private var dockResetRow:           NSView!
 
     override func loadView() { view = NSView() }
 
@@ -518,6 +522,58 @@ final class GeneralViewController: NSViewController {
 
         launchWarningBanner = makeLaunchWarningBanner()
 
+        // Group 4: Advanced
+        let dockSubtitle                     = NSTextField(wrappingLabelWithString:
+            "This changes a global macOS setting.")
+        dockSubtitle.font                    = .systemFont(ofSize: 11)
+        dockSubtitle.textColor               = .secondaryLabelColor
+        dockSubtitle.preferredMaxLayoutWidth = 240
+
+        instantDockHideControl = makeSwitch(isDockInstantHideEnabled(), #selector(toggleDockInstantHide))
+
+        let resetBtn = LinkButton(title: "", target: self, action: #selector(resetDockToDefault))
+        resetBtn.isBordered = false
+        resetBtn.attributedTitle = NSAttributedString(string: "Reset to system default", attributes: [
+            .font:            NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.linkColor,
+        ])
+
+        let resetIcon = NSImageView()
+        resetIcon.image            = NSImage(systemSymbolName: "arrow.clockwise",
+                                             accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .regular))
+        resetIcon.contentTintColor = .linkColor
+
+        let resetStack = NSStackView(views: [resetIcon, resetBtn])
+        resetStack.orientation = .horizontal
+        resetStack.spacing     = 2
+        resetStack.alignment   = .centerY
+        resetStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let resetRowView = NSView()
+        resetRowView.addSubview(resetStack)
+        NSLayoutConstraint.activate([
+            resetStack.trailingAnchor.constraint(equalTo: resetRowView.trailingAnchor, constant: -8),
+            resetStack.topAnchor.constraint(equalTo: resetRowView.topAnchor, constant: 4),
+            resetStack.bottomAnchor.constraint(equalTo: resetRowView.bottomAnchor, constant: -7),
+        ])
+        dockResetRow     = resetRowView
+        dockResetDivider = rowDivider()
+        // Start hidden; updateDockResetLink() in viewWillAppear sets the correct state.
+        dockResetDivider.isHidden = true
+        dockResetRow.isHidden     = true
+
+        let group4 = groupContainer()
+        group4.addArrangedSubview(settingsRow(
+            symbol:   "dock.rectangle",
+            color:    NSColor(red: 0.85, green: 0.50, blue: 0.15, alpha: 1),
+            label:    "Instant Dock hide",
+            control:  instantDockHideControl,
+            subtitle: dockSubtitle
+        ))
+        group4.addArrangedSubview(dockResetDivider)
+        group4.addArrangedSubview(dockResetRow)
+
         let outerStack = NSStackView()
         outerStack.orientation = .vertical
         outerStack.alignment   = .leading
@@ -533,8 +589,11 @@ final class GeneralViewController: NSViewController {
         outerStack.setCustomSpacing(14, after: group2)
         outerStack.addArrangedSubview(sectionTitle("Interface"))
         outerStack.addArrangedSubview(group3)
+        outerStack.setCustomSpacing(14, after: group3)
+        outerStack.addArrangedSubview(sectionTitle("Advanced"))
+        outerStack.addArrangedSubview(group4)
 
-        for sub in [launchWarningBanner!, group1, group2, group3] {
+        for sub in [launchWarningBanner!, group1, group2, group3, group4] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             outerStack.addConstraint(
                 sub.trailingAnchor.constraint(equalTo: outerStack.trailingAnchor)
@@ -556,9 +615,11 @@ final class GeneralViewController: NSViewController {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        instantSwitchControl.state = gInstantSwitchEnabled ? .on : .off
-        autoFollowControl.state    = gAutoFollowEnabled    ? .on : .off
-        soundsControl.state        = gSoundsEnabled        ? .on : .off
+        instantSwitchControl.state   = gInstantSwitchEnabled    ? .on : .off
+        autoFollowControl.state      = gAutoFollowEnabled       ? .on : .off
+        soundsControl.state          = gSoundsEnabled           ? .on : .off
+        instantDockHideControl.state = isDockInstantHideEnabled() ? .on : .off
+        updateDockResetLink()
         updateLaunchAtLoginUI()
         if GeneralViewController.pendingLaunchAtLoginAlert {
             GeneralViewController.pendingLaunchAtLoginAlert = false
@@ -764,11 +825,83 @@ final class GeneralViewController: NSViewController {
             updateLaunchAtLoginUI(errorMessage: msg)
         }
     }
+
+    // MARK: - Dock instant-hide
+
+    private func isDockInstantHideEnabled() -> Bool {
+        let v = CFPreferencesCopyAppValue(
+            "autohide-time-modifier" as CFString,
+            "com.apple.dock" as CFString
+        )
+        return (v as? NSNumber)?.doubleValue == 0.0
+    }
+
+    private func setDockAutohideModifier(_ value: Double?) {
+        if let v = value {
+            CFPreferencesSetAppValue(
+                "autohide-time-modifier" as CFString,
+                NSNumber(value: v),
+                "com.apple.dock" as CFString
+            )
+        } else {
+            CFPreferencesSetAppValue(
+                "autohide-time-modifier" as CFString,
+                nil,
+                "com.apple.dock" as CFString
+            )
+        }
+        CFPreferencesAppSynchronize("com.apple.dock" as CFString)
+    }
+
+    private func updateDockResetLink() {
+        let hasOverride = CFPreferencesCopyAppValue(
+            "autohide-time-modifier" as CFString,
+            "com.apple.dock" as CFString
+        ) != nil
+        dockResetDivider.isHidden = !hasOverride
+        dockResetRow.isHidden     = !hasOverride
+        (parent as? PreferencesTabViewController)?.resizeCurrent()
+    }
+
+    private func promptDockRestart() {
+        let alert = NSAlert()
+        alert.messageText     = "Restart Dock to apply changes?"
+        alert.informativeText = "The Dock needs to restart for this setting to take effect. Your Dock will briefly disappear and reappear."
+        alert.addButton(withTitle: "Restart Dock Now")
+        alert.addButton(withTitle: "Later")
+        alert.alertStyle = .informational
+        if alert.runModal() == .alertFirstButtonReturn {
+            let task = Process()
+            task.launchPath = "/usr/bin/killall"
+            task.arguments  = ["Dock"]
+            try? task.run()
+        }
+    }
+
+    @objc private func toggleDockInstantHide() {
+        let enabled = instantDockHideControl.state == .on
+        setDockAutohideModifier(enabled ? 0.0 : nil)
+        updateDockResetLink()
+        promptDockRestart()
+    }
+
+    @objc private func resetDockToDefault() {
+        setDockAutohideModifier(nil)
+        instantDockHideControl.state = .off
+        updateDockResetLink()
+        promptDockRestart()
+    }
 }
 
 // MARK: - About Tab
 
 final class LinkTextField: NSTextField {
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+}
+
+final class LinkButton: NSButton {
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .pointingHand)
     }
@@ -991,7 +1124,10 @@ private func getAllCurrentSpaces() -> [CGSSpaceID] {
 }
 
 /// Finds the space that contains the given PID's windows.
-/// Returns 0 if the app is already visible on any display.
+/// Returns the space to follow the app to, or 0 if the app is already accessible.
+/// If any of the app's windows is on a current space, the app is reachable and we
+/// should not follow — this prevents auto-follow from chasing a second window on a
+/// different space when the user already switched to the space containing window 1.
 func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
     guard let mainConn = _mainConnection,
           let spacesFor = _spacesForWindows else { return 0 }
@@ -1003,6 +1139,8 @@ func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
 
     guard let winList = CGWindowListCopyWindowInfo(.optionAll, 0) as? [[String: Any]]
     else { return 0 }
+
+    var firstOffScreenSpace: CGSSpaceID = 0
 
     for win in winList {
         guard (win["kCGWindowOwnerPID"] as? NSNumber)?.int32Value == pid else { continue }
@@ -1017,9 +1155,14 @@ func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
               let spaceNum = spaces.first else { continue }
 
         let sid = spaceNum.uint64Value
-        if sid != 0 && !currentSpaces.contains(sid) { return sid }
+        guard sid != 0 else { continue }
+
+        // Any window already on a current space means the app is accessible — don't follow.
+        if currentSpaces.contains(sid) { return 0 }
+
+        if firstOffScreenSpace == 0 { firstOffScreenSpace = sid }
     }
-    return 0
+    return firstOffScreenSpace
 }
 
 /// Switches to the display that contains targetSpace, moving the minimum number of steps.
@@ -1141,7 +1284,10 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         guard targetIdx >= 0, targetIdx < spaceIDs.count else { return nil }
     }
 
-    if postSwitchGesture(direction: direction) { gMenu?.recordSwitch() }
+    if postSwitchGesture(direction: direction) {
+        gLastSpaceSwitchTime = Date()
+        gMenu?.recordSwitch()
+    }
     return nil
 }
 
@@ -1150,6 +1296,11 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 final class SwoopObserver: NSObject {
     @objc func appActivated(_ note: Notification) {
         guard gEnabled, gAutoFollowEnabled else { return }
+        // Suppress auto-follow when instant-switch just fired: the activation notification
+        // is a side-effect of our own gesture, not a user Cmd+Tab/Dock-click intent.
+        // Without this guard, a second window of the same app on a different space causes
+        // auto-follow to fight the in-flight instant-switch, producing a visual glitch.
+        guard Date().timeIntervalSince(gLastSpaceSwitchTime) > 0.3 else { return }
         guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
                         as? NSRunningApplication else { return }
 
@@ -1258,6 +1409,13 @@ NSWorkspace.shared.notificationCenter.addObserver(
     name: NSWorkspace.didActivateApplicationNotification,
     object: nil
 )
+// Stamp the switch time on any space change (covers trackpad swipes, which bypass
+// the event tap). For trackpad swipes this notification arrives before the app
+// activation notification, so the auto-follow guard in appActivated fires correctly.
+NSWorkspace.shared.notificationCenter.addObserver(
+    forName: NSWorkspace.activeSpaceDidChangeNotification,
+    object: nil, queue: .main
+) { _ in gLastSpaceSwitchTime = Date() }
 
 // Cleanup on exit
 NotificationCenter.default.addObserver(
