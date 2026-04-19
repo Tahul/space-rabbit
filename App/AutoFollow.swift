@@ -40,6 +40,15 @@ final class SwoopObserver: NSObject {
         let targetSpace = findSpaceForPid(app.processIdentifier)
         guard targetSpace != 0 else { return }
 
+        // Decide whether activate(.activateAllWindows) is safe to call later.
+        // We check NOW, before the gesture, while CGS state is fresh.
+        // (.activateAllWindows tells macOS to raise every window of the app,
+        // which triggers a native cross-space switch for any window on a
+        // different space. If the app's windows are all on the target space
+        // this is safe; if any window is on another space we must use [] to
+        // stay put after switching.)
+        let safeToActivateAll = appWindowsConfinedToSpace(app.processIdentifier, targetSpace)
+
         // Switch to that space and record the switch
         switchToSpace(targetSpace)
         gMenu?.recordSwitch()
@@ -47,7 +56,8 @@ final class SwoopObserver: NSObject {
         // After a short delay (to let the space switch settle),
         // bring the activated app's windows to the front
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            app.activate(options: .activateAllWindows)
+            let opts: NSApplication.ActivationOptions = safeToActivateAll ? .activateAllWindows : []
+            app.activate(options: opts)
         }
     }
 }

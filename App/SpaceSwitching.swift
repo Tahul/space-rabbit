@@ -141,6 +141,42 @@ func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
     return firstOffScreenSpace
 }
 
+/// Returns true if every normal, on-screen window of the process is on
+/// `targetSpace` — meaning no window lives on any other space.
+///
+/// Call this at notification time (before switchToSpace), while the CGS
+/// state is still fresh.  The result tells the caller whether it is safe
+/// to call activate(.activateAllWindows) after switching: that flag asks
+/// macOS to raise every window of the app, which triggers a native
+/// cross-space switch for any window that lives on a different space.
+/// When this returns false (windows on multiple spaces), we fall back to
+/// activate([]) so we stay on the space we just switched to.
+func appWindowsConfinedToSpace(_ pid: pid_t, _ targetSpace: CGSSpaceID) -> Bool {
+    guard let mainConn  = cgsMainConnection,
+          let spacesFor = slsCopySpacesForWindows else { return true }
+
+    let cid = mainConn()
+    guard cid != 0 else { return true }
+
+    guard let winList = CGWindowListCopyWindowInfo(.optionAll, 0) as? [[String: Any]]
+    else { return true }
+
+    for win in winList {
+        guard (win["kCGWindowOwnerPID"] as? NSNumber)?.int32Value == pid else { continue }
+        if let layer    = (win["kCGWindowLayer"]     as? NSNumber)?.int32Value, layer    != 0 { continue }
+        if let onscreen = (win["kCGWindowIsOnscreen"] as? NSNumber)?.int32Value, onscreen == 0 { continue }
+
+        guard let wid = (win[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { continue }
+        let widArr = [NSNumber(value: wid)] as CFArray
+        guard let spaces = spacesFor(cid, 7, widArr)?.takeRetainedValue() as? [NSNumber],
+              let sid = spaces.first?.uint64Value, sid != 0 else { continue }
+
+        if sid != targetSpace { return false }
+    }
+
+    return true
+}
+
 /// Switches to the space identified by `targetSpace` on whichever display contains it.
 ///
 /// Computes the minimum number of directional steps from the current space
