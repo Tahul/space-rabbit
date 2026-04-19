@@ -2,7 +2,8 @@
  * EventTap.swift — Feature 1: Instant space switch via event tap
  *
  * Installs a CGEvent tap at the session level to intercept keyDown
- * events that match the user's "Move left/right a space" shortcut.
+ * events that match the user's "Move left/right a space" or
+ * "Switch to Desktop N" shortcuts.
  *
  * When the shortcut is detected:
  *   1. The original key event is swallowed (returns nil to the tap)
@@ -66,7 +67,25 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // Check that exactly the required modifiers are held (no extras).
     // This prevents false positives when e.g. Cmd+Control+Arrow is pressed
     // but we only want Control+Arrow.
-    guard flags.intersection(kRelevantModifiers) == gModMask else {
+    let eventMods = flags.intersection(kRelevantModifiers)
+
+    // Direct "Switch to Desktop N" — jump straight to that desktop.
+    // switchToSpace handles the no-op case when we're already there.
+    for (idx, binding) in gSpaceKeys.enumerated() {
+        guard let binding,
+              keycode == binding.keycode,
+              eventMods == binding.mods else { continue }
+
+        let spaceIDs = getSpaceList().ids
+        guard idx < spaceIDs.count else { return nil }
+
+        switchToSpace(spaceIDs[idx])
+        gLastSpaceSwitchTime = Date()
+        gMenu?.recordSwitch()
+        return nil
+    }
+
+    guard eventMods == gModMask else {
         return passthrough
     }
 
