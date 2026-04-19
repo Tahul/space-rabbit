@@ -31,6 +31,8 @@ For the Cmd+Tab feature, turn off macOS's built-in animated space switching:
 
 > **System Settings → Desktop & Dock** → disable **"When switching to an application, switch to a Space with open windows for the application"**
 
+For the best experience, also enable **Instant Dock hide** in Space Rabbit's Preferences. This makes the Dock hide animation instant, eliminating a residual flash when switching spaces. It is not enabled by default because it modifies a global macOS setting — but it has no effect when Space Rabbit is disabled.
+
 ## Uninstall
 
 1. Quit Space Rabbit from the menu bar.
