@@ -75,6 +75,10 @@ var gKeyRight: Int64 = 124
 /// Both left and right shortcuts share the same modifier mask.
 var gModMask: CGEventFlags = .maskControl
 
+/// Per-desktop "Switch to Desktop N" bindings (index 0 = Desktop 1 ... index 9 = Desktop 10).
+/// `nil` means the slot is not bound or disabled in System Settings.
+var gSpaceKeys: [(keycode: Int64, mods: CGEventFlags)?] = Array(repeating: nil, count: 10)
+
 // MARK: - UI References
 
 /// The menu bar status item instance (created at startup in `main.swift`).

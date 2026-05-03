@@ -127,4 +127,15 @@ func loadSpaceSwitchShortcuts() {
     // same modifiers, but if only one side is configured, prefer that one.
     if      !leftMods.isEmpty  { gModMask = leftMods  }
     else if !rightMods.isEmpty { gModMask = rightMods }
+
+    // Hotkeys 118..127 = "Switch to Desktop 1".."Switch to Desktop 10"
+    for i in 0..<10 {
+        var keycode: Int64        = -1
+        var mods:    CGEventFlags = []
+        readHotkey(from: prefs, key: String(118 + i), keycode: &keycode, mods: &mods)
+        // Require at least one modifier to avoid intercepting bare number keys
+        if keycode != -1, !mods.isEmpty {
+            gSpaceKeys[i] = (keycode, mods)
+        }
+    }
 }
