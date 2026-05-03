@@ -330,13 +330,16 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
 /// The "Ended" event tells it the swipe finished with extreme velocity,
 /// which makes the Dock switch spaces instantly without animation.
 ///
-/// - Parameter direction: `-1` for left, `+1` for right.
+/// - Parameters:
+///   - direction: `-1` for left, `+1` for right.
+///   - velocity: Magnitude of the Ended-phase velocity.
 /// - Returns: `true` if both gesture phases were posted successfully.
-func postSwitchGesture(direction: Int) -> Bool {
-    let isRight       = direction > 0
+func postSwitchGesture(direction: Int,
+                       velocity: Double = kInstantSwitchVelocity) -> Bool {
+    let isRight              = direction > 0
     let flagDirection: Int64 = isRight ? 1 : 0
-    let progress      = isRight ? kInstantSwitchProgress : -kInstantSwitchProgress
-    let velocity      = isRight ? kInstantSwitchVelocity : -kInstantSwitchVelocity
+    let progress             = isRight ? kInstantSwitchProgress : -kInstantSwitchProgress
+    let signedVelocity       = isRight ? velocity : -velocity
 
     // Phase 1: Begin the swipe (zero velocity/progress — just a start signal)
     let beganOK = postGesturePair(
@@ -351,7 +354,7 @@ func postSwitchGesture(direction: Int) -> Bool {
         flagDirection: flagDirection,
         phase: kCGSGesturePhaseEnded,
         progress: progress,
-        velocity: velocity
+        velocity: signedVelocity
     )
 
     return beganOK && endedOK
@@ -360,13 +363,16 @@ func postSwitchGesture(direction: Int) -> Bool {
 /// Posts N consecutive space-switch gestures in the given direction.
 ///
 /// Used by auto-follow when the target space is more than one step away.
+/// Velocity is scaled by `steps` so the Dock snaps straight to the target
+/// rather than animating between intermediate spaces on long jumps.
 /// Stops early if any gesture fails (e.g. CGEvent allocation failure).
 ///
 /// - Parameters:
 ///   - direction: `-1` for left, `+1` for right.
 ///   - steps: How many spaces to traverse.
 private func switchNSpaces(direction: Int, steps: Int) {
-    for i in 0..<steps where !postSwitchGesture(direction: direction) {
+    let velocity = kInstantSwitchVelocity * Double(steps)
+    for i in 0..<steps where !postSwitchGesture(direction: direction, velocity: velocity) {
         fputs("Space Rabbit: gesture failed at step \(i + 1)/\(steps)\n", stderr)
         break
     }
