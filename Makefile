@@ -59,7 +59,7 @@ app: $(BIN) $(ICNS)
 
 app-dev: app
 	@echo "==> Restarting $(APP_BUNDLE)..."
-	@pkill -x "$(APP_NAME)" 2>/dev/null || true
+	@pkill -x "$(BIN)" 2>/dev/null || true
 	@sleep 0.5
 	@open $(Q_BUNDLE)
 	@echo "==> Restarted $(APP_BUNDLE)"
