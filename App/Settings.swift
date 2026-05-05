@@ -206,14 +206,14 @@ final class GeneralViewController: NSViewController {
         featuresGroup.addArrangedSubview(settingsRow(
             symbol:  "arrow.left.arrow.right",
             color:   NSColor(red: 0.20, green: 0.55, blue: 1.00, alpha: 1),
-            label:   "Instant space switch",
+            label:   "Instant Space switch",
             control: instantSwitchControl
         ))
         featuresGroup.addArrangedSubview(rowDivider())
         featuresGroup.addArrangedSubview(settingsRow(
             symbol:  "scope",
             color:   NSColor(red: 0.35, green: 0.75, blue: 0.40, alpha: 1),
-            label:   "Auto-follow on \u{2318}\u{21E5}",
+            label:   "Instant App switch",
             control: autoFollowControl
         ))
 

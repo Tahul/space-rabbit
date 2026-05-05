@@ -121,10 +121,10 @@ final class SwoopMenu: NSObject {
         enableItem        = NSMenuItem(title: "Enable Space Rabbit",
                                        action: #selector(toggleEnabled(_:)),
                                        keyEquivalent: "")
-        instantSwitchItem = NSMenuItem(title: "Instant Space Switch",
+        instantSwitchItem = NSMenuItem(title: "Instant Space Switch \u{2303}\u{2194}",
                                        action: #selector(toggleInstantSwitch(_:)),
                                        keyEquivalent: "s")
-        autoFollowItem    = NSMenuItem(title: "Auto-Follow on \u{2318}\u{21E5}",
+        autoFollowItem    = NSMenuItem(title: "Instant App Switch \u{2318}\u{21E5}",
                                        action: #selector(toggleAutoFollow(_:)),
                                        keyEquivalent: "f")
         statsItem         = NSMenuItem(title: "", action: nil, keyEquivalent: "")
