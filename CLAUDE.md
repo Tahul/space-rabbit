@@ -299,10 +299,13 @@ Everything goes through the `Makefile`. No Xcode project.
 | `make build` | Compiles `App/*.swift` → `spacerabbit` binary |
 | `make icon` | Regenerates `Icon/AppIcon.icns` from `Icon/CreateIcon.swift` |
 | `make app` | `build` + assembles `Space Rabbit.app` bundle + code-signs |
+| `make app-dev` | `app` + kills any running instance + relaunches — **use this during development** |
 | `make dmg` | `app` + creates `Space-Rabbit.dmg` with Applications symlink |
 | `make notarize` | Submits DMG to Apple notarytool and staples the ticket |
 | `make release` | `dmg` + `notarize` in sequence |
 | `make clean` | Removes binary, icns, and app bundle |
+
+**During development, always use `make app-dev VERSION=0.0.0`** — the `VERSION=0.0.0` ensures the version is lower than any published release so the update checker never prompts. This target builds, kills the running instance, and relaunches in one step.
 
 **Compiler flags:** `swiftc -O` (optimized). Linked frameworks: CoreGraphics, CoreFoundation, ApplicationServices, AppKit, ServiceManagement.
 

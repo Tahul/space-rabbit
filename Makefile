@@ -22,7 +22,7 @@ APPLE_APP_PASSWORD ?=
 
 VERSION   ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
-.PHONY: build icon app dmg notarize release clean
+.PHONY: build icon app app-dev dmg notarize release clean
 
 build: $(BIN)
 
@@ -56,6 +56,13 @@ app: $(BIN) $(ICNS)
 	  codesign --force --deep --options runtime --sign "$$sign_id" $(Q_BUNDLE); \
 	fi
 	@echo "==> Built $(APP_BUNDLE)"
+
+app-dev: app
+	@echo "==> Restarting $(APP_BUNDLE)..."
+	@pkill -x "$(APP_NAME)" 2>/dev/null || true
+	@sleep 0.5
+	@open $(Q_BUNDLE)
+	@echo "==> Restarted $(APP_BUNDLE)"
 
 dmg: app
 	@echo "==> Creating $(DMG_NAME)..."
