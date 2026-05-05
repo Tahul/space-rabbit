@@ -2,7 +2,13 @@
 
 ## ↪️ Not Done
 
+### Features
+
 ### Bugs
+
+### Tests
+
+### Others
 
 ## ✅ Done
 
