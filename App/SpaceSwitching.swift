@@ -190,24 +190,6 @@ func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
     return windowSpaces.first ?? 0
 }
 
-/// Returns `true` if every normal, on-screen window of the process lives
-/// on `targetSpace` — meaning no window is on any other space.
-///
-/// This must be called at notification time (before `switchToSpace`), while
-/// the CGS state is still fresh. The result tells the caller whether it is
-/// safe to call `activate(.activateAllWindows)` after switching: that flag
-/// asks macOS to raise every window of the app, which triggers a native
-/// cross-space switch for any window on a different space. When this returns
-/// `false` (windows on multiple spaces), the caller should fall back to
-/// `activate([])` to stay on the space we just switched to.
-///
-/// - Parameters:
-///   - pid: The Unix process ID of the app to check.
-///   - targetSpace: The space that all windows should be on.
-/// - Returns: `true` if all visible windows are confined to `targetSpace`.
-func appWindowsConfinedToSpace(_ pid: pid_t, _ targetSpace: CGSSpaceID) -> Bool {
-    return visibleWindowSpaces(for: pid).allSatisfy { $0 == targetSpace }
-}
 
 /// Switches to the space identified by `targetSpace` on whichever display
 /// contains it.

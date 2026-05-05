@@ -25,12 +25,6 @@ import AppKit
 /// not to interfere with a real Cmd+Tab shortly after.
 private let kAutoFollowSuppressionWindow: TimeInterval = 0.3
 
-/// Delay after switching spaces before bringing the app's windows to front.
-///
-/// The space switch needs a moment to settle before the window server
-/// will correctly respond to activation requests.
-private let kPostSwitchActivationDelay: TimeInterval = 0.1
-
 // MARK: - App Activation Observer
 
 /// Watches for `NSWorkspace.didActivateApplicationNotification` and
@@ -58,27 +52,19 @@ final class SwoopObserver: NSObject {
         let targetSpace = findSpaceForPid(app.processIdentifier)
         guard targetSpace != 0 else { return }
 
-        // Decide whether `activate(.activateAllWindows)` is safe to call later.
-        // We check NOW, before the gesture, while CGS state is fresh.
+        // Switch to the target space and record it for statistics.
         //
-        // `.activateAllWindows` tells macOS to raise every window of the app,
-        // which triggers a native cross-space switch for any window on a
-        // different space. If the app's windows are all on the target space,
-        // this is safe. If any window is on another space, we must use `[]`
-        // to stay put after switching.
-        let safeToActivateAll = appWindowsConfinedToSpace(app.processIdentifier, targetSpace)
-
-        // Switch to the target space and record it for statistics
+        // We intentionally do NOT call app.activate() after switching.
+        // `NSRunningApplication.activate()` sends a kAEActivate Apple Event
+        // to the target app, which some apps (e.g. Safari) interpret as
+        // "user has brought me to the foreground" — causing them to exit
+        // special background modes such as Picture-in-Picture.
+        //
+        // This is unnecessary: the system activation already in progress
+        // (from Cmd+Tab or Dock click that triggered this notification)
+        // brings the app and its frontmost window to focus. Our space
+        // switch is the only missing piece.
         switchToSpace(targetSpace)
         gMenu?.recordSwitch()
-
-        // After a short delay (to let the space switch settle),
-        // bring the activated app's windows to the front
-        DispatchQueue.main.asyncAfter(deadline: .now() + kPostSwitchActivationDelay) {
-            let options: NSApplication.ActivationOptions = safeToActivateAll
-                ? .activateAllWindows
-                : []
-            app.activate(options: options)
-        }
     }
 }
