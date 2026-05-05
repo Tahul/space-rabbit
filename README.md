@@ -49,9 +49,13 @@ For the best experience, also enable **Instant Dock hide** in Space Rabbit's Pre
 make app
 ```
 
-Requires Xcode command line tools and a valid Developer ID for signing.
+Requires Xcode command line tools and a valid Developer ID for signing. You will be asked for your signature key identifier when building the app. 
 
-If you don't, you will be asked for your signature key identifier when building the app. 
+You can also build the app and immediately run it (or restart if it is already running) — this command is useful for development:
+
+```bash
+make app-dev
+```
 
 ## Release & notarize
 
