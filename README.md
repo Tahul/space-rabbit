@@ -45,16 +45,21 @@ For the best experience, also enable **Instant Dock hide** in Space Rabbit's Pre
 
 ## Build from source
 
+Requires Xcode Command Line Tools (`xcode-select --install`). No third-party dependencies.
+
 ```bash
+# Clone the repo
+git clone https://github.com/Tahul/space-rabbit.git
+cd space-rabbit
+
+# Build Space Rabbit.app in the project root
 make app
-```
 
-Requires Xcode command line tools and a valid Developer ID for signing. You will be asked for your signature key identifier when building the app. 
-
-You can also build the app and immediately run it (or restart if it is already running) — this command is useful for development:
-
-```bash
+# Build and launch immediately (kills any running instance first, used for development)
 make app-dev
+
+# Clean all build artefacts
+make clean
 ```
 
 ## Release & notarize
