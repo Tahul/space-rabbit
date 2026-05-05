@@ -14,6 +14,7 @@
  * a Began+Ended gesture pair with extreme velocity values.
  */
 
+import AppKit
 import CoreGraphics
 import CoreFoundation
 import Foundation
@@ -37,44 +38,52 @@ private let kInstantSwitchVelocity: Double = 400.0
 
 // MARK: - Space Layout Queries
 
-/// Returns the space IDs for the display that contains the active space,
-/// along with the index of the active space within that list.
+/// Returns the space IDs for the display the cursor is currently over,
+/// along with the index of that display's active space within the list.
 ///
-/// This is used by the event tap to check whether a left/right switch
-/// is possible (i.e., we're not already at the edge).
+/// This matches native macOS behaviour: Ctrl+Arrow switches spaces on the
+/// display the cursor hovers, regardless of which display has keyboard focus.
+/// Falls back to the focused display when the cursor's display cannot be
+/// resolved (e.g. private-API failure).
 ///
-/// - Returns: A tuple of (space IDs on the active display, index of current space).
+/// - Returns: A tuple of (space IDs on the cursor's display, index of current space).
 ///            Returns `([], -1)` if the space layout cannot be determined.
 func getSpaceList() -> (ids: [CGSSpaceID], currentIdx: Int) {
     guard let mainConn    = cgsMainConnection,
-          let getActive   = cgsGetActiveSpace,
           let getDisplays = cgsCopyDisplaySpaces else { return ([], -1) }
 
     let cid = mainConn()
     guard cid != 0 else { return ([], -1) }
 
-    let active = getActive(cid)
-    guard active != 0 else { return ([], -1) }
-
     guard let displays = getDisplays(cid, nil)?.takeRetainedValue() as? [[String: Any]]
     else { return ([], -1) }
 
-    // Walk each display to find the one containing the active space.
-    // Multi-monitor setups have one entry per display; we only care
-    // about the display whose "Current Space" matches the active space.
+    // Prefer the display under the cursor — matches native Ctrl+Arrow behaviour
+    // on multi-monitor setups where cursor and keyboard focus may differ.
+    // Fall back to the globally active space's display when cursor can't be resolved.
+    let cursorUUID = displayUUIDUnderCursor()
+    let active     = cgsGetActiveSpace?(cid) ?? 0
+
     for display in displays {
         guard let currentSpaceDict = display["Current Space"] as? [String: Any],
               let currentSpaceID   = (currentSpaceDict["id64"] as? NSNumber)?.uint64Value,
-              currentSpaceID == active,
               let spaces           = display["Spaces"] as? [[String: Any]]
         else { continue }
+
+        let isTarget: Bool
+        if let cu = cursorUUID, let du = display["Display Identifier"] as? String {
+            isTarget = cu == du
+        } else {
+            isTarget = active != 0 && currentSpaceID == active
+        }
+        guard isTarget else { continue }
 
         var ids        = [CGSSpaceID]()
         var currentIdx = -1
 
         for space in spaces {
             guard let sid = (space["id64"] as? NSNumber)?.uint64Value else { continue }
-            if sid == active { currentIdx = ids.count }
+            if sid == currentSpaceID { currentIdx = ids.count }
             ids.append(sid)
         }
 
@@ -82,6 +91,18 @@ func getSpaceList() -> (ids: [CGSSpaceID], currentIdx: Int) {
     }
 
     return ([], -1)
+}
+
+/// Returns the "Display Identifier" UUID string for the display the cursor
+/// is currently over, or `nil` if it cannot be determined.
+private func displayUUIDUnderCursor() -> String? {
+    let point = NSEvent.mouseLocation
+    guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }),
+          let displayID = screen.deviceDescription[
+              NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+    else { return nil }
+    let cfUUID = CGDisplayCreateUUIDFromDisplayID(displayID).takeRetainedValue()
+    return CFUUIDCreateString(nil, cfUUID) as String?
 }
 
 /// Returns the "current space" ID for every connected display.
