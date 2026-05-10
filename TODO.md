@@ -6,6 +6,8 @@
 
 ### Bugs
 
+- [] Picture in picture is still bogous when Space Rabbit is enabled
+
 ### Tests
 
 ### Others
