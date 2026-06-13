@@ -3,6 +3,9 @@ export
 
 SWIFTC     ?= swiftc
 SWIFTFLAGS ?= -O
+
+MACOS_MIN                = 15.0
+MACOSX_DEPLOYMENT_TARGET = $(MACOS_MIN)
 LDFLAGS     = -framework CoreGraphics -framework CoreFoundation \
               -framework ApplicationServices -framework AppKit \
               -framework ServiceManagement
@@ -44,7 +47,7 @@ app: $(BIN) $(ICNS)
 	@mkdir -p $(Q_BUNDLE)/Contents/Resources
 	@cp $(BIN) $(Q_BUNDLE)/Contents/MacOS/$(BIN)
 	@cp $(ICNS) $(Q_BUNDLE)/Contents/Resources/AppIcon.icns
-	@sed 's/__VERSION__/$(VERSION)/g' App/Info.plist > $(Q_BUNDLE)/Contents/Info.plist
+	@sed 's/__VERSION__/$(VERSION)/g;s/__MACOS_MIN__/$(MACOS_MIN)/g' App/Info.plist > $(Q_BUNDLE)/Contents/Info.plist
 	@sign_id="$(SIGN_ID)"; \
 	if [ -z "$$sign_id" ]; then \
 	  printf "==> Enter signing identity (SIGN_ID) [ENTER to skip]: "; \

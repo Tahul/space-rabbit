@@ -5,7 +5,7 @@
 - **App name:** Space Rabbit
 - **Bundle ID:** `app.spacerabbit`
 - **GitHub repo:** `Tahul/space-rabbit` (git@github.com:Tahul/space-rabbit.git)
-- **Minimum macOS:** 13.0
+- **Minimum macOS:** 15.0
 - **Authors:** Yaël Guilloux (@tahul) and Valerian Saliou (@valeriansaliou)
 - **Website:** https://space-rabbit.app
 

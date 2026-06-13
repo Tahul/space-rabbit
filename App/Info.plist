@@ -28,6 +28,6 @@
     <key>NSAccessibilityUsageDescription</key>
     <string>Space Rabbit requires Accessibility access to intercept keyboard shortcuts for instant space switching.</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>__MACOS_MIN__</string>
 </dict>
 </plist>
