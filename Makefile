@@ -6,6 +6,7 @@ SWIFTFLAGS ?= -O
 
 MACOS_MIN                = 15.0
 MACOSX_DEPLOYMENT_TARGET = $(MACOS_MIN)
+SWIFT_TARGET             ?= $(shell uname -m)-apple-macosx$(MACOS_MIN)
 LDFLAGS     = -framework CoreGraphics -framework CoreFoundation \
               -framework ApplicationServices -framework AppKit \
               -framework ServiceManagement
@@ -25,12 +26,20 @@ APPLE_APP_PASSWORD ?=
 
 VERSION   ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
-.PHONY: build icon app app-dev dmg notarize release clean
+.PHONY: build icon app app-dev dmg notarize release clean verify-macos-min
 
-build: $(BIN)
+build: $(BIN) verify-macos-min
 
-$(BIN): $(SRCS)
-	$(SWIFTC) $(SWIFTFLAGS) -o $@ $(SRCS) $(LDFLAGS)
+$(BIN): $(SRCS) Makefile
+	$(SWIFTC) $(SWIFTFLAGS) -target $(SWIFT_TARGET) -o $@ $(SRCS) $(LDFLAGS)
+
+verify-macos-min: $(BIN)
+	@actual_min="$$(otool -l $(BIN) | awk '/LC_BUILD_VERSION/ { found = 1; next } found && /minos/ { print $$2; exit }')"; \
+	if [ "$$actual_min" != "$(MACOS_MIN)" ]; then \
+	  echo "==> ERROR: $(BIN) was built for macOS $$actual_min, expected $(MACOS_MIN)."; \
+	  echo "==> Check MACOS_MIN/SWIFT_TARGET and rebuild before packaging."; \
+	  exit 1; \
+	fi
 
 icon: $(ICNS)
 
@@ -40,7 +49,7 @@ $(ICNS): Icon/CreateIcon.swift
 	@mv AppIcon.icns $(ICNS)
 	@echo "==> Generated $(ICNS)"
 
-app: $(BIN) $(ICNS)
+app: build $(ICNS)
 	@echo "==> Building $(APP_BUNDLE)..."
 	@rm -rf $(Q_BUNDLE)
 	@mkdir -p $(Q_BUNDLE)/Contents/MacOS
