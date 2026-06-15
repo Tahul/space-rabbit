@@ -77,7 +77,7 @@ make app
 3. Finally, it needs to be packaged and notarized into `Space-Rabbit.dmg` as such:
 
 ```bash
-make release
+make clean release
 ```
 
 4. When the final DMG has been packaged and notarized, simply draft a new release on [space-rabbit/releases](https://github.com/Tahul/space-rabbit/releases) and upload `Space-Rabbit.dmg`.
