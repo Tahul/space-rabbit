@@ -88,9 +88,6 @@ final class SwoopMenu: NSObject {
     private let launchWarningItem:   NSMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let launchWarningSep:    NSMenuItem = .separator()
 
-    private let checkUpdatesItem:     NSMenuItem = NSMenuItem(title: "Check for Updates\u{2026}",
-                                                                   action: nil,
-                                                                   keyEquivalent: "")
     private var statusMenu:          NSMenu!
     private var updateDownloadURL:   String?
 
@@ -206,8 +203,6 @@ final class SwoopMenu: NSObject {
         autoFollowItem.target     = self
         autoFollowItem.state      = gAutoFollowEnabled    ? .on : .off
         statsItem.isEnabled       = false  // Non-interactive display item
-        checkUpdatesItem.target   = self
-        checkUpdatesItem.action   = #selector(handleCheckForUpdates)
     }
 
     /// Assigns SF Symbol icons to the feature toggle and stats menu items.
@@ -226,11 +221,6 @@ final class SwoopMenu: NSObject {
                              accessibilityDescription: nil) {
             img.isTemplate = true
             statsItem.image = img
-        }
-        if let img = NSImage(systemSymbolName: "arrow.down.circle",
-                             accessibilityDescription: nil) {
-            img.isTemplate = true
-            checkUpdatesItem.image = img
         }
     }
 
@@ -273,32 +263,10 @@ final class SwoopMenu: NSObject {
             img.isTemplate = true
             settings.image = img
         }
-        // Help submenu
-        let helpMenu = NSMenu()
-        let websiteItem = NSMenuItem(title: "Open Website",
-                                     action: #selector(openWebsite),
-                                     keyEquivalent: "")
-        websiteItem.target = self
-        if let img = NSImage(systemSymbolName: "globe", accessibilityDescription: nil) {
-            img.isTemplate = true
-            websiteItem.image = img
-        }
-        helpMenu.addItem(websiteItem)
-        helpMenu.addItem(.separator())
-        helpMenu.addItem(checkUpdatesItem)
-
-        let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
-        if let img = NSImage(systemSymbolName: "questionmark.circle", accessibilityDescription: nil) {
-            img.isTemplate = true
-            helpItem.image = img
-        }
-        helpItem.submenu = helpMenu
-        statusMenu.addItem(helpItem)
-
         statusMenu.addItem(settings)
         statusMenu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "Quit",
+        let quit = NSMenuItem(title: "Quit Space Rabbit",
                               action: #selector(NSApplication.terminate(_:)),
                               keyEquivalent: "q")
         if let img = NSImage(systemSymbolName: "xmark.rectangle",
@@ -490,67 +458,10 @@ final class SwoopMenu: NSObject {
         updateAvailableSep.isHidden  = false
     }
 
-    @objc private func openWebsite() {
-        if let url = URL(string: "https://space-rabbit.app") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
     /// Triggers the automatic update flow for the available download URL.
     @objc private func openDownloadURL() {
         guard let urlStr = updateDownloadURL else { return }
         startUpdate(downloadURL: urlStr)
-    }
-
-    /// Manually checks GitHub for a newer release, then prompts the user.
-    @objc private func handleCheckForUpdates() {
-        checkUpdatesItem.title     = "Checking for Updates…"
-        checkUpdatesItem.isEnabled = false
-
-        checkForUpdatesManually(
-            onFound: { [weak self] downloadURL in
-                guard let self else { return }
-                self.checkUpdatesItem.title     = "Check for Updates\u{2026}"
-                self.checkUpdatesItem.isEnabled = true
-
-                // Show the tray banner so it persists after the dialog is dismissed
-                self.showUpdateBanner(downloadURL: downloadURL)
-
-                let alert = NSAlert()
-                alert.messageText     = "Update Available"
-                alert.informativeText = "A new version of Space Rabbit is available. Download and install it now?"
-                alert.addButton(withTitle: "Install Now")
-                alert.addButton(withTitle: "Later")
-                NSApp.activate(ignoringOtherApps: true)
-                if alert.runModal() == .alertFirstButtonReturn {
-                    startUpdate(downloadURL: downloadURL)
-                }
-            },
-            onUpToDate: { [weak self] in
-                guard let self else { return }
-                self.checkUpdatesItem.title     = "Check for Updates\u{2026}"
-                self.checkUpdatesItem.isEnabled = true
-
-                let alert = NSAlert()
-                alert.messageText     = "You're Up to Date"
-                alert.informativeText = "Space Rabbit is already running the latest version."
-                alert.addButton(withTitle: "OK")
-                NSApp.activate(ignoringOtherApps: true)
-                alert.runModal()
-            },
-            onError: { [weak self] in
-                guard let self else { return }
-                self.checkUpdatesItem.title     = "Check for Updates\u{2026}"
-                self.checkUpdatesItem.isEnabled = true
-
-                let alert = NSAlert()
-                alert.messageText     = "Could Not Check for Updates"
-                alert.informativeText = "Please check your internet connection and try again."
-                alert.addButton(withTitle: "OK")
-                NSApp.activate(ignoringOtherApps: true)
-                alert.runModal()
-            }
-        )
     }
 
     // MARK: - Feature Toggle Sync

@@ -209,7 +209,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 
 Two entry points in `UpdateCheck.swift`:
 - **Automatic** (`checkForUpdates()`): fires 5 s after launch, silently shows the menu bar banner if a newer release exists.
-- **Manual** (`checkForUpdatesManually()`): triggered from the "Check for Updates…" menu item, reports results via callbacks so the caller can show dialogs.
+- **Manual** (`checkForUpdatesManually()`): triggered from the "Check Now…" button in the settings window's Updates pane, reports results via callbacks so the caller can show dialogs.
 
 Both hit `GET /repos/Tahul/space-rabbit/releases/latest` on the GitHub API, extract the `tag_name` and the first `.dmg` asset URL, and compare against `CFBundleShortVersionString`.
 
@@ -230,7 +230,7 @@ Cancellation is allowed during download but blocked once file writes begin (`isI
 
 The install can be triggered from two places:
 - Clicking the "Update Available · Click to Install" banner in the menu bar dropdown (`SwoopMenu.openDownloadURL`)
-- Clicking "Install Now" in the dialog shown by `SwoopMenu.handleCheckForUpdates`
+- Clicking "Install Now" in the dialog shown by the Updates pane's manual check
 
 Both call `startUpdate(downloadURL:)` which delegates to `UpdaterWindowController.shared.start(downloadURL:)`.
 
@@ -270,7 +270,7 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        ├─ Switch count + time-saved display (non-interactive)
        ├─ Version label
        ├─ Preferences… (shortcut: ,) → SettingsWindowController.shared.show()
-       └─ Quit (shortcut: Q)
+       └─ Quit Space Rabbit (shortcut: Q)
 
 SettingsWindowController (singleton, NSWindowDelegate)
   └─ SettingsRootViewController (NSSplitViewController — native sidebar layout)
@@ -307,6 +307,8 @@ bar's launch-at-login warning, which also sets
 **Accent color:** the app follows the user's system accent everywhere — do not
 hand-tint controls and do not set the per-app `AppleAccentColor` preference (it was
 tried and reverted; `main.swift` removes a leftover key from older builds at launch).
+`NSSwitch` has no tint API at all — a SwiftUI Toggle with `.tint` was tried for the
+menu header's master switch and reverted (the tint did not render in the menu).
 ```
 
 Custom controls: `LinkTextField` / `LinkButton` — subclasses that override `resetCursorRects()` to show a pointing-hand cursor.
@@ -337,7 +339,7 @@ Everything goes through the `Makefile`. No Xcode project.
 
 **During development, always use `make app-dev VERSION=0.0.0`** — the `VERSION=0.0.0` ensures the version is lower than any published release so the update checker never prompts. This target builds, kills the running instance, and relaunches in one step.
 
-**Compiler flags:** `swiftc -O` (optimized). Linked frameworks: CoreGraphics, CoreFoundation, ApplicationServices, AppKit, ServiceManagement.
+**Compiler flags:** `swiftc -O` (optimized, Swift 5 language mode — `Package.swift` pins `.swiftLanguageMode(.v5)` so LSP diagnostics match). Linked frameworks: CoreGraphics, CoreFoundation, ApplicationServices, AppKit, ServiceManagement.
 
 **Version flow:** `git describe --tags --abbrev=0` → strips `v` prefix → `sed` replaces `__VERSION__` in `Info.plist` → app reads it at runtime via `Bundle.main.infoDictionary?["CFBundleShortVersionString"]`.
 
@@ -378,7 +380,7 @@ local.env               — git-ignored; signing credentials
 - **`MARK` sections** — every file uses `// MARK: -` with descriptive headers.
 - **Doc comments** — `///` with `- Parameter:` and `- Returns:` annotations on all public/internal functions.
 - **Private API isolation** — all undocumented symbols confined to `PrivateAPI.swift`. Other files use typed function pointers and named constants.
-- **UI built programmatically** — no nibs, storyboards, or SwiftUI. All views use `NSStackView` + Auto Layout.
+- **UI built programmatically** — no nibs, storyboards, or SwiftUI. All views use `NSStackView` + Auto Layout. (A SwiftUI `Toggle` hosted in `NSHostingView` was tried for the menu header's master switch to get a tinted on-state, and reverted: the `.tint` did not render in the menu context.)
 - **C-compatible callbacks** — `eventTapCallback` and `onSignal` are global functions (not methods/closures) because their APIs require C function pointers.
 
 ## Known limitations

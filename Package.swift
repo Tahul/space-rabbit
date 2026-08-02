@@ -13,6 +13,12 @@ let package = Package(
             name: "SpaceRabbit",
             path: "App",
             exclude: ["Info.plist"],
+            swiftSettings: [
+                // Match the Makefile's swiftc invocation (Swift 5 language
+                // mode) so the LSP doesn't report Swift 6 strict-concurrency
+                // diagnostics the real build never sees
+                .swiftLanguageMode(.v5)
+            ],
             linkerSettings: [
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("CoreFoundation"),

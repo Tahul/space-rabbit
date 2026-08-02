@@ -6,9 +6,10 @@
  * Two entry points:
  *   - checkForUpdates()         — called once at launch (5 s delay), silently
  *                                 shows the tray banner when a newer DMG exists.
- *   - checkForUpdatesManually() — called from "Check for updates" in the menu,
- *                                 reports the result via callbacks so the caller
- *                                 can show dialogs and drive the install flow.
+ *   - checkForUpdatesManually() — called from "Check Now…" in the settings
+ *                                 window's Updates pane, reports the result via
+ *                                 callbacks so the caller can show dialogs and
+ *                                 drive the install flow.
  */
 
 import Foundation
