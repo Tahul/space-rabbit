@@ -77,20 +77,33 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     let eventMods = flags.intersection(kRelevantModifiers)
 
     // Direct "Switch to Desktop N" — jump straight to that desktop.
-    // switchToSpace handles the no-op case when we're already there.
+    // Mission Control numbers user desktops globally across displays and
+    // skips fullscreen spaces, so the lookup must match that numbering
+    // exactly (getUserDesktops, not the cursor display's full space list).
     for (idx, binding) in gSpaceKeys.enumerated() {
         guard let binding,
               keycode == binding.keycode,
               eventMods == binding.mods else { continue }
 
-        let spaceIDs = getSpaceList().ids
-        guard idx < spaceIDs.count else { return nil }
+        let desktops = getUserDesktops()
 
-        if switchToSpace(spaceIDs[idx]) {
+        // Layout unknown or no such desktop — pass the key through and
+        // let macOS decide natively instead of eating the shortcut.
+        guard idx < desktops.count else { return passthrough }
+
+        switch switchToSpace(desktops[idx]) {
+        case .switched:
             gLastSpaceSwitchTime = Date()
             gMenu?.recordSwitch()
+            return nil
+        case .alreadyThere:
+            // Swallow: the native handler would do nothing useful either
+            return nil
+        case .declined:
+            // We stood down (cross-display target at an animated speed,
+            // layout mismatch): let macOS perform its native switch.
+            return passthrough
         }
-        return nil
     }
 
     guard eventMods == gModMask else {

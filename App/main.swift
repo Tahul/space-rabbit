@@ -133,14 +133,20 @@ NotificationCenter.default.addObserver(
 //
 // Gracefully terminate on SIGINT/SIGTERM so the cleanup handler runs.
 // Without this, a `kill` or Ctrl+C would skip the willTerminate notification.
+//
+// A plain signal() handler may only call async-signal-safe functions —
+// dispatch and AppKit are not — so the signals are ignored at the process
+// level and observed via DispatchSource on the main queue instead.
 
-/// Signal handler — must be a global C-compatible function.
-func onSignal(_ sig: Int32) {
-    DispatchQueue.main.async { NSApp.terminate(nil) }
+signal(SIGINT,  SIG_IGN)
+signal(SIGTERM, SIG_IGN)
+
+let signalSources: [DispatchSourceSignal] = [SIGINT, SIGTERM].map { sig in
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    source.setEventHandler { NSApp.terminate(nil) }
+    source.resume()
+    return source
 }
-
-signal(SIGINT,  onSignal)
-signal(SIGTERM, onSignal)
 
 // MARK: - Run
 

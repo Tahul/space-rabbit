@@ -144,8 +144,16 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
     ///
     /// - Parameter downloadURL: Direct HTTPS URL to the DMG asset.
     func start(downloadURL: String) {
-        currentURL   = downloadURL
-        isInstalling = false
+        // Ignore re-entry while an install is writing files: restarting the
+        // flow would reset `isInstalling`, re-enabling Cancel mid-write and
+        // letting a second download race the ongoing bundle swap.
+        guard !isInstalling else { return }
+
+        // Validate the URL before touching any UI, so a malformed one can't
+        // leave the window stuck on an indeterminate spinner with no task.
+        guard let url = URL(string: downloadURL) else { return }
+
+        currentURL = downloadURL
 
         // Cancel any in-flight session silently. `invalidateAndCancel` prevents
         // the error delegate from firing for the cancelled download.
@@ -167,7 +175,6 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
         // Create a new URLSession with ourselves as the download delegate.
         // We use a dedicated session (not URLSession.shared) so we can
         // invalidate it cleanly on cancel without affecting other networking.
-        guard let url = URL(string: downloadURL) else { return }
         let s    = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
         session  = s
         downloadTask = s.downloadTask(with: url)
@@ -273,13 +280,31 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
         }
 
         // Transition to the installation phase: disable cancel and show
-        // indeterminate progress while files are being copied
-        DispatchQueue.main.async {
-            self.isInstalling               = true
-            self.statusLabel.stringValue    = "Installing…"
+        // indeterminate progress while files are being copied.
+        //
+        // This block runs *synchronously* on the main thread so that by the
+        // time install() starts below, Cancel and window-close (both handled
+        // on the main thread) already see `isInstalling == true`. Dispatching
+        // async here left a gap where the user could tear the session down
+        // while files were being written.
+        var cancelledMeanwhile = false
+        DispatchQueue.main.sync {
+            // The user may have cancelled in the instant between the download
+            // completing and this block running — honor it and don't install.
+            guard self.session != nil else {
+                cancelledMeanwhile = true
+                return
+            }
+            self.isInstalling                = true
+            self.statusLabel.stringValue     = "Installing…"
             self.progressBar.isIndeterminate = true
             self.progressBar.startAnimation(nil)
-            self.cancelButton.isEnabled     = false
+            self.cancelButton.isEnabled      = false
+        }
+
+        if cancelledMeanwhile {
+            try? FileManager.default.removeItem(at: dmgPath)
+            return
         }
 
         // The install runs synchronously on the URLSession's background

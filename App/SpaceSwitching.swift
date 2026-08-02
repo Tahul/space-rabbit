@@ -137,6 +137,40 @@ func getSpaceList() -> (ids: [CGSSpaceID], currentIdx: Int) {
     return ([], -1)
 }
 
+/// Returns the IDs of all user desktops across every display, matching
+/// Mission Control's "Desktop N" numbering.
+///
+/// Mission Control numbers only user desktops (`type` 0) — fullscreen and
+/// system spaces are skipped, so including them here would shift every
+/// "Switch to Desktop N" binding once a fullscreen app exists. With
+/// "Displays have separate Spaces" the numbering continues across displays
+/// in the order the window server reports them.
+///
+/// - Returns: Ordered user-desktop space IDs, or `[]` if the layout
+///            cannot be determined.
+func getUserDesktops() -> [CGSSpaceID] {
+    guard let mainConn    = cgsMainConnection,
+          let getDisplays = cgsCopyDisplaySpaces else { return [] }
+
+    let cid = mainConn()
+    guard cid != 0 else { return [] }
+
+    guard let displays = getDisplays(cid, nil)?.takeRetainedValue() as? [[String: Any]]
+    else { return [] }
+
+    var desktops = [CGSSpaceID]()
+    for display in displays {
+        guard let spaces = display["Spaces"] as? [[String: Any]] else { continue }
+        for space in spaces {
+            guard let sid = (space["id64"] as? NSNumber)?.uint64Value else { continue }
+            // A missing "type" is treated as a user desktop (type 0)
+            let type = (space["type"] as? NSNumber)?.intValue ?? 0
+            if type == 0 { desktops.append(sid) }
+        }
+    }
+    return desktops
+}
+
 /// Returns the UUID string of the primary display — the one CGS calls
 /// "Main" in `CGSCopyManagedDisplaySpaces` dictionaries — or `nil` if it
 /// cannot be determined.
@@ -191,8 +225,18 @@ private func getAllCurrentSpaces() -> [CGSSpaceID] {
 
 // MARK: - Window-to-Space Mapping
 
-/// Returns the space IDs of all on-screen windows belonging to the given
-/// process, in front-to-back order, split into two groups:
+/// Space information for one group of a process's windows.
+private struct WindowGroup {
+    /// `true` when at least one window in the group is onscreen — i.e.
+    /// composited on a currently visible space — which by itself proves
+    /// the app is already reachable without switching.
+    var hasOnscreenWindow = false
+
+    /// Spaces of the group's non-onscreen windows, in front-to-back order.
+    var offscreenSpaces: [CGSSpaceID] = []
+}
+
+/// Maps the given process's windows to their spaces, split into two groups:
 ///
 /// - `normal`: layer-0 windows (regular app windows — excludes menus,
 ///   tooltips, status items, etc.)
@@ -200,31 +244,41 @@ private func getAllCurrentSpaces() -> [CGSSpaceID] {
 ///   desktop-icons window, status-item windows of menu-bar apps).
 ///   Used as a fallback by `findSpaceForPid` — see there.
 ///
-/// Each window is mapped to its space via the private `SLSCopySpacesForWindows`
-/// API. Windows that cannot be resolved to a valid space are skipped.
+/// `kCGWindowIsOnscreen` is present only when a window is composited on a
+/// currently visible space — it can NOT distinguish "on another space"
+/// from "minimized/hidden"; both simply lack the key. Onscreen windows
+/// short-circuit (no space lookup needed: onscreen implies reachable);
+/// every other window is resolved to its space via the private
+/// `SLSCopySpacesForWindows` API, and windows that cannot be resolved to
+/// a valid space are skipped.
 ///
 /// - Parameter pid: The Unix process ID of the target application.
-/// - Returns: Ordered space IDs of the process's normal and anchored windows.
-private func visibleWindowSpaces(for pid: pid_t) -> (normal: [CGSSpaceID], anchored: [CGSSpaceID]) {
+/// - Returns: The process's normal and anchored window groups.
+private func visibleWindowSpaces(for pid: pid_t) -> (normal: WindowGroup, anchored: WindowGroup) {
     guard let mainConn  = cgsMainConnection,
-          let spacesFor = slsCopySpacesForWindows else { return ([], []) }
+          let spacesFor = slsCopySpacesForWindows else { return (WindowGroup(), WindowGroup()) }
 
     let cid = mainConn()
-    guard cid != 0 else { return ([], []) }
+    guard cid != 0 else { return (WindowGroup(), WindowGroup()) }
 
     guard let windowList = CGWindowListCopyWindowInfo(.optionAll, 0) as? [[String: Any]]
-    else { return ([], []) }
+    else { return (WindowGroup(), WindowGroup()) }
 
-    var normal   = [CGSSpaceID]()
-    var anchored = [CGSSpaceID]()
+    var normal   = WindowGroup()
+    var anchored = WindowGroup()
 
     for window in windowList {
         // Only consider windows owned by the target process
         guard (window["kCGWindowOwnerPID"] as? NSNumber)?.int32Value == pid else { continue }
 
-        // Skip offscreen/hidden windows (minimized, behind other spaces)
-        if let onscreen = (window["kCGWindowIsOnscreen"] as? NSNumber)?.int32Value,
-           onscreen == 0 { continue }
+        let isNormal = ((window["kCGWindowLayer"] as? NSNumber)?.int32Value ?? 0) == 0
+
+        // Onscreen — the app is visible right now, no lookup needed
+        if (window["kCGWindowIsOnscreen"] as? NSNumber)?.boolValue == true {
+            if isNormal { normal.hasOnscreenWindow   = true }
+            else        { anchored.hasOnscreenWindow = true }
+            continue
+        }
 
         guard let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value
         else { continue }
@@ -237,12 +291,8 @@ private func visibleWindowSpaces(for pid: pid_t) -> (normal: [CGSSpaceID], ancho
               spaceID != 0
         else { continue }
 
-        let layer = (window["kCGWindowLayer"] as? NSNumber)?.int32Value ?? 0
-        if layer == 0 {
-            normal.append(spaceID)
-        } else {
-            anchored.append(spaceID)
-        }
+        if isNormal { normal.offscreenSpaces.append(spaceID)   }
+        else        { anchored.offscreenSpaces.append(spaceID) }
     }
 
     return (normal, anchored)
@@ -270,29 +320,52 @@ private func visibleWindowSpaces(for pid: pid_t) -> (normal: [CGSSpaceID], ancho
 ///            accessible on a visible space (no switch needed).
 func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
     let currentSpaces = getAllCurrentSpaces()
-    let (normalSpaces, anchoredSpaces) = visibleWindowSpaces(for: pid)
+    let (normal, anchored) = visibleWindowSpaces(for: pid)
 
-    // If any window is already on a visible space, the app is reachable.
-    // Don't follow — this prevents chasing a second window on a different
-    // space when the user is already on the right one.
-    for sid in normalSpaces {
-        if currentSpaces.contains(sid) { return 0 }
+    /// Destination derived from one window group: `0` when the group proves
+    /// the app already reachable, the frontmost off-screen window's space to
+    /// chase (first in the list — CGWindowList is front-to-back), or `nil`
+    /// when the group has no windows to go by.
+    func destination(for group: WindowGroup) -> CGSSpaceID? {
+        // An onscreen window means the app is visible right now
+        if group.hasOnscreenWindow { return 0 }
+
+        // A non-onscreen window whose space is currently visible is
+        // minimized or hidden: native activation doesn't navigate anywhere
+        // for those, so neither do we.
+        //
+        // Known limitation: a minimized window whose home space is NOT
+        // visible is indistinguishable from a regular window on another
+        // space (see visibleWindowSpaces), so it may still be chased.
+        for sid in group.offscreenSpaces where currentSpaces.contains(sid) {
+            return 0
+        }
+        return group.offscreenSpaces.first
     }
 
-    // Return the frontmost off-screen window's space (first in the list,
-    // since CGWindowList returns windows in front-to-back order)
-    if let first = normalSpaces.first { return first }
+    if let target = destination(for: normal) { return target }
 
     // No normal windows anywhere — fall back to space-anchored helper
     // windows, which macOS would otherwise navigate to with an animated
     // switch.
-    for sid in anchoredSpaces {
-        if currentSpaces.contains(sid) { return 0 }
-    }
-
-    return anchoredSpaces.first ?? 0
+    return destination(for: anchored) ?? 0
 }
 
+
+/// Outcome of a `switchToSpace` request. The three cases matter to the
+/// event tap, which must decide whether to swallow the triggering key
+/// event or pass it through to macOS's native handler.
+enum SpaceSwitchResult {
+    /// Switch gestures were posted — the space change is handled by us.
+    case switched
+    /// The target space is already frontmost on its display — nothing to do,
+    /// and no native fallback is wanted (it would just bounce or no-op).
+    case alreadyThere
+    /// Space Rabbit stood down: layout unknown, private-API failure, or a
+    /// cross-display target at an animated speed. The caller should let
+    /// macOS handle the switch natively (e.g. pass the key event through).
+    case declined
+}
 
 /// Switches to the space identified by `targetSpace` on whichever display
 /// contains it.
@@ -302,19 +375,16 @@ func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
 /// steps, and posts that many gesture pairs.
 ///
 /// - Parameter targetSpace: The space ID to switch to.
-/// - Returns: `true` if switch gestures were posted; `false` when nothing
-///            was done (already on the target, layout unknown, or the target
-///            lives on a display our gesture cannot reach).
-@discardableResult
-func switchToSpace(_ targetSpace: CGSSpaceID) -> Bool {
+/// - Returns: See `SpaceSwitchResult`.
+func switchToSpace(_ targetSpace: CGSSpaceID) -> SpaceSwitchResult {
     guard let mainConn    = cgsMainConnection,
-          let getDisplays = cgsCopyDisplaySpaces else { return false }
+          let getDisplays = cgsCopyDisplaySpaces else { return .declined }
 
     let cid = mainConn()
-    guard cid != 0 else { return false }
+    guard cid != 0 else { return .declined }
 
     guard let displays = getDisplays(cid, nil)?.takeRetainedValue() as? [[String: Any]]
-    else { return false }
+    else { return .declined }
 
     for display in displays {
         guard let currentSpaceDict = display["Current Space"] as? [String: Any],
@@ -337,10 +407,10 @@ func switchToSpace(_ targetSpace: CGSSpaceID) -> Bool {
         guard targetIdx >= 0 else { continue }
 
         // Already on the target space — nothing to do
-        guard targetIdx != currentIdx else { return false }
+        guard targetIdx != currentIdx else { return .alreadyThere }
 
         // Need at least two spaces and a valid current position to navigate
-        guard currentIdx >= 0, spaceIDs.count >= 2 else { return false }
+        guard currentIdx >= 0, spaceIDs.count >= 2 else { return .declined }
 
         // Compute direction and step count for sequential navigation
         let direction = targetIdx > currentIdx ? 1 : -1
@@ -368,16 +438,17 @@ func switchToSpace(_ targetSpace: CGSSpaceID) -> Bool {
 
         if onCursorDisplay {
             switchNSpaces(direction: direction, steps: steps)
-            return true
+            return .switched
         }
 
         // Target lives on another display (or the cursor couldn't be
-        // resolved): try the cursor-warp trick; falls back to macOS's
-        // native animated switch when it declines (returns false).
+        // resolved): try the cursor-warp trick; when it declines, report
+        // that so the caller can fall back to macOS's native switch.
         return switchOnOtherDisplay(display, direction: direction, steps: steps)
+            ? .switched : .declined
     }
 
-    return false
+    return .declined
 }
 
 // MARK: - Cross-Display Switching (Cursor Warp)
