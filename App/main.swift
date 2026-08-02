@@ -49,17 +49,11 @@ loadSpaceSwitchShortcuts()
 // (switch count, feature toggles, etc.) from UserDefaults
 gMenu = SwoopMenu()
 
-// Check for updates 5 seconds after launch, giving the app
-// time to settle before making a network request…
+// Check for updates 5 seconds after launch, giving the app time to
+// settle before making a network request. Launch-only by design: no
+// periodic background re-check (a manual check lives in the settings
+// window's Updates pane).
 DispatchQueue.main.asyncAfter(deadline: .now() + 5) { checkForUpdates() }
-
-// …and once a day thereafter: the app typically runs for weeks between
-// launches, so a single launch-time check would leave long-running
-// instances unaware of new releases.
-let updateCheckInterval: TimeInterval = 60 * 60 * 24
-let updateCheckTimer = Timer.scheduledTimer(withTimeInterval: updateCheckInterval,
-                                            repeats: true) { _ in checkForUpdates() }
-updateCheckTimer.tolerance = updateCheckInterval / 10
 
 // Persist the switch count to disk every 5 minutes.
 // This batching reduces disk I/O compared to writing on every switch.
