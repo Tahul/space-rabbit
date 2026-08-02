@@ -3,7 +3,8 @@
  *
  * Manages the rabbit icon in the macOS menu bar and its dropdown menu.
  * The menu provides:
- *   - Enable/disable toggle (also available via right-click on the icon)
+ *   - Header row with the app name and a native switch for the master
+ *     on/off toggle (also available via right-click on the icon)
  *   - Feature toggles (instant switch, auto-follow)
  *   - Usage statistics (switch count + estimated time saved)
  *   - Access to the settings window
@@ -16,20 +17,18 @@ import ServiceManagement
 
 // MARK: - Constants
 
-/// Colors used in the enable/disable toggle button icons.
-private enum ToggleColors {
-    /// Coral red — used for the "Disable" button icon.
-    static let disable = NSColor(red: 0.94, green: 0.51, blue: 0.40, alpha: 1)
-
-    /// Teal green — used for the "Enable" button icon.
-    static let enable  = NSColor(red: 0.19, green: 0.77, blue: 0.55, alpha: 1)
-}
-
 /// Alpha applied to the menu bar icon when the app is disabled.
 private let kDisabledIconAlpha: CGFloat = 0.25
 
 /// Size (in points) for tinted SF Symbol icons used in menu items.
 private let kMenuIconSize: CGFloat = 16
+
+/// Height (in points) of the header row hosting the master enable switch.
+private let kEnableRowHeight: CGFloat = 36
+
+/// Horizontal content inset (in points) for the header row, aligning it
+/// with the text of regular menu items.
+private let kEnableRowInset: CGFloat = 14
 
 // MARK: - Time Formatting
 
@@ -73,10 +72,13 @@ final class SwoopMenu: NSObject {
     // MARK: Menu Items
 
     private let statusItem:          NSStatusItem
-    private let enableItem:          NSMenuItem
     private let instantSwitchItem:   NSMenuItem
     private let autoFollowItem:      NSMenuItem
     private let statsItem:           NSMenuItem
+
+    /// Header row at the top of the menu: app name + master enable switch.
+    private let enableSwitchItem:    NSMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private var enableSwitch:        NSSwitch!
 
     /// Banner shown at the top of the menu when an update is available.
     private let updateAvailableItem: NSMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -119,9 +121,6 @@ final class SwoopMenu: NSObject {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         // Create the main menu items with keyboard shortcuts
-        enableItem        = NSMenuItem(title: "Enable Space Rabbit",
-                                       action: #selector(toggleEnabled(_:)),
-                                       keyEquivalent: "")
         instantSwitchItem = NSMenuItem(title: "Instant Space Switch \u{2303}\u{2194}",
                                        action: #selector(toggleInstantSwitch(_:)),
                                        keyEquivalent: "s")
@@ -132,6 +131,7 @@ final class SwoopMenu: NSObject {
 
         super.init()
 
+        configureEnableSwitchRow()
         configureUpdateBanner()
         configureLaunchWarningBanner()
         configureMenuItemTargets()
@@ -141,12 +141,49 @@ final class SwoopMenu: NSObject {
 
         // Set initial UI state
         updateMenuBarIcon()
-        updateEnableItem()
         updateStatsDisplay()
         updateLaunchWarning()
     }
 
     // MARK: - Init Helpers
+
+    /// Builds the header row shown at the very top of the menu: the app name
+    /// in bold next to a native switch bound to the master enabled state.
+    private func configureEnableSwitchRow() {
+        let label = NSTextField(labelWithString: "Space Rabbit")
+        label.font      = NSFont.systemFont(ofSize: 13, weight: .bold)
+        label.textColor = .labelColor
+
+        enableSwitch             = NSSwitch()
+        enableSwitch.controlSize = .small
+        enableSwitch.target      = self
+        enableSwitch.action      = #selector(enableSwitchChanged(_:))
+        enableSwitch.state       = gEnabled ? .on : .off
+
+        // The container is stretched to the menu's width via its autoresizing
+        // mask; the initial frame just avoids transient constraint conflicts.
+        let container = NSView(frame: NSRect(x: 0, y: 0,
+                                             width: 240, height: kEnableRowHeight))
+        container.autoresizingMask = [.width]
+
+        label.translatesAutoresizingMaskIntoConstraints        = false
+        enableSwitch.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(label)
+        container.addSubview(enableSwitch)
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor,
+                                           constant: kEnableRowInset),
+            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            enableSwitch.trailingAnchor.constraint(equalTo: container.trailingAnchor,
+                                                   constant: -kEnableRowInset),
+            enableSwitch.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            enableSwitch.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor,
+                                                  constant: 16),
+        ])
+
+        enableSwitchItem.view = container
+    }
 
     /// Configures the update-available banner (hidden until an update is found).
     private func configureUpdateBanner() {
@@ -164,7 +201,6 @@ final class SwoopMenu: NSObject {
 
     /// Wires up targets and initial toggle states for all menu items.
     private func configureMenuItemTargets() {
-        enableItem.target         = self
         instantSwitchItem.target  = self
         instantSwitchItem.state   = gInstantSwitchEnabled ? .on : .off
         autoFollowItem.target     = self
@@ -204,15 +240,15 @@ final class SwoopMenu: NSObject {
 
         statusMenu = NSMenu()
 
+        // Header row: app name + master enable switch
+        statusMenu.addItem(enableSwitchItem)
+        statusMenu.addItem(.separator())
+
         // Conditional banners (hidden when not applicable)
         statusMenu.addItem(updateAvailableItem)
         statusMenu.addItem(updateAvailableSep)
         statusMenu.addItem(launchWarningItem)
         statusMenu.addItem(launchWarningSep)
-
-        // Master toggle
-        statusMenu.addItem(enableItem)
-        statusMenu.addItem(.separator())
 
         // Feature toggles section
         statusMenu.addItem(menuHeader("Configure:"))
@@ -319,20 +355,6 @@ final class SwoopMenu: NSObject {
         statusItem.button?.alphaValue = gEnabled ? 1.0 : kDisabledIconAlpha
     }
 
-    /// Updates the enable/disable menu item text and icon color.
-    ///
-    /// Shows "Disable Space Rabbit" with a red X when enabled,
-    /// or "Enable Space Rabbit" with a green checkmark when disabled.
-    private func updateEnableItem() {
-        if gEnabled {
-            enableItem.title = "Disable Space Rabbit"
-            enableItem.image = tintedSymbol("xmark.circle.fill", color: ToggleColors.disable)
-        } else {
-            enableItem.title = "Enable Space Rabbit"
-            enableItem.image = tintedSymbol("checkmark.circle.fill", color: ToggleColors.enable)
-        }
-    }
-
     /// Creates a two-tone SF Symbol image suitable for use as a menu item icon.
     ///
     /// Uses the palette rendering mode: the inner shape gets white (light mode)
@@ -397,8 +419,8 @@ final class SwoopMenu: NSObject {
 
     // MARK: - Actions
 
-    @objc private func toggleEnabled(_ sender: NSMenuItem) {
-        setEnabled(!gEnabled)
+    @objc private func enableSwitchChanged(_ sender: NSSwitch) {
+        setEnabled(sender.state == .on)
     }
 
     /// Sets the master enabled state, persists it, and updates the UI.
@@ -409,7 +431,7 @@ final class SwoopMenu: NSObject {
         UserDefaults.standard.set(gEnabled, forKey: Defaults.enabled)
 
         updateMenuBarIcon()
-        updateEnableItem()
+        enableSwitch.state = gEnabled ? .on : .off
     }
 
     @objc private func openSettings() {

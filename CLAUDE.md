@@ -197,8 +197,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |
 | `kMenuIconSize` | MenuBar | `16` (CGFloat) | Tinted SF Symbol size in menu items |
 | `kDisabledIconAlpha` | MenuBar | `0.25` (CGFloat) | Menu bar icon opacity when disabled |
-| `ToggleColors.disable` | MenuBar | coral red | Color for "Disable" button icon |
-| `ToggleColors.enable` | MenuBar | teal green | Color for "Enable" button icon |
+| `kEnableRowHeight` / `kEnableRowInset` | MenuBar | `36` / `14` (CGFloat) | Sizing for the header row hosting the master enable switch |
 | `Layout.*` | Settings | various | All spacing/sizing/padding for preferences window |
 | `CarbonModifier.*` | Shortcuts | hex bitmasks | Legacy Carbon modifier flag values |
 | `kHotkeyMoveLeftSpace` | Shortcuts | `"79"` | System hotkey ID for left-space |
@@ -243,7 +242,7 @@ Toggles can be changed from two places. The sync pattern:
 2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
 3. **Settings pane appears** (`viewWillAppear`, fires on every pane swap): refreshes its switch controls from globals
 
-Master enable/disable (`gEnabled`) is only togglable from the menu bar (menu item or right-click).
+Master enable/disable (`gEnabled`) is only togglable from the menu bar (header-row switch or right-click on the icon; both go through `setEnabled`, which keeps the switch state in sync).
 
 ### The NSStatusItem right-click trick
 
@@ -260,9 +259,10 @@ This is in `SwoopMenu.statusItemClicked(_:)`.
 ```
 SwoopMenu (NSStatusItem, icon: "hare.fill")
   └─ NSMenu
+       ├─ Header row (custom-view item): bold "Space Rabbit" label + small
+       │    native NSSwitch bound to gEnabled (Klack-style master toggle)
        ├─ Update-available banner (hidden by default, shown by checkForUpdates)
        ├─ Launch-at-login warning banner (hidden when SMAppService.mainApp.status == .enabled)
-       ├─ Enable/Disable toggle (icon changes between green checkmark / red X)
        ├─ "Configure:" section header
        ├─ Instant space switch toggle (checkmark, shortcut: S)
        ├─ Auto-follow on ⌘⇥ toggle (checkmark, shortcut: F)
