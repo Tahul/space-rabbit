@@ -51,9 +51,10 @@ private func formatTimeSaved(_ seconds: Int) -> String {
         let minutes = (seconds % 3600) / 60
         return minutes > 0 ? "\(hours) hr \(minutes) min" : "\(hours) hr"
     default:
-        let days  = seconds / 86400
-        let hours = (seconds % 86400) / 3600
-        return hours > 0 ? "\(days) days \(hours) hr" : "\(days) days"
+        let days    = seconds / 86400
+        let hours   = (seconds % 86400) / 3600
+        let daysStr = days == 1 ? "\(days) day" : "\(days) days"
+        return hours > 0 ? "\(daysStr) \(hours) hr" : daysStr
     }
 }
 
@@ -563,7 +564,8 @@ final class SwoopMenu: NSObject {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         let countStr = formatter.string(from: NSNumber(value: gSwitchCount)) ?? "\(gSwitchCount)"
-        statsItem.title = "\(countStr) switches  \u{00B7}  \(formatTimeSaved(gSwitchCount)) saved"
+        let switchesStr = gSwitchCount == 1 ? "switch" : "switches"
+        statsItem.title = "\(countStr) \(switchesStr)  \u{00B7}  \(formatTimeSaved(gSwitchCount)) saved"
     }
 
     /// Increments the switch counter and refreshes the stats display.
