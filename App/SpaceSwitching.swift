@@ -36,6 +36,33 @@ private let kInstantSwitchProgress: Double = 2.0
 /// Positive = right, negative = left.
 private let kInstantSwitchVelocity: Double = 400.0
 
+/// Velocity range for animated (non-instant) switches, mapped from the
+/// user's transition-speed slider. Calibrated against InstantSpaceSwitcher's
+/// speed presets (Fast=50, Faster=60, Fastest=80): the slider's animated
+/// ticks at 0.25/0.50/0.75 interpolate to 50/60/70 — the Dock treats
+/// velocities well above that band as instant.
+private let kAnimatedVelocityMin: Double = 40.0
+private let kAnimatedVelocityMax: Double = 80.0
+
+/// Whether switches should use macOS's native animation (slider at the
+/// "Normal" tick). At this setting Space Rabbit posts no gestures at all:
+/// the event tap passes shortcuts through and auto-follow stands down,
+/// so the OS performs its default animated switch.
+func isNativeSwitchSpeed() -> Bool {
+    gSwitchSpeed <= 0.0
+}
+
+/// Returns the gesture velocity for the current transition-speed setting:
+/// `kInstantSwitchVelocity` when the slider sits at its "Instant" end cap
+/// (`gSwitchSpeed == 1.0`), otherwise a velocity interpolated within the
+/// animated range so the Dock plays a slide at the chosen speed.
+/// Not meaningful at the "Normal" tick — callers check `isNativeSwitchSpeed()`
+/// first and never post gestures there.
+func currentSwitchVelocity() -> Double {
+    guard gSwitchSpeed < 1.0 else { return kInstantSwitchVelocity }
+    return kAnimatedVelocityMin + (kAnimatedVelocityMax - kAnimatedVelocityMin) * gSwitchSpeed
+}
+
 // MARK: - Space Layout Queries
 
 /// Returns the space IDs for the display the cursor is currently over,
@@ -360,7 +387,7 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
 ///   - velocity: Magnitude of the Ended-phase velocity.
 /// - Returns: `true` if both gesture phases were posted successfully.
 func postSwitchGesture(direction: Int,
-                       velocity: Double = kInstantSwitchVelocity) -> Bool {
+                       velocity: Double = currentSwitchVelocity()) -> Bool {
     let isRight              = direction > 0
     let flagDirection: Int64 = isRight ? 1 : 0
     let progress             = isRight ? kInstantSwitchProgress : -kInstantSwitchProgress
@@ -396,7 +423,7 @@ func postSwitchGesture(direction: Int,
 ///   - direction: `-1` for left, `+1` for right.
 ///   - steps: How many spaces to traverse.
 private func switchNSpaces(direction: Int, steps: Int) {
-    let velocity = kInstantSwitchVelocity * Double(steps)
+    let velocity = currentSwitchVelocity() * Double(steps)
     for i in 0..<steps where !postSwitchGesture(direction: direction, velocity: velocity) {
         fputs("Space Rabbit: gesture failed at step \(i + 1)/\(steps)\n", stderr)
         break

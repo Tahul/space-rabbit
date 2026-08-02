@@ -39,6 +39,11 @@ final class SwoopObserver: NSObject {
     @objc func appActivated(_ note: Notification) {
         guard gEnabled, gAutoFollowEnabled else { return }
 
+        // At the "Normal" transition speed, macOS's own activation logic
+        // already navigates to the app's space with the native animation —
+        // exactly what the user asked for. Stand down.
+        guard !isNativeSwitchSpeed() else { return }
+
         // Suppress auto-follow when instant-switch just fired
         // (see kAutoFollowSuppressionWindow documentation above)
         guard Date().timeIntervalSince(gLastSpaceSwitchTime) > kAutoFollowSuppressionWindow

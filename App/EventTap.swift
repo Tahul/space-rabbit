@@ -61,6 +61,13 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         return passthrough
     }
 
+    // At the "Normal" transition speed the user wants macOS's native
+    // animated switch — let every shortcut through untouched so the OS
+    // handles it exactly as if Space Rabbit weren't running.
+    guard !isNativeSwitchSpeed() else {
+        return passthrough
+    }
+
     let flags   = event.flags
     let keycode = event.getIntegerValueField(.keyboardEventKeycode)
 

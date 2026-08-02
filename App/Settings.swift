@@ -140,6 +140,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentViewController = tabVC
+
+        // The window is created once and reused, so without this it stays
+        // assigned to the space it first appeared on — reopening it from
+        // another space would switch back there. Follow the user instead.
+        window.collectionBehavior.insert(.moveToActiveSpace)
         return window
     }
 }
@@ -163,6 +168,9 @@ final class GeneralViewController: NSViewController {
 
     private var instantSwitchControl:   NSSwitch!
     private var autoFollowControl:      NSSwitch!
+    private var speedSlider:            NSSlider!
+    private var speedValueLabel:        NSTextField!
+    private var speedBoltIcon:          NSImageView!
     private var soundsControl:          NSSwitch!
     private var launchAtLoginControl:   NSSwitch!
     private var launchStatusLabel:      NSTextField!
@@ -215,6 +223,13 @@ final class GeneralViewController: NSViewController {
             color:   NSColor(red: 0.35, green: 0.75, blue: 0.40, alpha: 1),
             label:   "Instant App switch",
             control: autoFollowControl
+        ))
+        featuresGroup.addArrangedSubview(rowDivider())
+        featuresGroup.addArrangedSubview(settingsRow(
+            symbol:  "speedometer",
+            color:   NSColor(red: 0.95, green: 0.52, blue: 0.25, alpha: 1),
+            label:   "Transition speed",
+            control: makeSpeedControl()
         ))
 
         // --- Group 3: Interface ---
@@ -366,6 +381,8 @@ final class GeneralViewController: NSViewController {
         // while the settings window was closed
         instantSwitchControl.state   = gInstantSwitchEnabled      ? .on : .off
         autoFollowControl.state      = gAutoFollowEnabled         ? .on : .off
+        speedSlider.doubleValue      = gSwitchSpeed
+        updateSpeedDisplay()
         soundsControl.state          = gSoundsEnabled             ? .on : .off
         instantDockHideControl.state = isDockInstantHideEnabled() ? .on : .off
         updateDockResetLink()
@@ -514,6 +531,81 @@ final class GeneralViewController: NSViewController {
         return box
     }
 
+    /// Builds the transition-speed control: a 5-tick slider with a trailing
+    /// value label. Ticks map to Normal (macOS's native animation — Space
+    /// Rabbit stands down entirely), Fast, Faster, Fastest (synthetic
+    /// gestures at increasing velocity), and Instant (the right end cap).
+    private func makeSpeedControl() -> NSView {
+        speedSlider = NSSlider(value: gSwitchSpeed, minValue: 0, maxValue: 1,
+                               target: self, action: #selector(speedChanged))
+        speedSlider.controlSize  = .small
+        speedSlider.isContinuous = true
+        speedSlider.numberOfTickMarks         = 5
+        speedSlider.allowsTickMarkValuesOnly  = true
+        speedSlider.translatesAutoresizingMaskIntoConstraints = false
+
+        speedValueLabel = NSTextField(labelWithString: "")
+        speedValueLabel.font = .systemFont(ofSize: 11)
+
+        // Thunder bolt shown only at the "Instant" end cap
+        speedBoltIcon = NSImageView()
+        speedBoltIcon.image = NSImage(systemSymbolName: "bolt.fill",
+                                      accessibilityDescription: "Instant")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
+
+        // Bolt + label hug each other and anchor to the trailing edge of a
+        // fixed-width wrapper, so the text stays flush right (and the slider
+        // stays put) without dead space opening up between icon and text.
+        let tail = NSStackView(views: [speedBoltIcon, speedValueLabel])
+        tail.orientation = .horizontal
+        tail.spacing     = 3
+        tail.alignment   = .centerY
+        tail.translatesAutoresizingMaskIntoConstraints = false
+
+        let tailWrapper = NSView()
+        tailWrapper.translatesAutoresizingMaskIntoConstraints = false
+        tailWrapper.addSubview(tail)
+
+        let stack = NSStackView(views: [speedSlider, tailWrapper])
+        stack.orientation = .horizontal
+        stack.spacing     = 8
+        stack.alignment   = .centerY
+
+        NSLayoutConstraint.activate([
+            speedSlider.widthAnchor.constraint(equalToConstant: 100),
+            tailWrapper.widthAnchor.constraint(equalToConstant: 52),
+            tailWrapper.heightAnchor.constraint(equalTo: tail.heightAnchor),
+            tail.trailingAnchor.constraint(equalTo: tailWrapper.trailingAnchor),
+            tail.centerYAnchor.constraint(equalTo: tailWrapper.centerYAnchor),
+        ])
+
+        updateSpeedDisplay()
+        return stack
+    }
+
+    /// Refreshes the speed value label and bolt icon for the current setting.
+    /// At "Instant" the text turns primary (white in dark mode) and the
+    /// thunder bolt appears, tinted to match; other ticks show dimmed text.
+    private func updateSpeedDisplay() {
+        let isInstant = gSwitchSpeed >= 1.0
+        speedValueLabel.stringValue = speedDescription()
+        speedValueLabel.textColor   = isInstant ? .labelColor : .secondaryLabelColor
+        speedBoltIcon.contentTintColor = .labelColor
+        speedBoltIcon.isHidden         = !isInstant
+    }
+
+    /// Human-readable name for the current transition-speed tick.
+    /// "Normal" means macOS's native animation (no synthetic gestures).
+    private func speedDescription() -> String {
+        guard gSwitchSpeed < 1.0 else { return "Instant" }
+        switch gSwitchSpeed {
+        case ..<0.25: return "Normal"
+        case ..<0.50: return "Fast"
+        case ..<0.75: return "Faster"
+        default:      return "Fastest"
+        }
+    }
+
     /// Creates a mini `NSSwitch` pre-configured with the given state and action.
     ///
     /// - Parameters:
@@ -611,6 +703,12 @@ final class GeneralViewController: NSViewController {
         gAutoFollowEnabled = autoFollowControl.state == .on
         UserDefaults.standard.set(gAutoFollowEnabled, forKey: Defaults.autoFollow)
         gMenu?.syncMenuItems()
+    }
+
+    @objc private func speedChanged() {
+        gSwitchSpeed = speedSlider.doubleValue
+        UserDefaults.standard.set(gSwitchSpeed, forKey: Defaults.switchSpeed)
+        updateSpeedDisplay()
     }
 
     @objc private func toggleSounds() {

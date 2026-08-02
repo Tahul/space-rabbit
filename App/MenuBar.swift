@@ -103,6 +103,7 @@ final class SwoopMenu: NSObject {
             Defaults.instantSwitch: true,
             Defaults.autoFollow:    true,
             Defaults.sounds:        false,
+            Defaults.switchSpeed:   1.0,
             Defaults.switchCount:   0,
         ])
 
@@ -112,6 +113,7 @@ final class SwoopMenu: NSObject {
         gInstantSwitchEnabled = defaults.bool(forKey: Defaults.instantSwitch)
         gAutoFollowEnabled    = defaults.bool(forKey: Defaults.autoFollow)
         gSoundsEnabled        = defaults.bool(forKey: Defaults.sounds)
+        gSwitchSpeed          = defaults.double(forKey: Defaults.switchSpeed)
         gSwitchCount          = defaults.integer(forKey: Defaults.switchCount)
         gSwitchCountSaved     = gSwitchCount
 
