@@ -62,10 +62,10 @@ The tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to st
 Listens for `NSWorkspace.didActivateApplicationNotification`. When an app is activated:
 
 1. **Suppression check** — skip if within `kAutoFollowSuppressionWindow` (300ms) of the last space switch
-2. `findSpaceForPid(_:)` uses `visibleWindowSpaces(for:)` to find the app's window spaces, returns 0 if already reachable
-3. `appWindowsConfinedToSpace(_:_:)` checks if `.activateAllWindows` is safe (no windows on other spaces)
-4. `switchToSpace(_:)` computes direction + steps and posts that many gestures
-5. After `kPostSwitchActivationDelay` (100ms), calls `app.activate(options:)`
+2. `findSpaceForPid(_:)` uses `visibleWindowSpaces(for:)` to find the app's window spaces, returns 0 if already reachable (falls back to space-anchored helper windows for windowless apps — see "Window filtering criteria")
+3. `switchToSpace(_:)` computes direction + steps and posts that many gestures
+
+The app is intentionally **never activated by us** (`app.activate()` is not called): the system activation already in progress brings the app to focus, and sending a `kAEActivate` Apple Event makes some apps (e.g. Safari) exit background modes like Picture-in-Picture.
 
 ### Feature interaction (suppression guard)
 
@@ -145,7 +145,7 @@ Entry structure: `{ enabled: Bool/Int, value: { parameters: [unused, keycode, ca
 
 ## Window filtering criteria
 
-Used in `visibleWindowSpaces(for:)` — the shared helper for both `findSpaceForPid` and `appWindowsConfinedToSpace`:
+Used in `visibleWindowSpaces(for:)` — the window-lookup helper behind `findSpaceForPid`:
 
 1. `kCGWindowOwnerPID` must match the target PID
 2. `kCGWindowIsOnscreen` must be 1 (excludes minimized/hidden windows)
@@ -188,7 +188,6 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kInstantSwitchProgress` | SpaceSwitching | `2.0` | Fully-committed swipe progress |
 | `kInstantSwitchVelocity` | SpaceSwitching | `400.0` | Velocity above Dock's instant threshold |
 | `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period before auto-follow kicks in |
-| `kPostSwitchActivationDelay` | AutoFollow | `0.1` (TimeInterval) | Delay before activating app windows |
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |
 | `kMenuIconSize` | MenuBar | `16` (CGFloat) | Tinted SF Symbol size in menu items |
 | `kDisabledIconAlpha` | MenuBar | `0.25` (CGFloat) | Menu bar icon opacity when disabled |
@@ -357,5 +356,4 @@ local.env               — git-ignored; signing credentials
 ## Known limitations
 
 - Trackpad swipe gestures still animate (they bypass the event tap entirely).
-- Cmd+Tab to fullscreen apps may briefly flicker.
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates.
