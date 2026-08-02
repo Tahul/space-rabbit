@@ -342,35 +342,105 @@ func switchToSpace(_ targetSpace: CGSSpaceID) -> Bool {
         // Need at least two spaces and a valid current position to navigate
         guard currentIdx >= 0, spaceIDs.count >= 2 else { return false }
 
-        // The synthetic DockSwipe gesture carries no display information —
-        // the Dock applies it to the display under the cursor. If the target
-        // space lives on a *different* display, posting would switch the
-        // wrong display's space; stand down and let macOS's native switch
-        // handle it (animated, but on the correct display).
-        //
-        // Do NOT be tempted by CGSManagedDisplaySetCurrentSpace here: it
-        // flips the window server's current-space pointer without running
-        // the actual transition, desyncing state — windows from the target
-        // space composite on top of the still-displayed space (worst with
-        // fullscreen spaces), and later edge bounds-checks read the stale
-        // pointer and overshoot into a black non-existent space.
-        // Fail-closed: if the cursor's display cannot be resolved at all,
-        // we cannot know where the Dock would apply the gesture — stand
-        // down rather than risk switching the wrong display.
-        guard let cursorUUID = displayUUIDUnderCursor(),
-              let du = display["Display Identifier"] as? String,
-              displayIdentifierMatches(du, uuid: cursorUUID) else {
-            return false
-        }
-
         // Compute direction and step count for sequential navigation
         let direction = targetIdx > currentIdx ? 1 : -1
         let steps     = abs(targetIdx - currentIdx)
-        switchNSpaces(direction: direction, steps: steps)
-        return true
+
+        // The synthetic DockSwipe gesture carries no display information —
+        // the Dock applies it to the display under the cursor, so it only
+        // works directly when the target space is on the cursor's display.
+        //
+        // Do NOT be tempted by CGSManagedDisplaySetCurrentSpace for the
+        // cross-display case: it flips the window server's current-space
+        // pointer without running the actual transition, desyncing state —
+        // windows from the target space composite on top of the still-
+        // displayed space (worst with fullscreen spaces), and later edge
+        // bounds-checks read the stale pointer and overshoot into a black
+        // non-existent space.
+        let onCursorDisplay: Bool
+        if let cursorUUID = displayUUIDUnderCursor(),
+           let du = display["Display Identifier"] as? String {
+            onCursorDisplay = displayIdentifierMatches(du, uuid: cursorUUID)
+        } else {
+            // Fail-closed: cursor display unknown — never post blind.
+            onCursorDisplay = false
+        }
+
+        if onCursorDisplay {
+            switchNSpaces(direction: direction, steps: steps)
+            return true
+        }
+
+        // Target lives on another display (or the cursor couldn't be
+        // resolved): try the cursor-warp trick; falls back to macOS's
+        // native animated switch when it declines (returns false).
+        return switchOnOtherDisplay(display, direction: direction, steps: steps)
     }
 
     return false
+}
+
+// MARK: - Cross-Display Switching (Cursor Warp)
+
+/// How long the cursor stays parked on the target display after a
+/// cross-display warp switch before being restored. The Dock samples the
+/// cursor position asynchronously while processing the posted gesture,
+/// so restoring too early would re-route the switch to the wrong display.
+private let kCursorWarpRestoreDelay: TimeInterval = 0.15
+
+/// Performs an instant switch on a display other than the cursor's, by
+/// briefly warping the cursor onto that display so the Dock applies the
+/// posted gesture there, then restoring it.
+///
+/// Only used at the "Instant" transition speed: the warp trick is
+/// unavoidably instant, and at animated speeds macOS's native animated
+/// switch (which takes over when this returns `false`) already plays the
+/// animation on the correct display.
+///
+/// `CGWarpMouseCursorPosition` generates no mouse events, and the gesture
+/// events are created *after* the warp, so both their embedded location
+/// and the live cursor position point at the target display when the Dock
+/// looks. The restore is skipped if the user moved the cursor meanwhile —
+/// never yank it out from under them.
+///
+/// - Parameters:
+///   - display: The `CGSCopyManagedDisplaySpaces` dictionary of the
+///     display hosting the target space.
+///   - direction: `-1` for left, `+1` for right.
+///   - steps: How many spaces to traverse.
+/// - Returns: `true` if gestures were posted via the warp trick.
+private func switchOnOtherDisplay(_ display: [String: Any],
+                                  direction: Int, steps: Int) -> Bool {
+    guard gSwitchSpeed >= 1.0,
+          let du = display["Display Identifier"] as? String,
+          let targetDisplay = displayID(forIdentifier: du),
+          let originalPos = CGEvent(source: nil)?.location
+    else { return false }
+
+    let bounds    = CGDisplayBounds(targetDisplay)
+    let warpPoint = CGPoint(x: bounds.midX, y: bounds.midY)
+    CGWarpMouseCursorPosition(warpPoint)
+
+    switchNSpaces(direction: direction, steps: steps)
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + kCursorWarpRestoreDelay) {
+        guard let now = CGEvent(source: nil)?.location,
+              abs(now.x - warpPoint.x) <= 2, abs(now.y - warpPoint.y) <= 2
+        else { return }
+        CGWarpMouseCursorPosition(originalPos)
+    }
+
+    return true
+}
+
+/// Resolves a `"Display Identifier"` string (a UUID, or the literal
+/// `"Main"` — see issue #6) to a CoreGraphics display ID, or `nil` if
+/// it cannot be resolved.
+private func displayID(forIdentifier identifier: String) -> CGDirectDisplayID? {
+    if identifier == "Main" { return CGMainDisplayID() }
+    guard let cfUUID = CFUUIDCreateFromString(nil, identifier as CFString) else { return nil }
+    let id = CGDisplayGetDisplayIDFromUUID(cfUUID)
+    return id == 0 ? nil : id
 }
 
 // MARK: - Synthetic DockSwipe Gesture Posting
