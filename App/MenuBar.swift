@@ -371,6 +371,38 @@ final class SwoopMenu: NSObject {
         return item
     }
 
+    /// Builds a banner title: an emphasized leading part followed by a
+    /// regular-weight "Click to …" call to action, joined by a middle dot.
+    ///
+    /// Used by every actionable banner in the dropdown so they all share
+    /// the same emphasis pattern.
+    ///
+    /// - Parameters:
+    ///   - emphasized: The leading status text (rendered at `weight`).
+    ///   - action: The call-to-action text (always regular weight).
+    ///   - color: Text color applied to the whole title.
+    ///   - weight: Font weight for the emphasized part.
+    /// - Returns: The composed attributed title.
+    private func bannerTitle(_ emphasized: String, action: String,
+                             color: NSColor,
+                             weight: NSFont.Weight) -> NSAttributedString {
+        let title = NSMutableAttributedString(
+            string: emphasized,
+            attributes: [
+                .font:            NSFont.systemFont(ofSize: 13, weight: weight),
+                .foregroundColor: color,
+            ]
+        )
+        title.append(NSAttributedString(
+            string: "  \u{00B7}  \(action)",
+            attributes: [
+                .font:            NSFont.systemFont(ofSize: 13),
+                .foregroundColor: color,
+            ]
+        ))
+        return title
+    }
+
     /// Creates a non-interactive grey label (e.g. for the version string).
     ///
     /// - Parameter title: The label text.
@@ -423,12 +455,9 @@ final class SwoopMenu: NSObject {
         launchWarningSep.isHidden  = !notEnabled
 
         if notEnabled {
-            launchWarningItem.attributedTitle = NSAttributedString(
-                string: "Not Auto-Launching  \u{00B7}  Click to Fix",
-                attributes: [
-                    .font:            NSFont.systemFont(ofSize: 13, weight: .medium),
-                    .foregroundColor: NSColor.systemOrange,
-                ]
+            launchWarningItem.attributedTitle = bannerTitle(
+                "Not Auto-Launching", action: "Click to Fix",
+                color: .systemOrange, weight: .medium
             )
             launchWarningItem.image = tintedSymbol(
                 "exclamationmark.triangle.fill",
@@ -448,21 +477,10 @@ final class SwoopMenu: NSObject {
         updateDownloadURL = downloadURL
 
         // Only the "Update Available" part is emphasized; the call to action stays regular
-        let title = NSMutableAttributedString(
-            string: "Update Available",
-            attributes: [
-                .font:            NSFont.systemFont(ofSize: 13, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
-            ]
+        updateAvailableItem.attributedTitle = bannerTitle(
+            "Update Available", action: "Click to Install",
+            color: .labelColor, weight: .semibold
         )
-        title.append(NSAttributedString(
-            string: "  \u{00B7}  Click to Install",
-            attributes: [
-                .font:            NSFont.systemFont(ofSize: 13),
-                .foregroundColor: NSColor.labelColor,
-            ]
-        ))
-        updateAvailableItem.attributedTitle = title
         updateAvailableItem.image    = tintedSymbol("arrow.down.circle.fill", color: .systemBlue)
         updateAvailableItem.isHidden = false
         updateAvailableSep.isHidden  = false
