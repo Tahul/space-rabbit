@@ -131,36 +131,36 @@ private func getAllCurrentSpaces() -> [CGSSpaceID] {
 
 // MARK: - Window-to-Space Mapping
 
-/// Returns the space IDs of all normal, on-screen windows belonging
-/// to the given process, in front-to-back order.
+/// Returns the space IDs of all on-screen windows belonging to the given
+/// process, in front-to-back order, split into two groups:
 ///
-/// "Normal" means layer 0 (excludes menus, tooltips, status items, etc.)
-/// and on-screen (excludes hidden or minimized windows).
+/// - `normal`: layer-0 windows (regular app windows — excludes menus,
+///   tooltips, status items, etc.)
+/// - `anchored`: space-anchored windows at any other layer (Finder's
+///   desktop-icons window, status-item windows of menu-bar apps).
+///   Used as a fallback by `findSpaceForPid` — see there.
 ///
 /// Each window is mapped to its space via the private `SLSCopySpacesForWindows`
 /// API. Windows that cannot be resolved to a valid space are skipped.
 ///
 /// - Parameter pid: The Unix process ID of the target application.
-/// - Returns: An ordered array of space IDs for the process's visible windows.
-private func visibleWindowSpaces(for pid: pid_t) -> [CGSSpaceID] {
+/// - Returns: Ordered space IDs of the process's normal and anchored windows.
+private func visibleWindowSpaces(for pid: pid_t) -> (normal: [CGSSpaceID], anchored: [CGSSpaceID]) {
     guard let mainConn  = cgsMainConnection,
-          let spacesFor = slsCopySpacesForWindows else { return [] }
+          let spacesFor = slsCopySpacesForWindows else { return ([], []) }
 
     let cid = mainConn()
-    guard cid != 0 else { return [] }
+    guard cid != 0 else { return ([], []) }
 
     guard let windowList = CGWindowListCopyWindowInfo(.optionAll, 0) as? [[String: Any]]
-    else { return [] }
+    else { return ([], []) }
 
-    var result = [CGSSpaceID]()
+    var normal   = [CGSSpaceID]()
+    var anchored = [CGSSpaceID]()
 
     for window in windowList {
         // Only consider windows owned by the target process
         guard (window["kCGWindowOwnerPID"] as? NSNumber)?.int32Value == pid else { continue }
-
-        // Skip non-normal windows (menus, tooltips, status items, overlays)
-        if let layer = (window["kCGWindowLayer"] as? NSNumber)?.int32Value,
-           layer != 0 { continue }
 
         // Skip offscreen/hidden windows (minimized, behind other spaces)
         if let onscreen = (window["kCGWindowIsOnscreen"] as? NSNumber)?.int32Value,
@@ -177,10 +177,15 @@ private func visibleWindowSpaces(for pid: pid_t) -> [CGSSpaceID] {
               spaceID != 0
         else { continue }
 
-        result.append(spaceID)
+        let layer = (window["kCGWindowLayer"] as? NSNumber)?.int32Value ?? 0
+        if layer == 0 {
+            normal.append(spaceID)
+        } else {
+            anchored.append(spaceID)
+        }
     }
 
-    return result
+    return (normal, anchored)
 }
 
 // MARK: - Process Space Lookup
@@ -192,23 +197,40 @@ private func visibleWindowSpaces(for pid: pid_t) -> [CGSSpaceID] {
 /// switch is needed and this returns 0. Otherwise, it returns the space of the
 /// frontmost off-screen window.
 ///
+/// When the process has no normal windows at all, falls back to its
+/// space-anchored helper windows: macOS's own activation logic still
+/// navigates to those (with the slide animation) — e.g. Finder's
+/// desktop-icons window or the status-item windows of menu-bar apps,
+/// all typically anchored to the first space. Returning their space
+/// lets auto-follow preempt that native animated switch with an
+/// instant one to the same destination.
+///
 /// - Parameter pid: The Unix process ID of the app to locate.
 /// - Returns: The space ID to switch to, or `0` if the app is already
 ///            accessible on a visible space (no switch needed).
 func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
     let currentSpaces = getAllCurrentSpaces()
-    let windowSpaces  = visibleWindowSpaces(for: pid)
+    let (normalSpaces, anchoredSpaces) = visibleWindowSpaces(for: pid)
 
     // If any window is already on a visible space, the app is reachable.
     // Don't follow — this prevents chasing a second window on a different
     // space when the user is already on the right one.
-    for sid in windowSpaces {
+    for sid in normalSpaces {
         if currentSpaces.contains(sid) { return 0 }
     }
 
     // Return the frontmost off-screen window's space (first in the list,
     // since CGWindowList returns windows in front-to-back order)
-    return windowSpaces.first ?? 0
+    if let first = normalSpaces.first { return first }
+
+    // No normal windows anywhere — fall back to space-anchored helper
+    // windows, which macOS would otherwise navigate to with an animated
+    // switch.
+    for sid in anchoredSpaces {
+        if currentSpaces.contains(sid) { return 0 }
+    }
+
+    return anchoredSpaces.first ?? 0
 }
 
 

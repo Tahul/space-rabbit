@@ -148,10 +148,13 @@ Entry structure: `{ enabled: Bool/Int, value: { parameters: [unused, keycode, ca
 Used in `visibleWindowSpaces(for:)` — the shared helper for both `findSpaceForPid` and `appWindowsConfinedToSpace`:
 
 1. `kCGWindowOwnerPID` must match the target PID
-2. `kCGWindowLayer` must be 0 (normal windows only — excludes menus, tooltips, status items)
-3. `kCGWindowIsOnscreen` must be 1 (excludes minimized/hidden windows)
-4. `SLSCopySpacesForWindows(cid, 7, [windowID])` must return a non-zero space ID
+2. `kCGWindowIsOnscreen` must be 1 (excludes minimized/hidden windows)
+3. `SLSCopySpacesForWindows(cid, 7, [windowID])` must return a non-zero space ID
    - The magic `7` = `kSLSSpaceTypeAll` (all space types: user, fullscreen, etc.)
+
+`visibleWindowSpaces` does a single window-list pass (kept fast — it sits on the latency-critical auto-follow path) and splits results by `kCGWindowLayer`: layer 0 → `normal` (regular app windows), any other layer → `anchored` (space-anchored helper windows).
+
+**Helper-window fallback in `findSpaceForPid`:** when an app has zero normal windows, macOS's activation logic still navigates (with the slide animation) to any space-anchored window the app owns — Finder's desktop-icons window, or status-item windows of menu-bar apps (e.g. Things), typically anchored to the first space. `findSpaceForPid` falls back to the `anchored` group and returns its frontmost space, so auto-follow preempts the native animated switch with an instant one to the same destination. This preemption races the Dock's own animated switch — see `kAutoFollowSuppressionWindow` notes.
 
 ## Global state (`State.swift`)
 
@@ -354,6 +357,5 @@ local.env               — git-ignored; signing credentials
 ## Known limitations
 
 - Trackpad swipe gestures still animate (they bypass the event tap entirely).
-- Finder without open windows always animates to the first space — native behavior.
 - Cmd+Tab to fullscreen apps may briefly flicker.
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates.
