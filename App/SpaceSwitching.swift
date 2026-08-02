@@ -345,19 +345,22 @@ func switchToSpace(_ targetSpace: CGSSpaceID) -> Bool {
         // The synthetic DockSwipe gesture carries no display information —
         // the Dock applies it to the display under the cursor. If the target
         // space lives on a *different* display, posting would switch the
-        // wrong display's space. Instead, set that display's current space
-        // directly via CGSManagedDisplaySetCurrentSpace (no animation).
-        // Fall back to macOS's native animated switch when the symbol is
-        // unavailable, or when the user chose an animated transition speed
-        // (a direct set is always instant and can't honor it).
-        if let cursorUUID = displayUUIDUnderCursor(),
-           let du = display["Display Identifier"] as? String,
-           !displayIdentifierMatches(du, uuid: cursorUUID) {
-            guard let setSpace = cgsSetCurrentSpace, gSwitchSpeed >= 1.0 else {
-                return false
-            }
-            setSpace(cid, du as CFString, targetSpace)
-            return true
+        // wrong display's space; stand down and let macOS's native switch
+        // handle it (animated, but on the correct display).
+        //
+        // Do NOT be tempted by CGSManagedDisplaySetCurrentSpace here: it
+        // flips the window server's current-space pointer without running
+        // the actual transition, desyncing state — windows from the target
+        // space composite on top of the still-displayed space (worst with
+        // fullscreen spaces), and later edge bounds-checks read the stale
+        // pointer and overshoot into a black non-existent space.
+        // Fail-closed: if the cursor's display cannot be resolved at all,
+        // we cannot know where the Dock would apply the gesture — stand
+        // down rather than risk switching the wrong display.
+        guard let cursorUUID = displayUUIDUnderCursor(),
+              let du = display["Display Identifier"] as? String,
+              displayIdentifierMatches(du, uuid: cursorUUID) else {
+            return false
         }
 
         // Compute direction and step count for sequential navigation

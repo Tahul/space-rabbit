@@ -81,7 +81,8 @@ The two features suppress each other to prevent loops. After instant-switch fire
 | `CGSGetActiveSpace` | `cgsGetActiveSpace` | `(cid) -> UInt64` | Active space ID on main display |
 | `CGSCopyManagedDisplaySpaces` | `cgsCopyDisplaySpaces` | `(cid, displayUUID?) -> CFArray?` | All displays + their spaces |
 | `SLSCopySpacesForWindows` | `slsCopySpacesForWindows` | `(cid, spaceType, windowIDs) -> CFArray?` | Maps window IDs → space IDs |
-| `CGSManagedDisplaySetCurrentSpace` | `cgsSetCurrentSpace` | `(cid, displayIdentifier, spaceID) -> Void` | Sets a display's current space directly, no animation — used for cross-display switches only (DockSwipe gestures can't reach other displays) |
+
+**Do not use `CGSManagedDisplaySetCurrentSpace`:** it was tried for instant cross-display switching and reverted. It flips the window server's current-space pointer without running the real transition, desyncing state — target-space windows composite on top of the still-displayed space (worst with fullscreen spaces), and subsequent edge bounds-checks read the stale pointer and overshoot into a black non-existent space.
 
 If any symbol is missing (Apple renamed it), the variable is `nil` and dependent features gracefully no-op.
 
@@ -363,5 +364,5 @@ local.env               — git-ignored; signing credentials
 ## Known limitations
 
 - Trackpad swipe gestures still animate (they bypass the event tap entirely).
-- Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display, `switchToSpace` uses `CGSManagedDisplaySetCurrentSpace` instead (instant, only at the "Instant" speed setting); at animated speed settings, or if the symbol is missing, it stands down and macOS's native animated switch handles it.
+- Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. Auto-follow to a space on a *different* display therefore stands down (`switchToSpace` returns `false`) and macOS's native animated switch handles it on the correct display. Instant cross-display switching is not achievable safely (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates.
