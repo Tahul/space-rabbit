@@ -66,23 +66,26 @@ var gSwitchCountSaved: Int = 0
 
 // MARK: - Keyboard Shortcut State
 //
-// These hold the user's configured "Move left/right a space" shortcuts,
-// loaded from macOS system preferences at startup (see Shortcuts.swift).
-// The event tap compares incoming key events against these values.
+// These hold the user's configured space-switch shortcuts, loaded from
+// macOS system preferences (see Shortcuts.swift). The event tap compares
+// incoming key events against these values. A `nil` binding means the
+// hotkey is disabled in System Settings — nothing is intercepted for it.
 
-/// Virtual keycode for "move left a space" (default: 123 = left arrow).
-var gKeyLeft: Int64 = 123
+/// A keyboard shortcut: virtual keycode plus its exact modifier set.
+typealias KeyBinding = (keycode: Int64, mods: CGEventFlags)
 
-/// Virtual keycode for "move right a space" (default: 124 = right arrow).
-var gKeyRight: Int64 = 124
+/// Binding for "move left a space" (default: Control + Left Arrow).
+/// `nil` when the hotkey is disabled in System Settings.
+var gBindingLeft: KeyBinding? = (keycode: 123, mods: .maskControl)
 
-/// Required modifier flags for the space-switch shortcut (default: Control).
-/// Both left and right shortcuts share the same modifier mask.
-var gModMask: CGEventFlags = .maskControl
+/// Binding for "move right a space" (default: Control + Right Arrow).
+/// `nil` when the hotkey is disabled in System Settings.
+/// Left and right are independent — they may carry different modifiers.
+var gBindingRight: KeyBinding? = (keycode: 124, mods: .maskControl)
 
 /// Per-desktop "Switch to Desktop N" bindings (index 0 = Desktop 1 ... index 9 = Desktop 10).
 /// `nil` means the slot is not bound or disabled in System Settings.
-var gSpaceKeys: [(keycode: Int64, mods: CGEventFlags)?] = Array(repeating: nil, count: 10)
+var gSpaceKeys: [KeyBinding?] = Array(repeating: nil, count: 10)
 
 // MARK: - UI References
 

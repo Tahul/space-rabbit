@@ -344,15 +344,16 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
     ///   1. Mount the DMG using `hdiutil attach` (no Finder browsing)
     ///   2. Locate the `.app` bundle inside the mounted volume
     ///   3. Copy the new `.app` to a staging path next to the current bundle
-    ///   4. Atomically swap the staged bundle into place via `replaceItemAt`
-    ///   5. Clean up: unmount the DMG and delete the temp file
-    ///   6. Prompt the user to restart
+    ///   4. Verify the staged bundle's code signature (see `verifyStagedApp`)
+    ///   5. Atomically swap the staged bundle into place via `replaceItemAt`
+    ///   6. Clean up: unmount the DMG and delete the temp file
+    ///   7. Prompt the user to restart
     ///
     /// - Parameter dmgPath: Path to the downloaded DMG in the temp directory.
     private func install(dmgPath: URL) {
         // Step 1: Mount the DMG in the background (no Finder window, no auto-open)
         let mountOutput = shell("/usr/bin/hdiutil",
-                                ["attach", "-nobrowse", "-noautoopen", dmgPath.path])
+                                ["attach", "-nobrowse", "-noautoopen", dmgPath.path]).output
 
         guard let mountPoint = parseMountPoint(from: mountOutput) else {
             cleanup(dmgPath: dmgPath, mountPoint: nil)
@@ -391,7 +392,18 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
             return
         }
 
-        // Step 4: Atomically swap the staged bundle into place.
+        // Step 4: Verify the staged bundle's code signature before letting it
+        // anywhere near the running bundle. The DMG came off the network — a
+        // valid signature, our bundle identifier, and (for signed builds)
+        // the same signing team are all required.
+        guard verifyStagedApp(at: stagedApp) else {
+            try? FileManager.default.removeItem(at: stagedApp)
+            cleanup(dmgPath: dmgPath, mountPoint: mountPoint)
+            reportFailure()
+            return
+        }
+
+        // Step 5: Atomically swap the staged bundle into place.
         // `replaceItemAt` uses POSIX rename semantics — the swap is atomic from
         // the filesystem's perspective, so the app bundle is never in a half-written state.
         do {
@@ -403,11 +415,65 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
             return
         }
 
-        // Step 5: Clean up the mounted DMG and temp file
+        // Step 6: Clean up the mounted DMG and temp file
         cleanup(dmgPath: dmgPath, mountPoint: mountPoint)
 
-        // Step 6: Ask the user to restart on the main thread
+        // Step 7: Ask the user to restart on the main thread
         DispatchQueue.main.async { self.showRestartPrompt() }
+    }
+
+    // MARK: - Signature Verification
+
+    /// Verifies the staged update before it replaces the running bundle.
+    ///
+    /// Three checks, all required:
+    ///   1. `codesign --verify --deep --strict` passes — the signature is
+    ///      valid and the bundle unmodified (this also rejects completely
+    ///      unsigned apps).
+    ///   2. The code-signing identifier matches the running app's bundle ID.
+    ///   3. The signing team matches the running app's — skipped when the
+    ///      running build has no team (unsigned/ad-hoc development builds),
+    ///      where the first two checks are the best available.
+    ///
+    /// - Parameter stagedApp: The staged `.app` bundle to verify.
+    /// - Returns: `true` when the update is safe to swap into place.
+    private func verifyStagedApp(at stagedApp: URL) -> Bool {
+        guard shell("/usr/bin/codesign",
+                    ["--verify", "--deep", "--strict", stagedApp.path]).status == 0
+        else { return false }
+
+        // `codesign -d` prints its details to stderr
+        let stagedInfo  = shell("/usr/bin/codesign",
+                                ["-d", "--verbose=2", stagedApp.path],
+                                captureStderr: true).output
+        let runningInfo = shell("/usr/bin/codesign",
+                                ["-d", "--verbose=2", Bundle.main.bundlePath],
+                                captureStderr: true).output
+
+        /// First "name=value" occurrence of the field in codesign output.
+        func field(_ name: String, in info: String) -> String? {
+            for line in info.components(separatedBy: "\n")
+            where line.hasPrefix("\(name)=") {
+                return String(line.dropFirst(name.count + 1))
+            }
+            return nil
+        }
+
+        /// Team identifier, treating codesign's "not set" (ad-hoc) as none.
+        func teamID(in info: String) -> String? {
+            guard let team = field("TeamIdentifier", in: info),
+                  team != "not set" else { return nil }
+            return team
+        }
+
+        guard let identifier = field("Identifier", in: stagedInfo),
+              identifier == Bundle.main.bundleIdentifier else { return false }
+
+        if let runningTeam = teamID(in: runningInfo) {
+            guard teamID(in: stagedInfo) == runningTeam else { return false }
+        }
+
+        return true
     }
 
     // MARK: - Post-Install Prompt
@@ -494,27 +560,38 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
         try? FileManager.default.removeItem(at: dmgPath)
     }
 
-    /// Runs a command synchronously and returns its stdout.
+    /// Runs a command synchronously and returns its exit status and output.
     ///
-    /// Used to invoke `hdiutil` for DMG mount/unmount operations.
-    /// Stderr is silently discarded to avoid polluting the output.
+    /// Used to invoke `hdiutil` (DMG mount/unmount) and `codesign`
+    /// (update verification).
     ///
     /// - Parameters:
     ///   - executable: Absolute path to the executable (e.g. `/usr/bin/hdiutil`).
     ///   - args: Command-line arguments to pass.
-    /// - Returns: The command's stdout as a string, or empty string on failure.
+    ///   - captureStderr: When `true`, stderr is captured into `output`
+    ///     alongside stdout (`codesign -d` prints its details there);
+    ///     otherwise stderr is discarded.
+    /// - Returns: The exit status (`-1` if the process failed to launch)
+    ///   and the captured output.
     @discardableResult
-    private func shell(_ executable: String, _ args: [String]) -> String {
+    private func shell(_ executable: String, _ args: [String],
+                       captureStderr: Bool = false) -> (status: Int32, output: String) {
         let proc = Process()
         let pipe = Pipe()
         proc.executableURL  = URL(fileURLWithPath: executable)
         proc.arguments      = args
         proc.standardOutput = pipe
-        proc.standardError  = Pipe()   // suppress stderr noise
-        try? proc.run()
+        proc.standardError  = captureStderr ? pipe : FileHandle.nullDevice
+
+        do { try proc.run() } catch { return (-1, "") }
+
+        // Drain the pipe BEFORE waiting for exit: waiting first deadlocks
+        // as soon as the child fills the pipe buffer (~64 KB) and blocks
+        // on write while we block on waitUntilExit
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(),
-                      encoding: .utf8) ?? ""
+
+        return (proc.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 
     /// Extracts the `/Volumes/…` mount point from `hdiutil attach` output.

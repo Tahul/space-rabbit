@@ -175,7 +175,10 @@ func getUserDesktops() -> [CGSSpaceID] {
 /// "Main" in `CGSCopyManagedDisplaySpaces` dictionaries — or `nil` if it
 /// cannot be determined.
 private func mainDisplayUUID() -> String? {
-    let cfUUID = CGDisplayCreateUUIDFromDisplayID(CGMainDisplayID()).takeRetainedValue()
+    // CGDisplayCreateUUIDFromDisplayID returns nil for a stale display ID
+    // (possible mid display-reconfiguration) — never force-unwrap it
+    guard let cfUUID = CGDisplayCreateUUIDFromDisplayID(CGMainDisplayID())?
+        .takeRetainedValue() else { return nil }
     return CFUUIDCreateString(nil, cfUUID) as String?
 }
 
@@ -193,9 +196,10 @@ private func displayUUIDUnderCursor() -> String? {
     let point = NSEvent.mouseLocation
     guard let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }),
           let displayID = screen.deviceDescription[
-              NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+              NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+          // nil for a stale display ID (mid display-reconfiguration)
+          let cfUUID = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue()
     else { return nil }
-    let cfUUID = CGDisplayCreateUUIDFromDisplayID(displayID).takeRetainedValue()
     return CFUUIDCreateString(nil, cfUUID) as String?
 }
 

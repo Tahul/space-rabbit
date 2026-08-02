@@ -50,8 +50,16 @@ loadSpaceSwitchShortcuts()
 gMenu = SwoopMenu()
 
 // Check for updates 5 seconds after launch, giving the app
-// time to settle before making a network request
+// time to settle before making a network request…
 DispatchQueue.main.asyncAfter(deadline: .now() + 5) { checkForUpdates() }
+
+// …and once a day thereafter: the app typically runs for weeks between
+// launches, so a single launch-time check would leave long-running
+// instances unaware of new releases.
+let updateCheckInterval: TimeInterval = 60 * 60 * 24
+let updateCheckTimer = Timer.scheduledTimer(withTimeInterval: updateCheckInterval,
+                                            repeats: true) { _ in checkForUpdates() }
+updateCheckTimer.tolerance = updateCheckInterval / 10
 
 // Persist the switch count to disk every 5 minutes.
 // This batching reduces disk I/O compared to writing on every switch.
@@ -112,6 +120,20 @@ NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.activeSpaceDidChangeNotification,
     object: nil, queue: .main
 ) { _ in gLastSpaceSwitchTime = Date() }
+
+// Reload the space-switch shortcuts whenever System Settings deactivates —
+// the only place the user can edit them. Without this, shortcut changes
+// would only be picked up at the next launch. (Changes made behind the
+// scenes, e.g. via `defaults write`, still require a relaunch.)
+NSWorkspace.shared.notificationCenter.addObserver(
+    forName: NSWorkspace.didDeactivateApplicationNotification,
+    object: nil, queue: .main
+) { note in
+    guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
+                    as? NSRunningApplication,
+          app.bundleIdentifier == "com.apple.systempreferences" else { return }
+    loadSpaceSwitchShortcuts()
+}
 
 // MARK: - Cleanup on Exit
 //

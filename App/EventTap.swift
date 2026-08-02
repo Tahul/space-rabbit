@@ -106,29 +106,28 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         }
     }
 
-    guard eventMods == gModMask else {
-        return passthrough
-    }
-
-    // Determine switch direction from keycode
+    // Determine switch direction by matching keycode + exact modifiers
+    // against the per-direction bindings. The two sides are independent:
+    // they may carry different modifiers, and either may be nil (hotkey
+    // disabled in System Settings — intercept nothing for it).
     let direction: Int
-    if      keycode == gKeyLeft  { direction = -1 }
-    else if keycode == gKeyRight { direction = +1 }
-    else                         { return passthrough }
+    if      let b = gBindingLeft,  keycode == b.keycode, eventMods == b.mods { direction = -1 }
+    else if let b = gBindingRight, keycode == b.keycode, eventMods == b.mods { direction = +1 }
+    else                                                                     { return passthrough }
 
-    // Bounds check: don't switch past the first or last space.
-    // If we can't determine the layout (private API failure), proceed
-    // anyway — but note an out-of-bounds gesture is NOT harmless: the
-    // Dock plays a blank-and-slide-back bounce (see issue #6), so
-    // getSpaceList() failing here should be treated as a bug.
+    // Bounds check: don't switch past the first or last space
     let (spaceIDs, currentIdx) = getSpaceList()
-    if currentIdx >= 0 {
-        let targetIdx = currentIdx + direction
-        guard targetIdx >= 0, targetIdx < spaceIDs.count else {
-            // Already at the edge — swallow the event to prevent
-            // the default animated "bounce" effect
-            return nil
-        }
+
+    // Layout unknown (private-API failure) — stand down and let macOS
+    // handle the shortcut natively rather than posting a blind gesture,
+    // which bounces into a blank space at the edges (issue #6)
+    guard currentIdx >= 0 else { return passthrough }
+
+    let targetIdx = currentIdx + direction
+    guard targetIdx >= 0, targetIdx < spaceIDs.count else {
+        // Already at the edge — swallow the event to prevent
+        // the default animated "bounce" effect
+        return nil
     }
 
     // Post the synthetic gesture and record the switch for statistics
