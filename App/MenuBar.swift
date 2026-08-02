@@ -102,7 +102,6 @@ final class SwoopMenu: NSObject {
             Defaults.enabled:       true,
             Defaults.instantSwitch: true,
             Defaults.autoFollow:    true,
-            Defaults.sounds:        false,
             Defaults.switchSpeed:   1.0,
             Defaults.switchCount:   0,
         ])
@@ -112,7 +111,6 @@ final class SwoopMenu: NSObject {
         gEnabled              = defaults.bool(forKey: Defaults.enabled)
         gInstantSwitchEnabled = defaults.bool(forKey: Defaults.instantSwitch)
         gAutoFollowEnabled    = defaults.bool(forKey: Defaults.autoFollow)
-        gSoundsEnabled        = defaults.bool(forKey: Defaults.sounds)
         gSwitchSpeed          = defaults.double(forKey: Defaults.switchSpeed)
         gSwitchCount          = defaults.integer(forKey: Defaults.switchCount)
         gSwitchCountSaved     = gSwitchCount
@@ -410,9 +408,6 @@ final class SwoopMenu: NSObject {
         gEnabled = enabled
         UserDefaults.standard.set(gEnabled, forKey: Defaults.enabled)
 
-        // Play a sound effect when re-enabling (if sounds are turned on)
-        if enabled, gSoundsEnabled { NSSound(named: .init("Bottle"))?.play() }
-
         updateMenuBarIcon()
         updateEnableItem()
     }
@@ -422,8 +417,8 @@ final class SwoopMenu: NSObject {
     }
 
     @objc private func openSettingsForLaunchAtLogin() {
-        GeneralViewController.pendingLaunchAtLoginAlert = true
-        SettingsWindowController.shared.show()
+        AutoStartPaneController.pendingLaunchAtLoginAlert = true
+        SettingsWindowController.shared.show(pane: .autoStart)
     }
 
     // MARK: - Launch Warning Banner

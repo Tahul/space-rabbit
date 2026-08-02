@@ -170,7 +170,6 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | `gEnabled` | `Bool` | Master on/off toggle |
 | `gInstantSwitchEnabled` | `Bool` | Feature 1 toggle |
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
-| `gSoundsEnabled` | `Bool` | Play sound on master toggle |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`) |
 | `gSwitchCount` | `Int` | Lifetime switch counter (persisted periodically) |
@@ -181,7 +180,7 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 ### UserDefaults keys (`Defaults` enum)
 
-`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.sounds`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`.
+`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`.
 
 Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount != gSwitchCountSaved`. Called every 300s by timer and once on app termination. Acceptable to lose a few counts on crash.
 
@@ -241,8 +240,8 @@ Both call `startUpdate(downloadURL:)` which delegates to `UpdaterWindowControlle
 Toggles can be changed from two places. The sync pattern:
 
 1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
-2. **Settings window** → `GeneralViewController.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
-3. **Settings window opens** (`viewWillAppear`): refreshes all switch controls from globals
+2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
+3. **Settings pane appears** (`viewWillAppear`, fires on every pane swap): refreshes its switch controls from globals
 
 Master enable/disable (`gEnabled`) is only togglable from the menu bar (menu item or right-click).
 
@@ -274,20 +273,40 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        └─ Quit (shortcut: Q)
 
 SettingsWindowController (singleton, NSWindowDelegate)
-  └─ PreferencesTabViewController (NSTabViewController, .toolbar style)
-       ├─ GeneralViewController
-       │    ├─ Launch warning banner (orange, hidden when OK)
-       │    ├─ "Auto-start" section: Launch at Login (SMAppService)
-       │    ├─ "Features" section: Instant switch + Auto-follow + Transition speed slider
-       │    │    (5 ticks, snapping: Normal = native macOS animation / Fast / Faster / Fastest
-       │    │     / right end cap = "Instant", the default)
-       │    ├─ "Interface" section: Enable sounds
-       │    └─ "Advanced" section: Instant Dock hide (writes com.apple.dock autohide-time-modifier, killall Dock)
-       └─ AboutViewController
+  └─ SettingsRootViewController (NSSplitViewController — native sidebar layout)
+       ├─ SettingsSidebarController — NSSplitViewItem(sidebarWithViewController:),
+       │    fixed-width sidebar of TWO coordinated source-list NSTableViews: the
+       │    main panes top-anchored, Updates + About pinned to the bottom edge
+       │    (selection is exclusive across both lists). Plain template SF Symbol
+       │    glyphs; native rounded accent selection. Full-size content view,
+       │    hidden/transparent title bar; panes swapped lazily and cached;
+       │    window resizes per pane
+       ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
+       │    + Launch at Login (SMAppService)
+       ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow toggles,
+       │    then Transition speed slider on its own (5 ticks, snapping: Normal =
+       │    native macOS animation / Fast / Faster / Fastest / right end cap =
+       │    "Instant", the default)
+       ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
+       │    autohide-time-modifier, killall Dock)
+       ├─ UpdatesPaneController — "Check Now…" button (mirrors the menu's manual
+       │    check: sheet alerts, shows tray banner + startUpdate on install)
+       │    + manual-update notice box
+       └─ AboutPaneController
             ├─ App icon + name + version + copyright
             ├─ Website link (space-rabbit.app)
-            ├─ Author links (github.com/tahul, valeriansaliou.name)
-            └─ Manual-update notice box
+            └─ Author links (github.com/tahul, valeriansaliou.name)
+
+All panes subclass `SettingsPaneViewController` (shared row/group/switch builders,
+bold pane header, `resizePaneToFit()`). Setting groups are borderless rounded `NSBox`
+cards (`.quaternarySystemFill`) — native primitives only, no custom-drawn controls.
+`SettingsWindowController.shared.show(pane:)` deep-links to a pane (used by the menu
+bar's launch-at-login warning, which also sets
+`AutoStartPaneController.pendingLaunchAtLoginAlert` to flash the banner).
+
+**Accent color:** the app follows the user's system accent everywhere — do not
+hand-tint controls and do not set the per-app `AppleAccentColor` preference (it was
+tried and reverted; `main.swift` removes a leftover key from older builds at launch).
 ```
 
 Custom controls: `LinkTextField` / `LinkButton` — subclasses that override `resetCursorRects()` to show a pointing-hand cursor.

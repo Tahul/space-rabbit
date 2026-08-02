@@ -34,9 +34,6 @@ var gInstantSwitchEnabled: Bool = true
 /// Only effective when `gEnabled` is also `true`.
 var gAutoFollowEnabled: Bool = true
 
-/// Whether to play a sound effect when toggling the master switch via right-click.
-var gSoundsEnabled: Bool = false
-
 /// Space-switch transition speed as a slider tick position (0.0–1.0 in
 /// steps of 0.25). 1.0 (the end cap) means instant — no animation at all.
 /// 0.0 ("Normal") means macOS's native animation: Space Rabbit posts no
@@ -103,7 +100,6 @@ enum Defaults {
     static let enabled       = "spacerabbit.enabled"
     static let instantSwitch = "spacerabbit.instantSwitch"
     static let autoFollow    = "spacerabbit.autoFollow"
-    static let sounds        = "spacerabbit.sounds"
     static let switchSpeed   = "spacerabbit.switchSpeed"
     static let switchCount   = "spacerabbit.switchCount"
 }

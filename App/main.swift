@@ -19,6 +19,10 @@ import ApplicationServices
 
 // MARK: - Application Setup
 
+// Clean up the per-app accent-color override written by older builds, so
+// the app follows the user's system accent color everywhere.
+UserDefaults.standard.removeObject(forKey: "AppleAccentColor")
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
