@@ -446,13 +446,23 @@ final class SwoopMenu: NSObject {
     /// - Parameter downloadURL: Direct download URL for the DMG asset.
     func showUpdateBanner(downloadURL: String) {
         updateDownloadURL = downloadURL
-        updateAvailableItem.attributedTitle = NSAttributedString(
-            string: "Update Available  \u{00B7}  Click to Install",
+
+        // Only the "Update Available" part is emphasized; the call to action stays regular
+        let title = NSMutableAttributedString(
+            string: "Update Available",
+            attributes: [
+                .font:            NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        )
+        title.append(NSAttributedString(
+            string: "  \u{00B7}  Click to Install",
             attributes: [
                 .font:            NSFont.systemFont(ofSize: 13),
                 .foregroundColor: NSColor.labelColor,
             ]
-        )
+        ))
+        updateAvailableItem.attributedTitle = title
         updateAvailableItem.image    = tintedSymbol("arrow.down.circle.fill", color: .systemBlue)
         updateAvailableItem.isHidden = false
         updateAvailableSep.isHidden  = false
