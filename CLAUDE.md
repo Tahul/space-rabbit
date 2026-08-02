@@ -81,6 +81,7 @@ The two features suppress each other to prevent loops. After instant-switch fire
 | `CGSGetActiveSpace` | `cgsGetActiveSpace` | `(cid) -> UInt64` | Active space ID on main display |
 | `CGSCopyManagedDisplaySpaces` | `cgsCopyDisplaySpaces` | `(cid, displayUUID?) -> CFArray?` | All displays + their spaces |
 | `SLSCopySpacesForWindows` | `slsCopySpacesForWindows` | `(cid, spaceType, windowIDs) -> CFArray?` | Maps window IDs → space IDs |
+| `CGSManagedDisplaySetCurrentSpace` | `cgsSetCurrentSpace` | `(cid, displayIdentifier, spaceID) -> Void` | Sets a display's current space directly, no animation — used for cross-display switches only (DockSwipe gestures can't reach other displays) |
 
 If any symbol is missing (Apple renamed it), the variable is `nil` and dependent features gracefully no-op.
 
@@ -109,6 +110,8 @@ This is parsed in `getSpaceList()`, `getAllCurrentSpaces()`, and `switchToSpace(
 ```
 
 Key: `"id64"` is cast to `UInt64` via `(space["id64"] as? NSNumber)?.uint64Value`.
+
+**`"Display Identifier"` caveat:** not always a UUID — some systems (notably single-display setups) report the literal string `"Main"` (issue #6). `getSpaceList()` translates `"Main"` to the primary display's UUID before comparing against the cursor's display, and falls back to active-space matching when no identifier matches at all. Never compare this field to a cursor/display UUID directly.
 
 ### Synthetic gesture event anatomy
 
@@ -360,4 +363,5 @@ local.env               — git-ignored; signing credentials
 ## Known limitations
 
 - Trackpad swipe gestures still animate (they bypass the event tap entirely).
+- Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display, `switchToSpace` uses `CGSManagedDisplaySetCurrentSpace` instead (instant, only at the "Instant" speed setting); at animated speed settings, or if the symbol is missing, it stands down and macOS's native animated switch handles it.
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates.

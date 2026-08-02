@@ -86,9 +86,10 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         let spaceIDs = getSpaceList().ids
         guard idx < spaceIDs.count else { return nil }
 
-        switchToSpace(spaceIDs[idx])
-        gLastSpaceSwitchTime = Date()
-        gMenu?.recordSwitch()
+        if switchToSpace(spaceIDs[idx]) {
+            gLastSpaceSwitchTime = Date()
+            gMenu?.recordSwitch()
+        }
         return nil
     }
 
@@ -103,8 +104,10 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     else                         { return passthrough }
 
     // Bounds check: don't switch past the first or last space.
-    // If we can't determine the layout (private API failure),
-    // proceed anyway — the gesture will harmlessly no-op.
+    // If we can't determine the layout (private API failure), proceed
+    // anyway — but note an out-of-bounds gesture is NOT harmless: the
+    // Dock plays a blank-and-slide-back bounce (see issue #6), so
+    // getSpaceList() failing here should be treated as a bug.
     let (spaceIDs, currentIdx) = getSpaceList()
     if currentIdx >= 0 {
         let targetIdx = currentIdx + direction

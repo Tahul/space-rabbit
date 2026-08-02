@@ -85,25 +85,13 @@ func getSpaceList() -> (ids: [CGSSpaceID], currentIdx: Int) {
     guard let displays = getDisplays(cid, nil)?.takeRetainedValue() as? [[String: Any]]
     else { return ([], -1) }
 
-    // Prefer the display under the cursor — matches native Ctrl+Arrow behaviour
-    // on multi-monitor setups where cursor and keyboard focus may differ.
-    // Fall back to the globally active space's display when cursor can't be resolved.
-    let cursorUUID = displayUUIDUnderCursor()
-    let active     = cgsGetActiveSpace?(cid) ?? 0
-
-    for display in displays {
+    /// Extracts the ordered space IDs and current-space index from one
+    /// display dictionary, or `nil` if the dictionary is malformed.
+    func spaceList(of display: [String: Any]) -> (ids: [CGSSpaceID], currentIdx: Int)? {
         guard let currentSpaceDict = display["Current Space"] as? [String: Any],
               let currentSpaceID   = (currentSpaceDict["id64"] as? NSNumber)?.uint64Value,
               let spaces           = display["Spaces"] as? [[String: Any]]
-        else { continue }
-
-        let isTarget: Bool
-        if let cu = cursorUUID, let du = display["Display Identifier"] as? String {
-            isTarget = cu == du
-        } else {
-            isTarget = active != 0 && currentSpaceID == active
-        }
-        guard isTarget else { continue }
+        else { return nil }
 
         var ids        = [CGSSpaceID]()
         var currentIdx = -1
@@ -117,7 +105,52 @@ func getSpaceList() -> (ids: [CGSSpaceID], currentIdx: Int) {
         return (ids, currentIdx)
     }
 
+    let cursorUUID = displayUUIDUnderCursor()
+    let active     = cgsGetActiveSpace?(cid) ?? 0
+
+    // Pass 1: prefer the display under the cursor — matches native
+    // Ctrl+Arrow behaviour on multi-monitor setups where cursor and
+    // keyboard focus may differ. Some systems report the literal
+    // identifier "Main" instead of a UUID (notably single-display setups);
+    // translate it to the primary display's UUID before comparing.
+    if let cursorUUID {
+        for display in displays {
+            guard let du = display["Display Identifier"] as? String,
+                  displayIdentifierMatches(du, uuid: cursorUUID) else { continue }
+            if let result = spaceList(of: display) { return result }
+        }
+    }
+
+    // Pass 2: no display matched the cursor (resolution failure, or an
+    // identifier form we don't recognize) — fall back to whichever display
+    // hosts the globally active space. Without this net, a mismatch would
+    // disable edge bounds-checking and Desktop-N shortcuts entirely.
+    if active != 0 {
+        for display in displays {
+            guard let currentSpaceDict = display["Current Space"] as? [String: Any],
+                  let currentSpaceID   = (currentSpaceDict["id64"] as? NSNumber)?.uint64Value,
+                  currentSpaceID == active else { continue }
+            if let result = spaceList(of: display) { return result }
+        }
+    }
+
     return ([], -1)
+}
+
+/// Returns the UUID string of the primary display — the one CGS calls
+/// "Main" in `CGSCopyManagedDisplaySpaces` dictionaries — or `nil` if it
+/// cannot be determined.
+private func mainDisplayUUID() -> String? {
+    let cfUUID = CGDisplayCreateUUIDFromDisplayID(CGMainDisplayID()).takeRetainedValue()
+    return CFUUIDCreateString(nil, cfUUID) as String?
+}
+
+/// Compares a `"Display Identifier"` dictionary value against a display
+/// UUID, translating the literal `"Main"` (used by some systems instead
+/// of a UUID — see issue #6) to the primary display's UUID.
+private func displayIdentifierMatches(_ identifier: String, uuid: String) -> Bool {
+    if identifier == "Main" { return mainDisplayUUID() == uuid }
+    return identifier == uuid
 }
 
 /// Returns the "Display Identifier" UUID string for the display the cursor
@@ -269,15 +302,19 @@ func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
 /// steps, and posts that many gesture pairs.
 ///
 /// - Parameter targetSpace: The space ID to switch to.
-func switchToSpace(_ targetSpace: CGSSpaceID) {
+/// - Returns: `true` if switch gestures were posted; `false` when nothing
+///            was done (already on the target, layout unknown, or the target
+///            lives on a display our gesture cannot reach).
+@discardableResult
+func switchToSpace(_ targetSpace: CGSSpaceID) -> Bool {
     guard let mainConn    = cgsMainConnection,
-          let getDisplays = cgsCopyDisplaySpaces else { return }
+          let getDisplays = cgsCopyDisplaySpaces else { return false }
 
     let cid = mainConn()
-    guard cid != 0 else { return }
+    guard cid != 0 else { return false }
 
     guard let displays = getDisplays(cid, nil)?.takeRetainedValue() as? [[String: Any]]
-    else { return }
+    else { return false }
 
     for display in displays {
         guard let currentSpaceDict = display["Current Space"] as? [String: Any],
@@ -300,17 +337,37 @@ func switchToSpace(_ targetSpace: CGSSpaceID) {
         guard targetIdx >= 0 else { continue }
 
         // Already on the target space — nothing to do
-        guard targetIdx != currentIdx else { break }
+        guard targetIdx != currentIdx else { return false }
 
         // Need at least two spaces and a valid current position to navigate
-        guard currentIdx >= 0, spaceIDs.count >= 2 else { break }
+        guard currentIdx >= 0, spaceIDs.count >= 2 else { return false }
+
+        // The synthetic DockSwipe gesture carries no display information —
+        // the Dock applies it to the display under the cursor. If the target
+        // space lives on a *different* display, posting would switch the
+        // wrong display's space. Instead, set that display's current space
+        // directly via CGSManagedDisplaySetCurrentSpace (no animation).
+        // Fall back to macOS's native animated switch when the symbol is
+        // unavailable, or when the user chose an animated transition speed
+        // (a direct set is always instant and can't honor it).
+        if let cursorUUID = displayUUIDUnderCursor(),
+           let du = display["Display Identifier"] as? String,
+           !displayIdentifierMatches(du, uuid: cursorUUID) {
+            guard let setSpace = cgsSetCurrentSpace, gSwitchSpeed >= 1.0 else {
+                return false
+            }
+            setSpace(cid, du as CFString, targetSpace)
+            return true
+        }
 
         // Compute direction and step count for sequential navigation
         let direction = targetIdx > currentIdx ? 1 : -1
         let steps     = abs(targetIdx - currentIdx)
         switchNSpaces(direction: direction, steps: steps)
-        break
+        return true
     }
+
+    return false
 }
 
 // MARK: - Synthetic DockSwipe Gesture Posting

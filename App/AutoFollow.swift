@@ -69,7 +69,8 @@ final class SwoopObserver: NSObject {
         // (from Cmd+Tab or Dock click that triggered this notification)
         // brings the app and its frontmost window to focus. Our space
         // switch is the only missing piece.
-        switchToSpace(targetSpace)
-        gMenu?.recordSwitch()
+        if switchToSpace(targetSpace) {
+            gMenu?.recordSwitch()
+        }
     }
 }

@@ -124,6 +124,12 @@ typealias FnDisplaySpaces    = @convention(c) (CGSConnectionID, CFString?) -> Un
 /// `spaceType` is a bitmask (7 = all space types).
 typealias FnSpacesForWindows = @convention(c) (CGSConnectionID, Int32, CFArray) -> Unmanaged<CFArray>?
 
+/// `CGSManagedDisplaySetCurrentSpace(cid, displayIdentifier, spaceID)`
+/// Sets the current space of a specific display directly, with no animation.
+/// `displayIdentifier` is the display's "Display Identifier" string from
+/// `CGSCopyManagedDisplaySpaces` (a UUID, or the literal "Main").
+typealias FnSetCurrentSpace  = @convention(c) (CGSConnectionID, CFString, CGSSpaceID) -> Void
+
 // MARK: - Runtime Symbol Resolution
 //
 // We load private symbols from the WindowServer framework using dlsym
@@ -156,3 +162,7 @@ let cgsCopyDisplaySpaces:    FnDisplaySpaces?     = loadSymbol("CGSCopyManagedDi
 
 /// Maps window IDs to the spaces they live on.
 let slsCopySpacesForWindows: FnSpacesForWindows?  = loadSymbol("SLSCopySpacesForWindows")
+
+/// Sets a specific display's current space directly (no animation).
+/// Used for cross-display switches, which DockSwipe gestures cannot reach.
+let cgsSetCurrentSpace:      FnSetCurrentSpace?   = loadSymbol("CGSManagedDisplaySetCurrentSpace")
