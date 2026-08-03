@@ -309,10 +309,12 @@ final class SettingsSidebarController: NSViewController {
         mainTable.reloadData()
         bottomTable.reloadData()
 
-        // Small fixed inset from the sidebar panel's top — the split view
-        // already places the sidebar panel below the traffic lights, so no
-        // title-bar clearance is needed here (the safe area over-clears and
-        // pushes the list way down). viewDidLayout compensates for the
+        // Small fixed inset from the sidebar panel's top. On macOS 26+ the
+        // split view already places the sidebar panel below the traffic
+        // lights, so no title-bar clearance is needed (the safe area
+        // over-clears and pushes the list way down). On earlier systems the
+        // panel extends under the transparent title bar instead —
+        // viewDidLayout adds the clearance there, and compensates for the
         // table's internal padding above its first row.
         mainTop      = mainTable.topAnchor.constraint(equalTo: container.topAnchor,
                                                       constant: Layout.sidebarTopInset)
@@ -346,9 +348,17 @@ final class SettingsSidebarController: NSViewController {
         if abs(bottomHeight.constant - bottomFit) > 0.5 { bottomHeight.constant = bottomFit }
 
         // Cancel out the style's internal padding above the first row so
-        // the first row's visual top sits exactly at the intended inset
+        // the first row's visual top sits exactly at the intended inset.
+        // Pre-macOS 26 the sidebar panel is not offset below the title bar
+        // by the split view, so clear the title-bar height manually — the
+        // traffic lights would otherwise overlap the first row.
         if mainTable.numberOfRows > 0 {
-            let topFit = Layout.sidebarTopInset - mainTable.rect(ofRow: 0).minY
+            var clearance: CGFloat = 0
+            if #unavailable(macOS 26.0), let window = view.window {
+                clearance = window.frame.height - window.contentLayoutRect.height
+            }
+            let topFit = clearance + Layout.sidebarTopInset
+                       - mainTable.rect(ofRow: 0).minY
             if abs(mainTop.constant - topFit) > 0.5 { mainTop.constant = topFit }
         }
     }
