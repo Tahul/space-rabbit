@@ -24,7 +24,7 @@ private let kDisabledIconAlpha: CGFloat = 0.25
 private let kMenuIconSize: CGFloat = 16
 
 /// Height (in points) of the header row hosting the master enable switch.
-private let kEnableRowHeight: CGFloat = 36
+private let kEnableRowHeight: CGFloat = 28
 
 /// Horizontal content inset (in points) for the header row, aligning it
 /// with the text of regular menu items.
