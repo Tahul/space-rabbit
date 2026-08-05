@@ -260,7 +260,13 @@ This is in `SwoopMenu.statusItemClicked(_:)`.
 SwoopMenu (NSStatusItem, icon: "hare.fill")
   └─ NSMenu
        ├─ Header row (custom-view item): bold "Space Rabbit" label + small
-       │    native NSSwitch bound to gEnabled (Klack-style master toggle)
+       │    native NSSwitch bound to gEnabled (Klack-style master toggle).
+       │    Hosted in MenuKeyAppearanceView, whose viewDidMoveToWindow calls
+       │    window?.becomeKey() on the menu's backing window — flips AppKit's
+       │    key-appearance flag so the switch renders with the accent color
+       │    while the app is inactive, WITHOUT stealing focus (never call
+       │    NSApp.activate when opening the menu — it deactivates the
+       │    frontmost app). Same technique Klack uses.
        ├─ Update-available banner (hidden by default, shown by checkForUpdates)
        ├─ Launch-at-login warning banner (hidden when SMAppService.mainApp.status == .enabled)
        ├─ "Configure:" section header
@@ -308,7 +314,16 @@ bar's launch-at-login warning, which also sets
 hand-tint controls and do not set the per-app `AppleAccentColor` preference (it was
 tried and reverted; `main.swift` removes a leftover key from older builds at launch).
 `NSSwitch` has no tint API at all — a SwiftUI Toggle with `.tint` was tried for the
-menu header's master switch and reverted (the tint did not render in the menu).
+menu header's master switch and reverted (the tint did not render in the menu). The
+switch's graphite-when-inactive problem is solved by `MenuKeyAppearanceView` (see the
+UI tree above), not by tinting.
+
+**Settings window & Spaces:** do NOT set `.moveToActiveSpace` on the settings
+window's `collectionBehavior` (tried and reverted): the window server re-inserts
+such windows at the back of the stacking order on every space transition, so the
+window resurfaced behind other apps' windows when returning to its space. Plain
+`makeKeyAndOrderFront` + `NSApp.activate` gives the platform-default behavior
+(a window left open on another space pulls the user back there when re-shown).
 ```
 
 Custom controls: `LinkTextField` / `LinkButton` — subclasses that override `resetCursorRects()` to show a pointing-hand cursor.
