@@ -57,6 +57,30 @@ private func formatTimeSaved(_ seconds: Int) -> String {
     }
 }
 
+// MARK: - Menu Key Appearance
+
+/// Menu item container view that forces the menu's backing window into its
+/// key-appearance state.
+///
+/// As an accessory (`LSUIElement`) app we are usually inactive when the
+/// dropdown opens, and the menu's window never becomes key — so AppKit draws
+/// hosted controls (the header row's `NSSwitch`) in their inactive graphite
+/// style instead of the system accent color. Calling `becomeKeyWindow()`
+/// directly flips AppKit's internal key-appearance flag without any actual
+/// focus change: the frontmost app keeps focus, but controls in the menu
+/// render active. (Same technique Klack uses for its menu header switch.)
+private final class MenuKeyAppearanceView: NSView {
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        // Fires every time the menu opens (the item view is re-hosted in the
+        // menu's window each time); nil when the view is removed on close.
+        // (`becomeKey()` is Swift's bridged name for `-becomeKeyWindow`.)
+        window?.becomeKey()
+    }
+}
+
 // MARK: - SwoopMenu
 
 /// Manages the menu bar status item (rabbit icon) and its dropdown menu.
@@ -159,8 +183,10 @@ final class SwoopMenu: NSObject {
 
         // The container is stretched to the menu's width via its autoresizing
         // mask; the initial frame just avoids transient constraint conflicts.
-        let container = NSView(frame: NSRect(x: 0, y: 0,
-                                             width: 240, height: kEnableRowHeight))
+        // MenuKeyAppearanceView (vs a plain NSView) keeps the switch tinted
+        // with the accent color while the app is inactive.
+        let container = MenuKeyAppearanceView(frame: NSRect(x: 0, y: 0,
+                                                            width: 240, height: kEnableRowHeight))
         container.autoresizingMask = [.width]
 
         label.translatesAutoresizingMaskIntoConstraints        = false
