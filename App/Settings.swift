@@ -112,9 +112,22 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     ///   the previously selected pane is kept.
     func show(pane: SettingsPane? = nil) {
         if window == nil { window = makeWindow() }
+        guard let window = window else { return }
+
         if let pane = pane { rootController?.select(pane) }
-        window?.center()
-        window?.makeKeyAndOrderFront(nil)
+        window.center()
+
+        // One-shot `.moveToActiveSpace`: the window is created once and
+        // reused, so without this it stays assigned to the space it first
+        // appeared on — reopening it from another space would switch back
+        // there. The flag must NOT be left set permanently, though: the
+        // window server re-inserts such windows at the back of the stacking
+        // order on every space transition, so the window resurfaces behind
+        // other apps' windows when returning to its space.
+        window.collectionBehavior.insert(.moveToActiveSpace)
+        window.makeKeyAndOrderFront(nil)
+        window.collectionBehavior.remove(.moveToActiveSpace)
+
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -139,10 +152,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.delegate                    = self
         window.contentViewController       = root
 
-        // The window is created once and reused, so without this it stays
-        // assigned to the space it first appeared on — reopening it from
-        // another space would switch back there. Follow the user instead.
-        window.collectionBehavior.insert(.moveToActiveSpace)
+        // Note: `.moveToActiveSpace` is deliberately NOT set here — see the
+        // one-shot toggle in `show(pane:)`.
         return window
     }
 }
