@@ -116,18 +116,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
         if let pane = pane { rootController?.select(pane) }
         window.center()
-
-        // One-shot `.moveToActiveSpace`: the window is created once and
-        // reused, so without this it stays assigned to the space it first
-        // appeared on — reopening it from another space would switch back
-        // there. The flag must NOT be left set permanently, though: the
-        // window server re-inserts such windows at the back of the stacking
-        // order on every space transition, so the window resurfaces behind
-        // other apps' windows when returning to its space.
-        window.collectionBehavior.insert(.moveToActiveSpace)
         window.makeKeyAndOrderFront(nil)
-        window.collectionBehavior.remove(.moveToActiveSpace)
-
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -152,8 +141,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.delegate                    = self
         window.contentViewController       = root
 
-        // Note: `.moveToActiveSpace` is deliberately NOT set here — see the
-        // one-shot toggle in `show(pane:)`.
+        // Note: `.moveToActiveSpace` is deliberately NOT set here — it makes
+        // the window server re-insert the window at the back of the stacking
+        // order on every space transition, so the window resurfaces behind
+        // other apps' windows when returning to its space. Without it, a
+        // window left open on another space pulls the user back there when
+        // re-shown (platform default, same as e.g. Klack).
         return window
     }
 }
