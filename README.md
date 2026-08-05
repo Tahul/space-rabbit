@@ -15,9 +15,9 @@ Space Rabbit removes animations when switching macOS Spaces. Reclaim hours of yo
 
 ## Screenshots
 
-![space-rabbit-menu](https://github.com/user-attachments/assets/d094a99b-2cf6-4894-8606-bcee7f4470fe)
+![space-rabbit-menu](https://github.com/user-attachments/assets/64f35b7e-9d67-413a-b186-f9aff6374507)
 
-![space-rabbit-settings](https://github.com/user-attachments/assets/e648db8d-cf67-4f7e-b854-a7cc4f07f9d5)
+![space-rabbit-settings](https://github.com/user-attachments/assets/bff6faf8-4f66-4391-96f1-00fd5c4ba5df)
 
 ## Install
 
