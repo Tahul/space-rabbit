@@ -16,6 +16,35 @@
 import AppKit
 import CoreGraphics
 import ApplicationServices
+import Carbon.HIToolbox
+
+// MARK: - Application Delegate
+
+/// Handles reopen (user launches Space Rabbit while it is already running).
+///
+/// Needed when the menu bar icon is hidden: there is otherwise no UI entry
+/// point. Opening the app again from Spotlight or Finder surfaces Preferences.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+
+    func applicationShouldHandleReopen(_ sender: NSApplication,
+                                       hasVisibleWindows flag: Bool) -> Bool {
+        SettingsWindowController.shared.show(pane: .advanced)
+        return false
+    }
+}
+
+// MARK: - Login Item Detection
+
+/// Returns `true` when this process was started as a login item.
+///
+/// Used so a hidden menu bar icon does not pop Preferences at every login,
+/// while a manual launch of the app still opens Preferences as the recovery path.
+private func isLaunchedAsLoginItem() -> Bool {
+    guard let event = NSAppleEventManager.shared().currentAppleEvent else { return false }
+    guard event.eventID == AEEventID(kAEOpenApplication) else { return false }
+    guard let propData = event.paramDescriptor(forKeyword: keyAEPropData) else { return false }
+    return propData.enumCodeValue == AEKeyword(keyAELaunchedAsLogInItem)
+}
 
 // MARK: - Application Setup
 
@@ -24,6 +53,8 @@ import ApplicationServices
 UserDefaults.standard.removeObject(forKey: "AppleAccentColor")
 
 let app = NSApplication.shared
+let appDelegate = AppDelegate()
+app.delegate = appDelegate
 app.setActivationPolicy(.accessory)
 
 // MARK: - Accessibility Permission Check
@@ -48,6 +79,14 @@ loadSpaceSwitchShortcuts()
 // Create the menu bar status item and load persisted preferences
 // (switch count, feature toggles, etc.) from UserDefaults
 gMenu = SwoopMenu()
+
+// If the menu bar icon is hidden and the user launched the app manually
+// (not as a login item), open Preferences so they still have a way in.
+if gMenu?.isMenuBarIconVisible == false, !isLaunchedAsLoginItem() {
+    DispatchQueue.main.async {
+        SettingsWindowController.shared.show(pane: .advanced)
+    }
+}
 
 // Check for updates 5 seconds after launch, giving the app time to
 // settle before making a network request. Launch-only by design: no

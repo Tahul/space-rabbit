@@ -7,7 +7,7 @@
  *
  *   Auto-Start — Launch at Login toggle (+ warning banner)
  *   Features   — Instant space switch, Auto-follow, Transition speed
- *   Advanced   — Dock instant-hide
+ *   Advanced   — Dock instant-hide, menu bar icon visibility
  *   Updates    — Manual update check + manual-update notice
  *   About      — App icon, version, authors
  *
@@ -943,7 +943,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
 
 // MARK: - Advanced Pane
 
-/// The "Advanced" pane: Dock instant-hide toggle.
+/// The "Advanced" pane: Dock instant-hide and menu bar icon visibility.
 ///
 /// macOS supports a hidden preference `autohide-time-modifier` on com.apple.dock
 /// that controls the Dock show/hide animation speed. Setting it to 0.0 makes the
@@ -956,6 +956,7 @@ final class AdvancedPaneController: SettingsPaneViewController {
     override var paneTitle: String { SettingsPane.advanced.title }
 
     private var instantDockHideControl: NSSwitch!
+    private var showMenuBarIconControl: NSSwitch!
     private var dockResetDivider:       NSView!
     private var dockResetRow:           NSView!
 
@@ -976,6 +977,16 @@ final class AdvancedPaneController: SettingsPaneViewController {
             isDockInstantHideEnabled(),
             #selector(toggleDockInstantHide)
         )
+
+        let menuBarSubtitle = NSTextField(wrappingLabelWithString:
+            "When hidden, launch Space Rabbit again to open Preferences.")
+        menuBarSubtitle.font                    = .systemFont(ofSize: 11)
+        menuBarSubtitle.textColor               = .secondaryLabelColor
+        menuBarSubtitle.preferredMaxLayoutWidth = 240
+
+        let menuBarVisible = UserDefaults.standard.object(forKey: Defaults.showMenuBarIcon) as? Bool
+            ?? true
+        showMenuBarIconControl = makeSwitch(menuBarVisible, #selector(toggleShowMenuBarIcon))
 
         // "Reset to system default" link button (only visible when overridden)
         let resetBtn = LinkButton(title: "", target: self, action: #selector(resetDockToDefault))
@@ -1013,7 +1024,7 @@ final class AdvancedPaneController: SettingsPaneViewController {
         dockResetDivider.isHidden = true
         dockResetRow.isHidden     = true
 
-        let group = groupBox([
+        let dockGroup = groupBox([
             settingsRow(
                 label:    "Instant Dock hide",
                 control:  instantDockHideControl,
@@ -1022,12 +1033,22 @@ final class AdvancedPaneController: SettingsPaneViewController {
             dockResetDivider,
             dockResetRow,
         ])
-        return [group]
+        let menuBarGroup = groupBox([
+            settingsRow(
+                label:    "Show menu bar icon",
+                control:  showMenuBarIconControl,
+                subtitle: menuBarSubtitle
+            ),
+        ])
+        return [dockGroup, menuBarGroup]
     }
 
     override func viewWillAppear() {
         super.viewWillAppear()
         instantDockHideControl.state = isDockInstantHideEnabled() ? .on : .off
+        let menuBarVisible = gMenu?.isMenuBarIconVisible
+            ?? (UserDefaults.standard.object(forKey: Defaults.showMenuBarIcon) as? Bool ?? true)
+        showMenuBarIconControl.state = menuBarVisible ? .on : .off
         updateDockResetLink()
     }
 
@@ -1089,6 +1110,11 @@ final class AdvancedPaneController: SettingsPaneViewController {
         instantDockHideControl.state = .off
         updateDockResetLink()
         promptDockRestart()
+    }
+
+    @objc private func toggleShowMenuBarIcon() {
+        let visible = showMenuBarIconControl.state == .on
+        gMenu?.setMenuBarIconVisible(visible)
     }
 }
 

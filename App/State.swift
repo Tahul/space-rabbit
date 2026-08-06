@@ -100,11 +100,14 @@ var gMenu: SwoopMenu?
 /// All keys use the `"spacerabbit."` prefix to namespace them within
 /// the app's UserDefaults domain.
 enum Defaults {
-    static let enabled       = "spacerabbit.enabled"
-    static let instantSwitch = "spacerabbit.instantSwitch"
-    static let autoFollow    = "spacerabbit.autoFollow"
-    static let switchSpeed   = "spacerabbit.switchSpeed"
-    static let switchCount   = "spacerabbit.switchCount"
+    static let enabled         = "spacerabbit.enabled"
+    static let instantSwitch   = "spacerabbit.instantSwitch"
+    static let autoFollow      = "spacerabbit.autoFollow"
+    static let switchSpeed     = "spacerabbit.switchSpeed"
+    static let switchCount     = "spacerabbit.switchCount"
+    /// When `false`, the rabbit icon is removed from the menu bar.
+    /// Preferences remain reachable by launching Space Rabbit again.
+    static let showMenuBarIcon = "spacerabbit.showMenuBarIcon"
 }
 
 // MARK: - Persistence
