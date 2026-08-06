@@ -9,6 +9,7 @@ Space Rabbit removes animations when switching macOS Spaces. Reclaim hours of yo
 ## Features
 
 - ✅ **Instant space switch** - your keyboard shortcut switches spaces with zero animation
+- ✅ **Configurable space cycling** - assign Fn/Globe, an F-key, or a global shortcut and wrap back to the first Space
 - ✅ **Auto-follow on Cmd+Tab** - switching to an app on another space takes you there instantly
 - ✅ **Reads your shortcuts** - picks up your bindings from System Settings automatically
 - ✅ **Tiny native macOS app** - 2MB binary size, 12MB memory usage, zero CPU usage

@@ -86,6 +86,10 @@
 
 "settings.features.instantSpaceSwitch" = "Мгновенное переключение столов";
 "settings.features.instantAppSwitch" = "Мгновенное переключение приложений";
+"settings.features.cycleSpaces" = "Переключать столы";
+"settings.features.cycleSpaces.normalWarning" = "Функция «Переключать столы» недоступна, когда скорость перехода установлена на «Обычная».";
+"settings.features.shortcut.recording" = "Нажмите сочетание…";
+"settings.features.shortcut.none" = "Нет";
 "settings.features.transitionSpeed" = "Скорость перехода";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

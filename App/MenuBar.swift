@@ -98,6 +98,10 @@ final class SwoopMenu: NSObject {
             Defaults.enabled:         true,
             Defaults.instantSwitch:   true,
             Defaults.autoFollow:      true,
+            Defaults.cycleShortcutEnabled:   false,
+            Defaults.cycleShortcutKeycode:   kFnKeycode,
+            Defaults.cycleShortcutModifiers: UInt64(0),
+            Defaults.cycleShortcutLabel:     "fn",
             Defaults.switchSpeed:     1.0,
             Defaults.switchCount:     0,
             Defaults.showMenuBarIcon: true,
@@ -108,6 +112,25 @@ final class SwoopMenu: NSObject {
         gEnabled              = defaults.bool(forKey: Defaults.enabled)
         gInstantSwitchEnabled = defaults.bool(forKey: Defaults.instantSwitch)
         gAutoFollowEnabled    = defaults.bool(forKey: Defaults.autoFollow)
+        gCycleShortcutEnabled = defaults.bool(forKey: Defaults.cycleShortcutEnabled)
+
+        let cycleKeycode = (defaults.object(forKey: Defaults.cycleShortcutKeycode) as? NSNumber)?
+            .int64Value ?? kFnKeycode
+        if cycleKeycode >= 0 {
+            let rawModifiers = (defaults.object(
+                forKey: Defaults.cycleShortcutModifiers
+            ) as? NSNumber)?.uint64Value ?? 0
+            let keyLabel = defaults.string(forKey: Defaults.cycleShortcutLabel) ?? "fn"
+            gCycleShortcut = CycleShortcut(
+                keycode: cycleKeycode,
+                modifiers: CGEventFlags(rawValue: rawModifiers),
+                keyLabel: keyLabel
+            )
+        } else {
+            gCycleShortcut = nil
+            gCycleShortcutEnabled = false
+        }
+
         gSwitchSpeed          = defaults.double(forKey: Defaults.switchSpeed)
         gSwitchCount          = defaults.integer(forKey: Defaults.switchCount)
         gSwitchCountSaved     = gSwitchCount

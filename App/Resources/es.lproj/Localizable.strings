@@ -83,6 +83,10 @@
 
 "settings.features.instantSpaceSwitch" = "Cambio de espacio instantáneo";
 "settings.features.instantAppSwitch" = "Cambio de app instantáneo";
+"settings.features.cycleSpaces" = "Recorrer espacios";
+"settings.features.cycleSpaces.normalWarning" = "Recorrer espacios no está disponible cuando la velocidad de transición está configurada como «Normal».";
+"settings.features.shortcut.recording" = "Pulsa una función rápida…";
+"settings.features.shortcut.none" = "Ninguna";
 "settings.features.transitionSpeed" = "Velocidad de transición";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

@@ -34,7 +34,7 @@ Exact initialization order — getting this wrong causes subtle bugs:
 5. `gMenu = SwoopMenu()` — creates status item (hidden via `statusItem.isVisible` if so configured), loads persisted state from UserDefaults into globals
 6. Delayed `checkForUpdates()` — 5 seconds after launch (background network request)
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
-8. **Event tap creation** — `CGEvent.tapCreate` → `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
+8. **Event tap creation** — listens for `keyDown`, `keyUp`, `flagsChanged`, and `systemDefined`; these support the configurable cycle shortcut (including bare Fn) as well as the system Space bindings, then `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
 9. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
 10. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable tap
 11. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
@@ -57,6 +57,19 @@ The tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to st
 - Check `flags.intersection(kRelevantModifiers) == gModMask` — ensures *exactly* the right modifiers (no extras)
 - Match keycode against `gKeyLeft` (direction -1) or `gKeyRight` (direction +1)
 - Bounds check via `getSpaceList()` — don't switch past the first/last space
+
+The optional cycle shortcut is user-recordable in the Features pane. Ordinary
+shortcuts match exact keycode + Control/Option/Shift/Command modifiers on `keyDown`;
+their repeat and paired `keyUp` events are swallowed so the frontmost app sees
+nothing. Bare Fn is the one supported modifier-only binding: it is recognized on
+release, and any ordinary, media/system-defined, or modifier key event while Fn is
+held cancels the cycle. Repeated Fn-down events preserve that cancelled state, and
+modifiers already held when Fn goes down cancel it immediately. The shortcut moves
+to the next space on the cursor's display and wraps from the last space to the first.
+It is independent of the Instant Space switch toggle, but stands down at the Normal
+transition-speed tick like all synthetic switching. At Normal, the Features pane
+dims the recorder and toggle and shows a System Settings-style warning subtitle;
+the saved enabled state and shortcut remain unchanged and return at faster speeds.
 
 ### Feature 2: Auto-follow on Cmd+Tab (`SwoopObserver` in `AutoFollow.swift`)
 
@@ -181,6 +194,9 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | `gEnabled` | `Bool` | Master on/off toggle |
 | `gInstantSwitchEnabled` | `Bool` | Feature 1 toggle |
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
+| `gCycleShortcutEnabled` | `Bool` | Whether the configurable cycle shortcut is active |
+| `gCycleShortcut` | `CycleShortcut?` | Recorded cycle keycode, exact modifiers, and display label (`nil` when cleared) |
+| `gIsRecordingCycleShortcut` | `Bool` | Makes the global event tap stand down while Preferences records a replacement |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`) |
 | `gSwitchCount` | `Int` | Lifetime switch counter (persisted periodically) |
@@ -191,7 +207,9 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 ### UserDefaults keys (`Defaults` enum)
 
-`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`.
+`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`,
+`spacerabbit.cycleShortcut.enabled`, `.keycode`, `.modifiers`, `.label`,
+`spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`.
 
 Menu bar icon visibility has no `g` global: the live truth is `statusItem.isVisible` (`SwoopMenu.isMenuBarIconVisible`), persisted through `setMenuBarIconVisible(_:)`.
 
@@ -209,6 +227,8 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period before auto-follow kicks in |
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |
+| `kFnKeycode` | State | `63` | Virtual keycode used for the recordable bare-Fn/Globe binding |
+| `kCycleShortcutModifiers` | State | Control/Cmd/Alt/Shift/Fn | Exact modifier set checked for recorded cycle shortcuts. The automatic function flag on special/F-keys is normalized; a physically held Fn is still rejected as an unrecorded extra except for F-key bindings, where it is allowed to support either macOS top-row mode. |
 | `kMenuIconSize` | MenuBar | `16` (CGFloat) | Tinted SF Symbol size in menu items |
 | `kDisabledIconAlpha` | MenuBar | `0.25` (CGFloat) | Menu bar icon opacity when disabled |
 | `kEnableRowHeight` / `kEnableRowInset` | MenuBar | `36` / `14` (CGFloat) | Sizing for the header row hosting the master enable switch |
@@ -255,6 +275,15 @@ Toggles can be changed from two places. The sync pattern:
 1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
 2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
 3. **Settings pane appears** (`viewWillAppear`, fires on every pane swap): refreshes its switch controls from globals
+
+The cycle-shortcut row additionally uses `ShortcutRecorderButton` from
+`ShortcutRecorder.swift`: clicking it installs
+a temporary local key monitor and sets `gIsRecordingCycleShortcut` so the global tap
+passes candidates through. Escape cancels, unmodified Delete clears, bare typing keys
+require Control/Option/Command, standalone F-keys are allowed, and bare Fn is recorded
+on release. Fn used with an ordinary, modifier, or media key does not record bare Fn;
+Fn-produced F-keys are normalized to the same binding as standalone F-keys. Recording
+a shortcut enables it; clearing disables it.
 
 Master enable/disable (`gEnabled`) is only togglable from the menu bar (header-row switch or right-click on the icon; both go through `setEnabled`, which keeps the switch state in sync).
 
@@ -304,6 +333,7 @@ SettingsWindowController (singleton, NSWindowDelegate)
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
        │    + Launch at Login (SMAppService)
        ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow toggles,
+       │    configurable cycle-shortcut recorder + enable switch,
        │    then Transition speed slider on its own (5 ticks, snapping: Normal =
        │    native macOS animation / Fast / Faster / Fastest / right end cap =
        │    "Instant", the default)
