@@ -44,12 +44,24 @@ APPLE_APP_PASSWORD ?=
 
 VERSION   ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
-.PHONY: build icon background app app-dev dmg notarize release clean verify-macos-min
+.PHONY: build assets app app-dev dmg notarize release clean verify-macos-min
 
 build: $(BIN) verify-macos-min
 
 $(BIN): $(SRCS) Makefile
 	$(SWIFTC) $(SWIFTFLAGS) -target $(SWIFT_TARGET) -o $@ $(SRCS) $(LDFLAGS)
+
+$(ICNS): Tools/Icon/CreateIcon.swift
+	@echo "==> Generating $(ICNS)..."
+	@swift Tools/Icon/CreateIcon.swift
+	@mv AppIcon.icns $(ICNS)
+	@echo "==> Generated $(ICNS)"
+
+$(DMG_BACKGROUND): Tools/Dmg/CreateBackground.swift $(DMG_BACKGROUND_PNG)
+	@echo "==> Generating $(DMG_BACKGROUND)..."
+	@swift Tools/Dmg/CreateBackground.swift $(DMG_BACKGROUND_PNG)
+	@mv Background.tiff $(DMG_BACKGROUND)
+	@echo "==> Generated $(DMG_BACKGROUND)"
 
 verify-macos-min: $(BIN)
 	@actual_min="$$(otool -l $(BIN) | awk '/LC_BUILD_VERSION/ { found = 1; next } found && /minos/ { print $$2; exit }')"; \
@@ -59,13 +71,7 @@ verify-macos-min: $(BIN)
 	  exit 1; \
 	fi
 
-icon: $(ICNS)
-
-$(ICNS): Tools/Icon/CreateIcon.swift
-	@echo "==> Generating $(ICNS)..."
-	@swift Tools/Icon/CreateIcon.swift
-	@mv AppIcon.icns $(ICNS)
-	@echo "==> Generated $(ICNS)"
+assets: $(ICNS) $(DMG_BACKGROUND)
 
 app: build $(ICNS)
 	@echo "==> Building $(APP_BUNDLE)..."
@@ -93,14 +99,6 @@ app-dev: app
 	@sleep 0.5
 	@open $(Q_BUNDLE)
 	@echo "==> Restarted $(APP_BUNDLE)"
-
-background: $(DMG_BACKGROUND)
-
-Tools/Dmg/Background.tiff: Tools/Dmg/CreateBackground.swift $(DMG_BACKGROUND_PNG)
-	@echo "==> Generating Tools/Dmg/Background.tiff..."
-	@swift Tools/Dmg/CreateBackground.swift $(DMG_BACKGROUND_PNG)
-	@mv Background.tiff Tools/Dmg/Background.tiff
-	@echo "==> Generated Tools/Dmg/Background.tiff"
 
 dmg: app $(DMG_BACKGROUND)
 	@echo "==> Creating $(DMG_NAME)..."
@@ -174,5 +172,5 @@ notarize:
 release: dmg notarize
 
 clean:
-	rm -f $(BIN) $(ICNS) Tools/Dmg/Background.tiff $(DMG_RW)
+	rm -f $(BIN) $(ICNS) $(DMG_BACKGROUND) $(DMG_RW)
 	rm -rf AppIcon.iconset $(Q_BUNDLE) $(Q_DMG) $(DMG_STAGING)
