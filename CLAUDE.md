@@ -208,6 +208,8 @@ Used in `visibleWindowSpaces(for:)` — the window-lookup helper behind `findSpa
 
 `visibleWindowSpaces` does a single window-list pass (kept fast — it sits on the latency-critical auto-follow path) and splits results by `kCGWindowLayer`: layer 0 → `normal` (regular app windows), any other layer → `anchored` (space-anchored helper windows).
 
+**"All Desktops" windows (issue #10):** a window `SLSCopySpacesForWindows` resolves to **more than one** space is assigned to every space — the Dock's "Options > Assign To: All Desktops" (sticky) setting, which reports every user desktop of the window's display, or a status/desktop window tagged onto all spaces (verified empirically on macOS 26; same multi-space heuristic yabai uses for stickiness). Such a window is reachable wherever the user is, and its space list is MRU-ordered — chasing `first` would yank the user back to the space the app was last hidden/minimized on. It therefore contributes no chase target and instead sets the group's `hasAllSpacesWindow` flag, which `findSpaceForPid` treats like an onscreen window (returns 0, no switch).
+
 **Helper-window fallback in `findSpaceForPid`:** when an app has zero normal windows, macOS's activation logic still navigates (with the slide animation) to any space-anchored window the app owns — Finder's desktop-icons window, or status-item windows of menu-bar apps (e.g. Things), typically anchored to the first space. `findSpaceForPid` falls back to the `anchored` group and returns its frontmost space, so auto-follow preempts the native animated switch with an instant one to the same destination. This preemption races the Dock's own animated switch — see `kAutoFollowSuppressionWindow` notes.
 
 ## Global state (`State.swift`)

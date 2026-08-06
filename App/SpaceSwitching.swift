@@ -242,6 +242,12 @@ private struct WindowGroup {
     /// the app is already reachable without switching.
     var hasOnscreenWindow = false
 
+    /// `true` when at least one window in the group lives on more than one
+    /// space — the signature of an "All Desktops" Dock assignment (or a
+    /// status/desktop window tagged onto every space). Such a window is
+    /// reachable from any space, so activating it never navigates anywhere.
+    var hasAllSpacesWindow = false
+
     /// Spaces of the group's non-onscreen windows, in front-to-back order.
     var offscreenSpaces: [CGSSpaceID] = []
 }
@@ -260,7 +266,9 @@ private struct WindowGroup {
 /// short-circuit (no space lookup needed: onscreen implies reachable);
 /// every other window is resolved to its space via the private
 /// `SLSCopySpacesForWindows` API, and windows that cannot be resolved to
-/// a valid space are skipped.
+/// a valid space are skipped. A window that resolves to MORE than one
+/// space is on every space ("All Desktops" assignment) — it only sets the
+/// group's `hasAllSpacesWindow` flag and contributes no chase target.
 ///
 /// - Parameter pid: The Unix process ID of the target application.
 /// - Returns: The process's normal and anchored window groups.
@@ -293,13 +301,23 @@ private func visibleWindowSpaces(for pid: pid_t) -> (normal: WindowGroup, anchor
         guard let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value
         else { continue }
 
-        // Ask the private API which space this window lives on
+        // Ask the private API which space(s) this window lives on
         let windowIDArray = [NSNumber(value: windowID)] as CFArray
         guard let spaces = spacesFor(cid, kSLSSpaceTypeAll, windowIDArray)?
-                .takeRetainedValue() as? [NSNumber],
-              let spaceID = spaces.first?.uint64Value,
-              spaceID != 0
+                .takeRetainedValue() as? [NSNumber]
         else { continue }
+
+        // A window on more than one space is assigned to "All Desktops"
+        // (Dock icon > Options), or is a status/desktop window tagged onto
+        // every space. It is reachable wherever the user is — chasing its
+        // first listed (last-used) space would yank them away (issue #10).
+        if spaces.count > 1 {
+            if isNormal { normal.hasAllSpacesWindow   = true }
+            else        { anchored.hasAllSpacesWindow = true }
+            continue
+        }
+
+        guard let spaceID = spaces.first?.uint64Value, spaceID != 0 else { continue }
 
         if isNormal { normal.offscreenSpaces.append(spaceID)   }
         else        { anchored.offscreenSpaces.append(spaceID) }
@@ -316,6 +334,10 @@ private func visibleWindowSpaces(for pid: pid_t) -> (normal: WindowGroup, anchor
 /// whether any of them are already on a currently-visible display. If so, no
 /// switch is needed and this returns 0. Otherwise, it returns the space of the
 /// frontmost off-screen window.
+///
+/// A hidden or minimized window assigned to "All Desktops" also yields 0:
+/// it reappears on whatever space the user is on, so following its last-used
+/// space would drag the user backwards (issue #10).
 ///
 /// When the process has no normal windows at all, falls back to its
 /// space-anchored helper windows: macOS's own activation logic still
@@ -339,6 +361,11 @@ func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
     func destination(for group: WindowGroup) -> CGSSpaceID? {
         // An onscreen window means the app is visible right now
         if group.hasOnscreenWindow { return 0 }
+
+        // A window on every space ("All Desktops") appears right where the
+        // user is the moment the app unhides — native activation never
+        // navigates for it, so neither do we (issue #10).
+        if group.hasAllSpacesWindow { return 0 }
 
         // A non-onscreen window whose space is currently visible is
         // minimized or hidden: native activation doesn't navigate anywhere
