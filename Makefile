@@ -19,6 +19,18 @@ DMG_NAME   = Space-Rabbit.dmg
 Q_BUNDLE   = "$(APP_BUNDLE)"
 Q_DMG      = "$(DMG_NAME)"
 ICNS       = Icon/AppIcon.icns
+
+# DMG window layout — must stay in sync with Dmg/CreateBackground.swift
+DMG_BACKGROUND ?= Dmg/Background.tiff
+DMG_VOLNAME    = Space Rabbit $(VERSION)
+DMG_WIN_W      = 700
+DMG_WIN_H      = 460
+DMG_ICON_SIZE  = 128
+DMG_APP_X      = 185
+DMG_APP_Y      = 215
+DMG_DROP_X     = 515
+DMG_DROP_Y     = 215
+
 SIGN_ID          ?=
 APPLE_ID         ?=
 APPLE_TEAM_ID    ?=
@@ -26,7 +38,7 @@ APPLE_APP_PASSWORD ?=
 
 VERSION   ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
-.PHONY: build icon app app-dev dmg notarize release clean verify-macos-min
+.PHONY: build icon background app app-dev dmg notarize release clean verify-macos-min
 
 build: $(BIN) verify-macos-min
 
@@ -76,17 +88,53 @@ app-dev: app
 	@open $(Q_BUNDLE)
 	@echo "==> Restarted $(APP_BUNDLE)"
 
-dmg: app
+background: $(DMG_BACKGROUND)
+
+Dmg/Background.tiff: Dmg/CreateBackground.swift
+	@echo "==> Generating Dmg/Background.tiff..."
+	@swift Dmg/CreateBackground.swift
+	@mv Background.tiff Dmg/Background.tiff
+	@echo "==> Generated Dmg/Background.tiff"
+
+dmg: app $(DMG_BACKGROUND)
 	@echo "==> Creating $(DMG_NAME)..."
-	@rm -f $(Q_DMG)
-	@mkdir -p _dmg_staging
-	@cp -r $(Q_BUNDLE) _dmg_staging/
-	@ln -sf /Applications _dmg_staging/Applications
-	@hdiutil create \
-	    -volname "Space Rabbit $(VERSION)" \
+	@rm -f $(Q_DMG) _dmg_rw.dmg
+	@rm -rf _dmg_staging
+	@mkdir -p _dmg_staging/.background
+	@cp -R $(Q_BUNDLE) _dmg_staging/
+	@ln -s /Applications _dmg_staging/Applications
+	@cp $(DMG_BACKGROUND) _dmg_staging/.background/background.tiff
+	@# A leftover volume of the same name would make macOS mount ours under a
+	@# suffixed name, and the Finder layout script would target the wrong disk
+	@for vol in "/Volumes/$(DMG_VOLNAME)"*; do \
+	  [ -d "$$vol" ] && hdiutil detach "$$vol" -force >/dev/null 2>&1 || true; \
+	done
+	@echo "==> Building writable image..."
+	@size_mb=$$(( $$(du -sm _dmg_staging | cut -f1) + 50 )); \
+	hdiutil create -quiet \
+	    -volname "$(DMG_VOLNAME)" \
 	    -srcfolder _dmg_staging \
-	    -ov -format UDZO \
-	    $(Q_DMG)
+	    -size $${size_mb}m \
+	    -fs HFS+ -format UDRW -ov \
+	    _dmg_rw.dmg
+	@echo "==> Applying window layout..."
+	@mount_point=$$(hdiutil attach _dmg_rw.dmg -readwrite -nobrowse -noautoopen \
+	    | grep -E '^/dev/' | sed -n 's/.*\(\/Volumes\/.*\)$$/\1/p' | head -1); \
+	if [ -z "$$mount_point" ]; then echo "==> ERROR: failed to mount _dmg_rw.dmg"; exit 1; fi; \
+	trap 'hdiutil detach "$$mount_point" -force >/dev/null 2>&1 || true' EXIT; \
+	osascript Dmg/Layout.applescript "$$(basename "$$mount_point")" \
+	    $(DMG_WIN_W) $(DMG_WIN_H) $(DMG_ICON_SIZE) \
+	    $(DMG_APP_X) $(DMG_APP_Y) $(DMG_DROP_X) $(DMG_DROP_Y) \
+	    "$(APP_BUNDLE)"; \
+	cp $(ICNS) "$$mount_point/.VolumeIcon.icns"; \
+	SetFile -a C "$$mount_point" 2>/dev/null || true; \
+	chmod -Rf go-w "$$mount_point" 2>/dev/null || true; \
+	sync; \
+	trap - EXIT; \
+	hdiutil detach "$$mount_point" -force >/dev/null
+	@echo "==> Compressing..."
+	@hdiutil convert _dmg_rw.dmg -quiet -format UDZO -imagekey zlib-level=9 -o $(Q_DMG)
+	@rm -f _dmg_rw.dmg
 	@rm -rf _dmg_staging
 	@echo "==> Created $(DMG_NAME)"
 
@@ -120,5 +168,5 @@ notarize:
 release: dmg notarize
 
 clean:
-	rm -f $(BIN) $(ICNS)
-	rm -rf AppIcon.iconset $(Q_BUNDLE) $(Q_DMG)
+	rm -f $(BIN) $(ICNS) Dmg/Background.tiff _dmg_rw.dmg
+	rm -rf AppIcon.iconset $(Q_BUNDLE) $(Q_DMG) _dmg_staging
