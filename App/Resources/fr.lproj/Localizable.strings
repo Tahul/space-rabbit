@@ -94,7 +94,7 @@
 "settings.features.speed.fast" = "Rapide";
 "settings.features.speed.faster" = "Plus rapide";
 "settings.features.speed.fastest" = "Très rapide";
-"settings.features.speed.instant" = "Instantanée";
+"settings.features.speed.instant" = "Directe";
 
 
 /* --- Settings · Advanced ------------------------------------------------ */
