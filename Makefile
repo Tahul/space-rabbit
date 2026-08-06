@@ -22,7 +22,7 @@ ICNS       = Tools/Icon/AppIcon.icns
 
 # DMG window layout — must stay in sync with Tools/Dmg/CreateBackground.swift
 DMG_BACKGROUND ?= Tools/Dmg/Background.tiff
-# Custom installer artwork: drop a 1400x920 px PNG here and `make background`
+# Custom installer artwork: drop a 1400x920 px PNG here and `make assets`
 # uses it instead of the drawn placeholder (wildcard = no error when absent)
 DMG_BACKGROUND_PNG ?= $(wildcard Tools/Dmg/BaseBackground.png)
 # Scratch space for `make dmg` (both git-ignored, removed when the build ends)
