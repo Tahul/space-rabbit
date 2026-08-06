@@ -1,6 +1,6 @@
 #!/usr/bin/env swift
 // Generates the DMG installer window background (placeholder art).
-// Usage: swift Dmg/CreateBackground.swift
+// Usage: swift Tools/Dmg/CreateBackground.swift
 // Output: Background.tiff (multi-representation 1x + 2x, via tiffutil)
 //
 // The geometry constants below MUST stay in sync with the `dmg` target in the

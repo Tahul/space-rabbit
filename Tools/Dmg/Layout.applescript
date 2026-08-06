@@ -2,11 +2,11 @@
 -- icon size and the two icon slots (app + Applications drop target).
 --
 -- Invoked by the Makefile `dmg` target:
---   osascript Dmg/Layout.applescript <volName> <winW> <winH> <iconSize> \
+--   osascript Tools/Dmg/Layout.applescript <volName> <winW> <winH> <iconSize> \
 --             <appX> <appY> <dropX> <dropY> <appBundleName>
 --
 -- Positions are in Finder coordinates: origin at the window content's top-left,
--- y growing downward — the same convention Dmg/CreateBackground.swift draws in.
+-- y growing downward — the same convention Tools/Dmg/CreateBackground.swift draws in.
 
 on run argv
 	set volName to item 1 of argv

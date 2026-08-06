@@ -18,10 +18,10 @@ APP_BUNDLE = $(APP_NAME).app
 DMG_NAME   = Space-Rabbit.dmg
 Q_BUNDLE   = "$(APP_BUNDLE)"
 Q_DMG      = "$(DMG_NAME)"
-ICNS       = Icon/AppIcon.icns
+ICNS       = Tools/Icon/AppIcon.icns
 
-# DMG window layout — must stay in sync with Dmg/CreateBackground.swift
-DMG_BACKGROUND ?= Dmg/Background.tiff
+# DMG window layout — must stay in sync with Tools/Dmg/CreateBackground.swift
+DMG_BACKGROUND ?= Tools/Dmg/Background.tiff
 DMG_VOLNAME    = Space Rabbit $(VERSION)
 DMG_WIN_W      = 700
 DMG_WIN_H      = 460
@@ -55,9 +55,9 @@ verify-macos-min: $(BIN)
 
 icon: $(ICNS)
 
-$(ICNS): Icon/CreateIcon.swift
+$(ICNS): Tools/Icon/CreateIcon.swift
 	@echo "==> Generating $(ICNS)..."
-	@swift Icon/CreateIcon.swift
+	@swift Tools/Icon/CreateIcon.swift
 	@mv AppIcon.icns $(ICNS)
 	@echo "==> Generated $(ICNS)"
 
@@ -90,11 +90,11 @@ app-dev: app
 
 background: $(DMG_BACKGROUND)
 
-Dmg/Background.tiff: Dmg/CreateBackground.swift
-	@echo "==> Generating Dmg/Background.tiff..."
-	@swift Dmg/CreateBackground.swift
-	@mv Background.tiff Dmg/Background.tiff
-	@echo "==> Generated Dmg/Background.tiff"
+Tools/Dmg/Background.tiff: Tools/Dmg/CreateBackground.swift
+	@echo "==> Generating Tools/Dmg/Background.tiff..."
+	@swift Tools/Dmg/CreateBackground.swift
+	@mv Background.tiff Tools/Dmg/Background.tiff
+	@echo "==> Generated Tools/Dmg/Background.tiff"
 
 dmg: app $(DMG_BACKGROUND)
 	@echo "==> Creating $(DMG_NAME)..."
@@ -122,7 +122,7 @@ dmg: app $(DMG_BACKGROUND)
 	    | grep -E '^/dev/' | sed -n 's/.*\(\/Volumes\/.*\)$$/\1/p' | head -1); \
 	if [ -z "$$mount_point" ]; then echo "==> ERROR: failed to mount _dmg_rw.dmg"; exit 1; fi; \
 	trap 'hdiutil detach "$$mount_point" -force >/dev/null 2>&1 || true' EXIT; \
-	osascript Dmg/Layout.applescript "$$(basename "$$mount_point")" \
+	osascript Tools/Dmg/Layout.applescript "$$(basename "$$mount_point")" \
 	    $(DMG_WIN_W) $(DMG_WIN_H) $(DMG_ICON_SIZE) \
 	    $(DMG_APP_X) $(DMG_APP_Y) $(DMG_DROP_X) $(DMG_DROP_Y) \
 	    "$(APP_BUNDLE)"; \
@@ -168,5 +168,5 @@ notarize:
 release: dmg notarize
 
 clean:
-	rm -f $(BIN) $(ICNS) Dmg/Background.tiff _dmg_rw.dmg
+	rm -f $(BIN) $(ICNS) Tools/Dmg/Background.tiff _dmg_rw.dmg
 	rm -rf AppIcon.iconset $(Q_BUNDLE) $(Q_DMG) _dmg_staging
