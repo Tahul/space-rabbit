@@ -849,15 +849,17 @@ final class FeaturesPaneController: SettingsPaneViewController {
 
     override var paneTitle: String { SettingsPane.features.title }
 
-    private var instantSwitchControl: NSSwitch!
-    private var autoFollowControl:    NSSwitch!
-    private var speedSlider:          NSSlider!
-    private var speedValueLabel:      NSTextField!
-    private var speedBoltIcon:        NSImageView!
+    private var instantSwitchControl:    NSSwitch!
+    private var autoFollowControl:       NSSwitch!
+    private var threeFingerSwipeControl: NSSwitch!
+    private var speedSlider:             NSSlider!
+    private var speedValueLabel:         NSTextField!
+    private var speedBoltIcon:           NSImageView!
 
     override func buildContent() -> [NSView] {
-        instantSwitchControl = makeSwitch(gInstantSwitchEnabled, #selector(toggleInstantSwitch))
-        autoFollowControl    = makeSwitch(gAutoFollowEnabled,    #selector(toggleAutoFollow))
+        instantSwitchControl    = makeSwitch(gInstantSwitchEnabled,    #selector(toggleInstantSwitch))
+        autoFollowControl       = makeSwitch(gAutoFollowEnabled,       #selector(toggleAutoFollow))
+        threeFingerSwipeControl = makeSwitch(gThreeFingerSwipeEnabled, #selector(toggleThreeFingerSwipe))
 
         let togglesGroup = groupBox([
             settingsRow(label: L("settings.features.instantSpaceSwitch"),
@@ -865,6 +867,9 @@ final class FeaturesPaneController: SettingsPaneViewController {
             rowDivider(),
             settingsRow(label: L("settings.features.instantAppSwitch"),
                         control: autoFollowControl),
+            rowDivider(),
+            settingsRow(label: L("settings.features.instantThreeFingerSwipe"),
+                        control: threeFingerSwipeControl),
         ])
         let speedGroup = groupBox([
             settingsRow(label: L("settings.features.transitionSpeed"),
@@ -876,9 +881,10 @@ final class FeaturesPaneController: SettingsPaneViewController {
     override func syncFromGlobals() {
         // Refresh all toggle states — they may have been changed via the
         // menu bar, whether or not this pane was visible at the time
-        instantSwitchControl.state = gInstantSwitchEnabled ? .on : .off
-        autoFollowControl.state    = gAutoFollowEnabled    ? .on : .off
-        speedSlider.doubleValue    = gSwitchSpeed
+        instantSwitchControl.state    = gInstantSwitchEnabled    ? .on : .off
+        autoFollowControl.state       = gAutoFollowEnabled       ? .on : .off
+        threeFingerSwipeControl.state = gThreeFingerSwipeEnabled ? .on : .off
+        speedSlider.doubleValue       = gSwitchSpeed
         updateSpeedDisplay()
     }
 
@@ -1014,6 +1020,13 @@ final class FeaturesPaneController: SettingsPaneViewController {
     @objc private func toggleAutoFollow() {
         gAutoFollowEnabled = autoFollowControl.state == .on
         UserDefaults.standard.set(gAutoFollowEnabled, forKey: Defaults.autoFollow)
+        gMenu?.syncMenuItems()
+    }
+
+    @objc private func toggleThreeFingerSwipe() {
+        gThreeFingerSwipeEnabled = threeFingerSwipeControl.state == .on
+        UserDefaults.standard.set(gThreeFingerSwipeEnabled, forKey: Defaults.threeFingerSwipe)
+        updateSwipeTap()
         gMenu?.syncMenuItems()
     }
 

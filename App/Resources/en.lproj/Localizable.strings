@@ -35,6 +35,10 @@
 "menu.instantSpaceSwitch" = "Instant Space Switch ⌃↔";
 "menu.instantAppSwitch" = "Instant App Switch ⌘⇥";
 
+/* Feature 3 toggle: replaces the animated 3-finger trackpad swipe.
+   No trailing glyph — the gesture it replaces has no keyboard shortcut. */
+"menu.instantThreeFingerSwipe" = "Instant 3-Finger Swipe";
+
 /* Small grey section headings */
 "menu.section.configure" = "Configure:";
 "menu.section.statistics" = "Statistics:";
@@ -83,6 +87,7 @@
 
 "settings.features.instantSpaceSwitch" = "Instant Space switch";
 "settings.features.instantAppSwitch" = "Instant App switch";
+"settings.features.instantThreeFingerSwipe" = "Instant 3-Finger Swipe";
 "settings.features.transitionSpeed" = "Transition speed";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

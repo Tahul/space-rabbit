@@ -141,6 +141,12 @@ guard let runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
 CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)
 
+// Install the swipe-intercept tap (Feature 3) if the feature is enabled.
+// Must come after gMenu is created — it reads the persisted toggles.
+// Unlike the keyboard tap above, this one is torn down and re-created as
+// the feature is toggled, so a creation failure here is not fatal.
+updateSwipeTap()
+
 // MARK: - App Activation Observer (Auto-Follow)
 //
 // Listens for app-activation events (Cmd+Tab, Dock click, etc.)
@@ -191,6 +197,7 @@ NotificationCenter.default.addObserver(
     NSWorkspace.shared.notificationCenter.removeObserver(observer)
     CGEvent.tapEnable(tap: tap, enable: false)
     CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+    if let swipeTap = gSwipeTap { CGEvent.tapEnable(tap: swipeTap, enable: false) }
 }
 
 // MARK: - Signal Handling

@@ -735,6 +735,8 @@ private func postAugmentedSwitchGesture(isRight: Bool, velocity: Double) -> Bool
     }
 
     for (dock, gesture) in events {
+        // Pre-count for the swipe-intercept tap, same as the legacy path
+        markSyntheticGesturePosted()
         dock.post(tap: .cgSessionEventTap)
         gesture.post(tap: .cgSessionEventTap)
     }
@@ -796,9 +798,11 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
         dockEvent.setDoubleValueField(kCGEventGestureSwipeVelocityY, value: 0)
     }
 
-    // Post both events into the session event tap where the Dock can see them.
-    // The dock control event must be posted first (it carries the payload),
-    // followed by the gesture envelope.
+    // Post both events into the session event tap where the Dock can see
+    // them. The dock control event must be posted first (it carries the
+    // payload), followed by the gesture envelope. The swipe-intercept tap
+    // (Feature 3) sees these too — pre-count them so it passes them through.
+    markSyntheticGesturePosted()
     dockEvent.post(tap: .cgSessionEventTap)
     gestureEvent.post(tap: .cgSessionEventTap)
     return true

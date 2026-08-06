@@ -35,12 +35,13 @@ Exact initialization order — getting this wrong causes subtle bugs:
 6. Delayed `checkForUpdates()` — 5 seconds after launch (background network request)
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
 8. **Event tap creation** — `CGEvent.tapCreate` → `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
-9. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
-10. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable tap
-11. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
-12. `app.run()` — enter run loop
+9. **Swipe-intercept tap** — `updateSwipeTap()` installs the Feature 3 tap if the persisted toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
+10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
+11. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
+12. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
+13. `app.run()` — enter run loop
 
-## Two core features
+## Three core features
 
 ### Feature 1: Instant space switch (`eventTapCallback` in `EventTap.swift`)
 
@@ -67,6 +68,44 @@ Listens for `NSWorkspace.didActivateApplicationNotification`. When an app is act
 3. `switchToSpace(_:)` computes direction + steps and posts that many gestures
 
 The app is intentionally **never activated by us** (`app.activate()` is not called): the system activation already in progress brings the app to focus, and sending a `kAEActivate` Apple Event makes some apps (e.g. Safari) exit background modes like Picture-in-Picture.
+
+### Feature 3: Instant 3-finger swipe (`swipeTapCallback` in `SwipeIntercept.swift`)
+
+**Off by default** (`spacerabbit.threeFingerSwipe`, opt-in) — it swallows the user's
+physical gesture, a bigger behavioral change than the additive features above.
+Ported from [joshuarli/iss](https://github.com/joshuarli/iss) (same repo the macOS 27
+augmentation came from).
+
+A second CGEvent tap listens for the private gesture (29) + DockControl (30) event
+types and intercepts the *real* horizontal 3-finger trackpad swipe:
+
+1. **Began** → start tracking, swallow (the native animated switch never starts)
+2. **Changed** → first non-zero `kCGEventGestureSwipeProgress` reveals the direction;
+   fire `postSwitchGesture` once (bounds-checked via `getSpaceList()`, stands down when
+   the layout is unknown), keep swallowing
+3. **Ended** → fallback: if nothing fired yet (very quick flick), use the final
+   `kCGEventGestureSwipeVelocityX` sign. On macOS 27+ the Ended event is passed through
+   with progress/velocity zeroed (the Dock needs to see the gesture close); pre-27 it
+   is swallowed. **Cancelled** (phase 8) → reset without firing
+4. Companion gesture (29) envelopes are swallowed while a swipe is tracked
+
+**Direction sign of real trackpad events** (independent of the posting-side
+convention): right-space iff sign `< 0` on macOS ≤ 25 and 27+ (augmented check first),
+but `> 0` on macOS 26, which inverted the reported sign (`kSwipeDirectionReversed`,
+evaluated at runtime — iss does this at build time via `ISS_SWIPE_DIRECTION_REVERSED`).
+
+**Passthrough counter (`gSwipePassthroughCount`)** — Space Rabbit's own synthetic
+gestures post into the same session tap and would loop right back into this tap.
+Every posting path calls `markSyntheticGesturePosted()` (2 events per pair) right
+before posting; the swipe tap decrements and waves those events through. The counter
+only increments while the tap is installed, and is reset with the rest of the
+tracking state (`resetSwipeIntercept()`) whenever the tap's continuity breaks.
+
+**Tap lifecycle** — unlike the keyboard tap (installed once at startup), this tap is
+created/torn down on demand by `updateSwipeTap()` so it only exists while
+`gEnabled && gThreeFingerSwipeEnabled`. Called from startup, `SwoopMenu.setEnabled`,
+and both feature toggles (menu + settings). The "Normal" speed tick is gated inside
+the callback (`isNativeSwitchSpeed()` → everything passes through untouched).
 
 ### Feature interaction (suppression guard)
 
@@ -177,10 +216,14 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 | Variable | Type | Purpose |
 |---|---|---|
-| `gTap` | `CFMachPort?` | The active CGEvent tap |
+| `gTap` | `CFMachPort?` | The active CGEvent tap (keyboard, Feature 1) |
+| `gSwipeTap` / `gSwipeTapSource` | `CFMachPort?` / `CFRunLoopSource?` | Swipe-intercept tap (Feature 3) — exists only while the feature is active (`updateSwipeTap()`) |
 | `gEnabled` | `Bool` | Master on/off toggle |
 | `gInstantSwitchEnabled` | `Bool` | Feature 1 toggle |
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
+| `gThreeFingerSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
+| `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
+| `gSwipePassthroughCount` | `Int` | Synthetic events pre-counted so the swipe tap doesn't re-intercept Space Rabbit's own gestures |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`) |
 | `gSwitchCount` | `Int` | Lifetime switch counter (persisted periodically) |
@@ -191,7 +234,7 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 ### UserDefaults keys (`Defaults` enum)
 
-`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`.
+`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`.
 
 Menu bar icon visibility has no `g` global: the live truth is `statusItem.isVisible` (`SwoopMenu.isMenuBarIconVisible`), persisted through `setMenuBarIconVisible(_:)`.
 
@@ -207,6 +250,9 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kAugmentedInstantVelocity` | SpaceSwitching | `9999.0` | Instant velocity on the macOS 27+ augmented path (sign inverted: negative = right) |
 | `kAnimatedVelocityMin/Max` | SpaceSwitching | `40.0` / `80.0` | Animated velocity band for the transition-speed slider (from InstantSpaceSwitcher's presets). `currentSwitchVelocity()` interpolates the Fast/Faster/Fastest ticks to 50/60/70, or returns `kInstantSwitchVelocity` at the "Instant" end cap. At the "Normal" tick `isNativeSwitchSpeed()` is true and **no gestures are posted at all** — the event tap passes shortcuts through and auto-follow stands down, giving macOS's native animation |
 | `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period before auto-follow kicks in |
+| `kGestureMotionHorizontal` | SwipeIntercept | `1` (Int64) | `kCGEventGestureSwipeMotion` value of a horizontal swipe (vertical swipes pass through) |
+| `kSwipeDirectionReversed` | SwipeIntercept | macOS major ≥ 26 | Real-swipe sign inversion introduced by macOS 26 (27+ short-circuits via the augmentation check first) |
+| `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |
 | `kMenuIconSize` | MenuBar | `16` (CGFloat) | Tinted SF Symbol size in menu items |
@@ -252,11 +298,14 @@ Both call `startUpdate(downloadURL:)` which delegates to `UpdaterWindowControlle
 
 Toggles can be changed from two places. The sync pattern:
 
-1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
-2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
+1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`/`toggleThreeFingerSwipe`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
+2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`/`toggleThreeFingerSwipe`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
 3. **Settings pane appears** (`viewWillAppear`, fires on every pane swap): refreshes its switch controls from globals
 
-Master enable/disable (`gEnabled`) is only togglable from the menu bar (header-row switch or right-click on the icon; both go through `setEnabled`, which keeps the switch state in sync).
+The 3-finger swipe toggle additionally calls `updateSwipeTap()` from both places (its
+tap only exists while the feature is active).
+
+Master enable/disable (`gEnabled`) is only togglable from the menu bar (header-row switch or right-click on the icon; both go through `setEnabled`, which keeps the switch state in sync and calls `updateSwipeTap()`).
 
 ### The NSStatusItem right-click trick
 
@@ -286,6 +335,8 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        ├─ "Configure:" section header
        ├─ Instant space switch toggle (checkmark, shortcut: S)
        ├─ Auto-follow on ⌘⇥ toggle (checkmark, shortcut: F)
+       ├─ Instant 3-finger swipe toggle (checkmark, shortcut: 3,
+       │    icon: rectangle.and.hand.point.up.left.filled)
        ├─ "Statistics:" section header
        ├─ Switch count + time-saved display (non-interactive)
        ├─ Version label
@@ -303,10 +354,10 @@ SettingsWindowController (singleton, NSWindowDelegate)
        │    window resizes per pane
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
        │    + Launch at Login (SMAppService)
-       ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow toggles,
-       │    then Transition speed slider on its own (5 ticks, snapping: Normal =
-       │    native macOS animation / Fast / Faster / Fastest / right end cap =
-       │    "Instant", the default)
+       ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow +
+       │    Instant 3-finger swipe toggles, then Transition speed slider on its
+       │    own (5 ticks, snapping: Normal = native macOS animation / Fast /
+       │    Faster / Fastest / right end cap = "Instant", the default)
        ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
        │    autohide-time-modifier, killall Dock) + Show menu bar icon toggle
        │    (statusItem.isVisible; when hidden, relaunching the app reopens
@@ -579,6 +630,8 @@ App/
   SpaceSwitching.swift  — space queries, synthetic gesture posting, navigation
   EventTap.swift        — CGEvent tap callback (Feature 1: instant switch)
   AutoFollow.swift      — app-activation observer (Feature 2: auto-follow)
+  SwipeIntercept.swift  — gesture tap intercepting real trackpad swipes
+                          (Feature 3: instant 3-finger swipe)
   MenuBar.swift         — SwoopMenu status item and dropdown menu
   Settings.swift        — preferences window (General + About tabs) — largest file
   UpdateCheck.swift     — GitHub release version checking
@@ -621,7 +674,9 @@ local.env               — git-ignored; signing credentials
 
 ## Known limitations
 
-- Trackpad swipe gestures still animate (they bypass the event tap entirely).
+- Trackpad swipe gestures animate unless the opt-in "Instant 3-Finger Swipe"
+  feature is enabled (they bypass the keyboard event tap; Feature 3 intercepts
+  them with its own gesture tap).
 - Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display: at the "Instant" speed setting, `switchOnOtherDisplay` warps the cursor to that display, posts the gesture, and restores the cursor after `kCursorWarpRestoreDelay` (skipping the restore if the user moved it); at animated speeds it stands down and macOS's native animated switch handles it. Direct APIs are not an option (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates. macOS 27 already did this once: it rejects bare synthetic DockSwipe events, requiring the augmented path (see "macOS 27+ gesture augmentation").
 - The macOS 27+ augmented path always posts the equivalent of an instant switch at the "Instant" slider setting; the animated velocity band (Fast/Faster/Fastest) is passed through but uncalibrated on macOS 27.

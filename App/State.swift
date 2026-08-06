@@ -19,6 +19,16 @@ import Foundation
 /// and re-enabled automatically if macOS disables it.
 var gTap: CFMachPort?
 
+/// The swipe-intercept CGEvent tap (Feature 3). Unlike `gTap`, this one is
+/// created and torn down on demand: it only exists while both the master
+/// switch and the 3-finger swipe feature are enabled (see `updateSwipeTap()`
+/// in SwipeIntercept.swift).
+var gSwipeTap: CFMachPort?
+
+/// Run loop source backing `gSwipeTap`, kept so the source can be removed
+/// from the run loop when the tap is torn down.
+var gSwipeTapSource: CFRunLoopSource?
+
 // MARK: - Feature Toggles
 
 /// Master on/off toggle.
@@ -33,6 +43,12 @@ var gInstantSwitchEnabled: Bool = true
 /// Feature 2 toggle: follow activated apps to their space on Cmd+Tab.
 /// Only effective when `gEnabled` is also `true`.
 var gAutoFollowEnabled: Bool = true
+
+/// Feature 3 toggle: intercept real 3-finger trackpad swipes and replace
+/// them with instant switches. Off by default (opt-in) — it swallows the
+/// user's physical gesture, which is a bigger behavioral change than the
+/// purely additive features above. Only effective when `gEnabled` is `true`.
+var gThreeFingerSwipeEnabled: Bool = false
 
 /// Space-switch transition speed as a slider tick position (0.0–1.0 in
 /// steps of 0.25). 1.0 (the end cap) means instant — no animation at all.
@@ -52,6 +68,28 @@ var gSwitchSpeed: Double = 1.0
 /// see the resulting app-activation notification and chase a second
 /// window on yet another space.
 var gLastSpaceSwitchTime: Date = .distantPast
+
+// MARK: - Swipe Intercept State
+//
+// Tracking state for the swipe-intercept tap (Feature 3). One physical
+// swipe produces a Began → Changed… → Ended/Cancelled event sequence;
+// these flags carry the decision "we own this gesture" across it.
+// Reset together via resetSwipeIntercept() in SwipeIntercept.swift.
+
+/// Whether a real 3-finger dock swipe is currently being intercepted
+/// (its Began phase was swallowed, so we must handle the rest too).
+var gSwipeTracking: Bool = false
+
+/// Whether the intercepted swipe already fired its instant switch
+/// (fires once per gesture, on the first Changed with non-zero progress).
+var gSwipeFired: Bool = false
+
+/// Number of upcoming gesture/dock-control events that were posted by
+/// Space Rabbit itself and must pass through the swipe-intercept tap
+/// untouched. Incremented when posting synthetic gestures (see
+/// `markSyntheticGesturePosted`), decremented as they arrive at the tap.
+/// Without this, our own DockSwipe events would be re-intercepted.
+var gSwipePassthroughCount: Int = 0
 
 // MARK: - Statistics
 
@@ -100,14 +138,15 @@ var gMenu: SwoopMenu?
 /// All keys use the `"spacerabbit."` prefix to namespace them within
 /// the app's UserDefaults domain.
 enum Defaults {
-    static let enabled         = "spacerabbit.enabled"
-    static let instantSwitch   = "spacerabbit.instantSwitch"
-    static let autoFollow      = "spacerabbit.autoFollow"
-    static let switchSpeed     = "spacerabbit.switchSpeed"
-    static let switchCount     = "spacerabbit.switchCount"
+    static let enabled          = "spacerabbit.enabled"
+    static let instantSwitch    = "spacerabbit.instantSwitch"
+    static let autoFollow       = "spacerabbit.autoFollow"
+    static let threeFingerSwipe = "spacerabbit.threeFingerSwipe"
+    static let switchSpeed      = "spacerabbit.switchSpeed"
+    static let switchCount      = "spacerabbit.switchCount"
     /// When `false`, the rabbit icon is removed from the menu bar.
     /// Preferences remain reachable by launching Space Rabbit again.
-    static let showMenuBarIcon = "spacerabbit.showMenuBarIcon"
+    static let showMenuBarIcon  = "spacerabbit.showMenuBarIcon"
 }
 
 // MARK: - Persistence
