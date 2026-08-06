@@ -522,12 +522,14 @@ final class SwoopMenu: NSObject {
         gInstantSwitchEnabled.toggle()
         sender.state = gInstantSwitchEnabled ? .on : .off
         UserDefaults.standard.set(gInstantSwitchEnabled, forKey: Defaults.instantSwitch)
+        SettingsWindowController.shared.syncPanes()
     }
 
     @objc private func toggleAutoFollow(_ sender: NSMenuItem) {
         gAutoFollowEnabled.toggle()
         sender.state = gAutoFollowEnabled ? .on : .off
         UserDefaults.standard.set(gAutoFollowEnabled, forKey: Defaults.autoFollow)
+        SettingsWindowController.shared.syncPanes()
     }
 
     // MARK: - Statistics
