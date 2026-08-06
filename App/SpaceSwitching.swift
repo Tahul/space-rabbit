@@ -36,6 +36,12 @@ private let kInstantSwitchProgress: Double = 2.0
 /// Positive = right, negative = left.
 private let kInstantSwitchVelocity: Double = 400.0
 
+/// Instant-switch velocity used on macOS 27+, where the Dock's velocity
+/// threshold changed alongside the stricter event validation. Note the
+/// inverted sign convention on the augmented path: NEGATIVE velocity and
+/// progress move right, positive move left.
+private let kAugmentedInstantVelocity: Double = 9999.0
+
 /// Velocity range for animated (non-instant) switches, mapped from the
 /// user's transition-speed slider. Calibrated against InstantSpaceSwitcher's
 /// speed presets (Fast=50, Faster=60, Fastest=80): the slider's animated
@@ -518,6 +524,223 @@ private func displayID(forIdentifier identifier: String) -> CGDirectDisplayID? {
     return id == 0 ? nil : id
 }
 
+// MARK: - macOS 27 Gesture Augmentation
+//
+// Starting with macOS 27, the Dock validates incoming DockSwipe events
+// against a serialized IOHID queue payload attached to the event under
+// field 4205 — bare synthetic gestures (the pre-27 technique below) are
+// rejected outright. The fix, reverse-engineered in joshuarli/iss
+// (commit 09beeb6), is threefold:
+//
+//   1. Build the dock event with additional fields the 27 Dock checks
+//      (phase mirror, flavor, timestamp, non-zero position).
+//   2. Serialize the event with CGEventCreateData, append a raw
+//      (length, field 4205) record containing the packed IOHID payload,
+//      and rebuild the event with CGEventCreateFromData — the payload
+//      field cannot be set through the normal field-setter API.
+//   3. Post a full Began+Changed+Ended phase sequence (the pre-27 path
+//      gets away with Began+Ended only).
+//
+// The sign convention also inverted on this path: negative progress and
+// velocity move RIGHT, positive move LEFT.
+
+/// Whether this macOS release requires the augmented gesture path
+/// (macOS 27 and later). Evaluated once on first use.
+func requiresEventAugmentation() -> Bool { gAugmentationRequired }
+
+private let gAugmentationRequired: Bool =
+    ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
+
+/// Packed byte sizes of the IOHID structures serialized into the payload.
+/// The layouts are `#pragma pack(1)` C structs — serialized field-by-field
+/// below because Swift structs make no layout guarantees.
+private let kIOHIDFluidTouchGestureDataSize: UInt32 = 40 // 16-byte base + gesture fields
+private let kIOHIDVelocityEventDataSize:     UInt32 = 28 // 16-byte base + velocity fields
+
+private extension Data {
+    /// Appends a fixed-width integer in little-endian byte order — the
+    /// in-memory layout the window server expects for the IOHID payload
+    /// (the payload mimics packed C structs on a little-endian machine).
+    mutating func appendLE<T: FixedWidthInteger>(_ value: T) {
+        Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
+    }
+}
+
+/// Converts a double to the signed 16.16 fixed-point representation used
+/// inside IOHID event structures. Values too small to register are clamped
+/// to the smallest non-zero fixed-point value so their sign survives.
+private func doubleToFixed1616(_ value: Double) -> Int32 {
+    let fixed = Int32(truncatingIfNeeded: Int64(value * 65536.0))
+    if fixed == 0 && value != 0.0 { return value > 0.0 ? 1 : -1 }
+    return fixed
+}
+
+/// Serializes the IOHID queue payload that macOS 27 validates dock swipes
+/// against, mirroring the gesture parameters already set on `event`.
+///
+/// Layout (all little-endian, packed):
+///   - `IOHIDSystemQueueElementHeader` (28 bytes)
+///   - `IOHIDFluidTouchGestureData`    (40 bytes) — the swipe itself
+///   - `IOHIDVelocityEventData`        (28 bytes) — only when velocity is
+///     non-zero or the phase is Ended
+///
+/// - Parameter event: The dock control event whose fields to mirror.
+/// - Returns: The packed payload bytes.
+private func generateIOHIDPayload(from event: CGEvent) -> Data {
+    let phase     = event.getIntegerValueField(kCGEventGesturePhase)
+    let motion    = event.getIntegerValueField(kCGEventGestureSwipeMotion)
+    let progress  = event.getDoubleValueField(kCGEventGestureSwipeProgress)
+    let posX      = event.getDoubleValueField(kCGEventGesturePositionX)
+    let posY      = event.getDoubleValueField(kCGEventGesturePositionY)
+    let velX      = event.getDoubleValueField(kCGEventGestureSwipeVelocityX)
+    let velY      = event.getDoubleValueField(kCGEventGestureSwipeVelocityY)
+    let swipeMask = event.getIntegerValueField(kCGEventGestureSwipeMask)
+
+    let includeVelocity = velX != 0.0 || velY != 0.0 || phase == kCGSGesturePhaseEnded
+
+    var payload = Data()
+
+    // IOHIDSystemQueueElementHeader
+    let timestamp = event.timestamp != 0 ? UInt64(event.timestamp) : mach_absolute_time()
+    payload.appendLE(timestamp)                               // timestamp
+    payload.appendLE(UInt64(0))                               // sender_id
+    payload.appendLE(UInt32(0))                               // options
+    payload.appendLE(UInt32(0))                               // attribute_length
+    payload.appendLE(UInt32(includeVelocity ? 2 : 1))         // event_count
+
+    // IOHIDFluidTouchGestureData (IOHIDEventBase + gesture fields)
+    payload.appendLE(kIOHIDFluidTouchGestureDataSize)         // base.size
+    payload.appendLE(kIOHIDEventTypeFluidTouchGesture)        // base.type
+    payload.appendLE(UInt32((phase & 0xFF) << 24))            // base.options: phase in high byte
+    payload.appendLE(UInt8(0))                                // base.depth
+    payload.append(contentsOf: [0, 0, 0])                     // base.reserved
+    payload.appendLE(doubleToFixed1616(posX))                 // position_x
+    payload.appendLE(doubleToFixed1616(posY))                 // position_y
+    payload.appendLE(Int32(0))                                // position_z
+    payload.appendLE(UInt32(truncatingIfNeeded: swipeMask))   // swipe_mask
+    payload.appendLE(UInt16(truncatingIfNeeded: motion))      // gesture_motion
+    payload.appendLE(kIOHIDGestureFlavorDockPrimary)          // gesture_flavor
+    payload.appendLE(doubleToFixed1616(progress))             // swipe_progress
+
+    // IOHIDVelocityEventData (IOHIDEventBase + velocity fields)
+    if includeVelocity {
+        payload.appendLE(kIOHIDVelocityEventDataSize)         // base.size
+        payload.appendLE(kIOHIDEventTypeVelocity)             // base.type
+        payload.appendLE(UInt32(0))                           // base.options
+        payload.appendLE(UInt8(1))                            // base.depth
+        payload.append(contentsOf: [0, 0, 0])                 // base.reserved
+        payload.appendLE(doubleToFixed1616(velX))             // velocity_x
+        payload.appendLE(doubleToFixed1616(velY))             // velocity_y
+        payload.appendLE(Int32(0))                            // velocity_z
+    }
+
+    return payload
+}
+
+/// Rebuilds `event` with the raw IOHID payload (field 4205) appended —
+/// the augmentation macOS 27 requires before accepting a synthetic swipe.
+///
+/// The payload field cannot be set through `setIntegerValueField`, so the
+/// event is flattened with `CGEventCreateData`, a raw field record is
+/// appended to the serialized bytes — a big-endian u16 payload length,
+/// a big-endian u16 field ID (4205), then the packed payload — and a new
+/// event is inflated from the result with `CGEventCreateFromData`.
+///
+/// - Parameter event: The fully-populated dock control event.
+/// - Returns: A new event carrying the payload, or `nil` on failure
+///            (including an unrecognized serialization format).
+private func augmentDockSwipeEvent(_ event: CGEvent) -> CGEvent? {
+    guard let cfData = event.data else { return nil }
+    var bytes = cfData as Data
+
+    // Sanity-check the serialization header (version 2) — if Apple changes
+    // the format, bail out rather than corrupt the event.
+    guard bytes.count >= 4,
+          bytes[0] == 0, bytes[1] == 0, bytes[2] == 0, bytes[3] == 2
+    else { return nil }
+
+    let payload = generateIOHIDPayload(from: event)
+
+    bytes.append(UInt8(payload.count >> 8))                   // payload length (BE)
+    bytes.append(UInt8(payload.count & 0xFF))
+    bytes.append(UInt8(kCGEventIOHIDPayloadField >> 8))       // field ID 4205 (BE)
+    bytes.append(UInt8(kCGEventIOHIDPayloadField & 0xFF))
+    bytes.append(payload)
+
+    return CGEvent(withDataAllocator: kCFAllocatorDefault, data: bytes as CFData)
+}
+
+/// Creates one phase of the macOS 27 dock swipe, with the extra fields
+/// the 27 Dock validates (phase mirror, flavor, timestamp, non-zero
+/// position). Progress/velocity signs are INVERTED relative to the
+/// legacy path: negative moves right, positive moves left.
+///
+/// - Parameters:
+///   - phase: `kCGSGesturePhaseBegan`, `...Changed`, or `...Ended`.
+///   - isRight: `true` to move to the next space (right).
+///   - velocity: Velocity magnitude applied on the Ended phase.
+/// - Returns: The dock control event (not yet augmented), or `nil`.
+private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
+                                    velocity: Double) -> CGEvent? {
+    guard let ev = CGEvent(source: nil) else { return nil }
+
+    ev.setIntegerValueField(kCGSEventTypeField,          value: kCGSEventDockControl)
+    ev.setIntegerValueField(kCGEventGestureHIDType,      value: kIOHIDEventTypeDockSwipe)
+    ev.setIntegerValueField(kCGEventGesturePhase,        value: phase)
+    ev.setDoubleValueField(kCGEventGestureSwipeProgress, value: isRight ? -1.0 : 1.0)
+    ev.setIntegerValueField(kCGEventGestureSwipeMotion,  value: 1)
+    ev.setIntegerValueField(kCGEventGesturePhase2,       value: phase)
+    ev.setDoubleValueField(kCGEventGestureFlavor,        value: Double(kIOHIDGestureFlavorDockPrimary))
+    ev.setDoubleValueField(kCGEventGestureTimestamp,     value: Double(mach_absolute_time()))
+    ev.setDoubleValueField(kCGEventGesturePositionX,     value: 0.1)
+
+    if phase == kCGSGesturePhaseEnded {
+        ev.setDoubleValueField(kCGEventGestureSwipeVelocityX,
+                               value: isRight ? -velocity : velocity)
+    }
+    return ev
+}
+
+/// Posts a complete augmented Began+Changed+Ended swipe sequence — the
+/// macOS 27 equivalent of `postSwitchGesture`'s legacy Began+Ended pair.
+///
+/// All three events are built (and augmented) up front so a mid-sequence
+/// allocation failure posts nothing at all — a Began without its Ended
+/// would leave the Dock's gesture state half-open.
+///
+/// - Parameters:
+///   - isRight: `true` to move to the next space (right).
+///   - velocity: Velocity magnitude requested by the caller. Values in
+///     the legacy instant range map to `kAugmentedInstantVelocity`;
+///     animated-range values pass through unchanged (best effort — the
+///     animated band is uncalibrated on macOS 27).
+/// - Returns: `true` if the full sequence was posted.
+private func postAugmentedSwitchGesture(isRight: Bool, velocity: Double) -> Bool {
+    let magnitude = velocity >= kInstantSwitchVelocity
+        ? kAugmentedInstantVelocity : velocity
+
+    let phases = [kCGSGesturePhaseBegan, kCGSGesturePhaseChanged, kCGSGesturePhaseEnded]
+    var events = [(dock: CGEvent, gesture: CGEvent)]()
+
+    for phase in phases {
+        guard let dockEvent = makeAugmentedDockEvent(phase: phase, isRight: isRight,
+                                                     velocity: magnitude),
+              let augmented    = augmentDockSwipeEvent(dockEvent),
+              let gestureEvent = CGEvent(source: nil)
+        else { return false }
+
+        // The companion gesture envelope needs no augmentation
+        gestureEvent.setIntegerValueField(kCGSEventTypeField, value: kCGSEventGesture)
+        events.append((augmented, gestureEvent))
+    }
+
+    for (dock, gesture) in events {
+        dock.post(tap: .cgSessionEventTap)
+        gesture.post(tap: .cgSessionEventTap)
+    }
+    return true
+}
+
 // MARK: - Synthetic DockSwipe Gesture Posting
 //
 // The Dock watches for DockSwipe gesture events with high velocity.
@@ -587,6 +810,10 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
 /// The "Ended" event tells it the swipe finished with extreme velocity,
 /// which makes the Dock switch spaces instantly without animation.
 ///
+/// On macOS 27 and later, routes to the augmented Began+Changed+Ended
+/// sequence instead — the Dock there rejects bare synthetic gestures
+/// (see the "macOS 27 Gesture Augmentation" section above).
+///
 /// - Parameters:
 ///   - direction: `-1` for left, `+1` for right.
 ///   - velocity: Magnitude of the Ended-phase velocity.
@@ -594,6 +821,11 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
 func postSwitchGesture(direction: Int,
                        velocity: Double = currentSwitchVelocity()) -> Bool {
     let isRight              = direction > 0
+
+    if requiresEventAugmentation() {
+        return postAugmentedSwitchGesture(isRight: isRight, velocity: velocity)
+    }
+
     let flagDirection: Int64 = isRight ? 1 : 0
     let progress             = isRight ? kInstantSwitchProgress : -kInstantSwitchProgress
     let signedVelocity       = isRight ? velocity : -velocity

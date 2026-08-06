@@ -70,6 +70,40 @@ let kCGEventScrollGestureFlagBits = CGEventField(rawValue: 135)!
 /// Setting it to `Float.leastNonzeroMagnitude` satisfies the check.
 let kCGEventGestureZoomDeltaX     = CGEventField(rawValue: 139)!
 
+// MARK: - Undocumented CGEvent Field IDs (macOS 27 Augmented Gestures)
+//
+// Additional private fields required by macOS 27's Dock, which validates
+// synthetic DockSwipe events much more strictly. Discovered by reverse
+// engineering (see https://github.com/joshuarli/iss commit 09beeb6).
+
+/// Bitmask describing which touches participate in the swipe.
+/// Read back when serializing the IOHID payload (0 on our synthetic events).
+let kCGEventGestureSwipeMask      = CGEventField(rawValue: 115)!
+
+/// Horizontal gesture position. macOS 27's Dock discards gestures whose
+/// position is exactly zero, so synthetic events carry a small epsilon.
+let kCGEventGesturePositionX      = CGEventField(rawValue: 125)!
+
+/// Vertical gesture position. Read back when serializing the IOHID payload.
+let kCGEventGesturePositionY      = CGEventField(rawValue: 126)!
+
+/// Duplicate of the gesture phase — exact meaning unknown, but macOS 27's
+/// Dock expects it to mirror field 132 (`kCGEventGesturePhase`).
+let kCGEventGesturePhase2         = CGEventField(rawValue: 134)!
+
+/// Gesture flavor. Set to 3.0 (`kIOHIDGestureFlavorDockPrimary`) so the
+/// Dock treats the event as a primary dock swipe.
+let kCGEventGestureFlavor         = CGEventField(rawValue: 138)!
+
+/// Event timestamp, carried as `mach_absolute_time()` cast to a double.
+let kCGEventGestureTimestamp      = CGEventField(rawValue: 169)!
+
+/// Field ID of the serialized IOHID queue payload that macOS 27 validates
+/// synthetic dock swipes against. This field can NOT be set through
+/// `CGEventSetIntegerValueField` — it is appended in raw serialized form
+/// to the flattened event bytes (see `augmentDockSwipeEvent`).
+let kCGEventIOHIDPayloadField: UInt16 = 4205
+
 // MARK: - Undocumented Event Type Constants
 //
 // These integer values identify specific event subtypes used in the
@@ -87,8 +121,27 @@ let kCGSEventDockControl:     Int64 = 30
 /// Gesture phase: the swipe has just started (no velocity yet).
 let kCGSGesturePhaseBegan:    Int64 = 1
 
+/// Gesture phase: the swipe is in progress (macOS 27's Dock requires a
+/// Changed phase between Began and Ended for synthetic swipes).
+let kCGSGesturePhaseChanged:  Int64 = 2
+
 /// Gesture phase: the swipe has ended (velocity and progress are evaluated).
 let kCGSGesturePhaseEnded:    Int64 = 4
+
+// MARK: - IOHID Payload Constants (macOS 27 Augmented Gestures)
+//
+// macOS 27 validates synthetic dock swipes against a serialized IOHID
+// queue payload attached to the event (field 4205). These constants
+// describe the packed structures inside that payload.
+
+/// IOHID event type: velocity data attached to a gesture.
+let kIOHIDEventTypeVelocity:          UInt32 = 9
+
+/// IOHID event type: fluid touch gesture (carries the swipe itself).
+let kIOHIDEventTypeFluidTouchGesture: UInt32 = 23
+
+/// Gesture flavor identifying a primary dock swipe.
+let kIOHIDGestureFlavorDockPrimary:   UInt16 = 3
 
 // MARK: - CGS Type Aliases
 
