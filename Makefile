@@ -22,6 +22,9 @@ ICNS       = Tools/Icon/AppIcon.icns
 
 # DMG window layout — must stay in sync with Tools/Dmg/CreateBackground.swift
 DMG_BACKGROUND ?= Tools/Dmg/Background.tiff
+# Custom installer artwork: drop a 1400x920 px PNG here and `make background`
+# uses it instead of the drawn placeholder (wildcard = no error when absent)
+DMG_BACKGROUND_PNG ?= $(wildcard Tools/Dmg/BaseBackground.png)
 # Scratch space for `make dmg` (both git-ignored, removed when the build ends)
 DMG_STAGING    = Tools/Dmg/_staging
 DMG_RW         = Tools/Dmg/_writable.dmg
@@ -30,9 +33,9 @@ DMG_WIN_W      = 700
 DMG_WIN_H      = 460
 DMG_ICON_SIZE  = 128
 DMG_APP_X      = 185
-DMG_APP_Y      = 215
+DMG_APP_Y      = 250
 DMG_DROP_X     = 515
-DMG_DROP_Y     = 215
+DMG_DROP_Y     = 250
 
 SIGN_ID          ?=
 APPLE_ID         ?=
@@ -93,9 +96,9 @@ app-dev: app
 
 background: $(DMG_BACKGROUND)
 
-Tools/Dmg/Background.tiff: Tools/Dmg/CreateBackground.swift
+Tools/Dmg/Background.tiff: Tools/Dmg/CreateBackground.swift $(DMG_BACKGROUND_PNG)
 	@echo "==> Generating Tools/Dmg/Background.tiff..."
-	@swift Tools/Dmg/CreateBackground.swift
+	@swift Tools/Dmg/CreateBackground.swift $(DMG_BACKGROUND_PNG)
 	@mv Background.tiff Tools/Dmg/Background.tiff
 	@echo "==> Generated Tools/Dmg/Background.tiff"
 
