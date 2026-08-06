@@ -1,0 +1,160 @@
+/*
+ * Localizable.strings (Simplified Chinese)
+ *
+ * Mirrors en.lproj/Localizable.strings key for key — `make build` fails on any
+ * divergence. Read the English file's header before editing; it documents the
+ * format-specifier rules.
+ *
+ * "zh-Hans" is Apple's script-based code and the right one here: macOS resolves
+ * zh-Hans-CN, zh-CN and bare zh to this table, while Traditional Chinese
+ * (zh-Hant-TW, zh-HK) correctly does NOT match and falls back to English until
+ * a zh-Hant.lproj exists. The legacy zh_CN naming would also work but does not
+ * express the Simplified/Traditional distinction.
+ *
+ * Typography: fullwidth punctuation (：“”) and no space before a colon. Chinese
+ * needs no space between the number and its measure word.
+ */
+
+/* Product name. Do not translate; transliterate only where the script requires it. */
+"app.name" = "Space Rabbit";
+
+
+/* --- Shared button titles and labels ------------------------------------ */
+
+/* Apple's Chinese UI uses 好 rather than OK for confirmation buttons */
+"common.ok" = "好";
+"common.cancel" = "取消";
+"common.later" = "稍后";
+"common.tryAgain" = "重试";
+
+/* %@ is a version number, e.g. "1.4.0" */
+"common.version" = "版本 %@";
+
+
+/* --- Menu bar dropdown -------------------------------------------------- */
+
+/* Feature toggles. The trailing glyphs are the macOS shortcut they replace
+   (Control + left/right arrow, and Command + Tab) — keep them as-is. */
+"menu.instantSpaceSwitch" = "即时切换空间 ⌃↔";
+"menu.instantAppSwitch" = "即时切换应用 ⌘⇥";
+
+/* Small grey section headings */
+"menu.section.configure" = "配置：";
+"menu.section.statistics" = "统计：";
+
+"menu.preferences" = "偏好设置…";
+"menu.quit" = "退出 Space Rabbit";
+
+/* Warning banner shown when the app is not registered as a login item */
+"menu.banner.notAutoLaunching" = "未设置自动启动";
+"menu.banner.clickToFix" = "点按以修复";
+
+/* Call to action on the update banner (its heading is update.available.title) */
+"menu.banner.clickToInstall" = "点按以安装";
+
+/* Statistics row. %1$@ is a switch count with its unit ("1,204 次切换", from
+   stats.switches), %2$@ a duration ("20 分钟", system-formatted). */
+"menu.stats.line" = "%1$@  ·  节省 %2$@";
+
+
+/* --- Settings window ---------------------------------------------------- */
+
+"settings.window.title" = "Space Rabbit 偏好设置";
+
+/* Sidebar rows, also used as the heading of the pane they select */
+"settings.pane.autoStart" = "自动启动";
+"settings.pane.features" = "功能";
+"settings.pane.advanced" = "高级";
+"settings.pane.updates" = "更新";
+"settings.pane.about" = "关于";
+
+
+/* --- Settings · Auto-Start ---------------------------------------------- */
+
+"settings.autoStart.launchAtLogin" = "登录时启动";
+
+/* Orange banner. The quoted part must match settings.autoStart.launchAtLogin. */
+"settings.autoStart.warning" = "Space Rabbit 尚未设置为登录时启动。请在下方打开“登录时启动”，使其自动启动。";
+
+"settings.autoStart.approvalNeeded" = "需要授权 — 请在“系统设置”中检查登录项。";
+
+/* %@ is a system error message, itself localized by macOS */
+"settings.autoStart.error" = "无法更新登录项：%@";
+
+
+/* --- Settings · Features ------------------------------------------------ */
+
+"settings.features.instantSpaceSwitch" = "即时切换空间";
+"settings.features.instantAppSwitch" = "即时切换应用";
+"settings.features.transitionSpeed" = "过渡速度";
+
+/* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own
+   animation (Space Rabbit stands down); "Instant" is the no-animation end. */
+"settings.features.speed.normal" = "正常";
+"settings.features.speed.fast" = "快";
+"settings.features.speed.faster" = "更快";
+"settings.features.speed.fastest" = "最快";
+"settings.features.speed.instant" = "即时";
+
+
+/* --- Settings · Advanced ------------------------------------------------ */
+
+"settings.advanced.instantDockHide" = "即时隐藏程序坞";
+"settings.advanced.dockSubtitle" = "这会更改 macOS 的一项全局设置。";
+"settings.advanced.resetToDefault" = "恢复为系统默认值";
+
+"settings.advanced.showMenuBarIcon" = "在菜单栏中显示图标";
+
+/* Subtitle under the menu bar icon toggle: what turning it off will do, and
+   once it is off, how to reach the settings window again. */
+"settings.advanced.menuBarSubtitle.visible" = "这会隐藏 Space Rabbit 图标。";
+"settings.advanced.menuBarSubtitle.hidden" = "再次启动 Space Rabbit 即可打开偏好设置。";
+
+/* Alert shown after changing the Dock setting (with common.later) */
+"settings.advanced.dockRestart.title" = "要重启程序坞以应用更改吗？";
+"settings.advanced.dockRestart.message" = "此设置需要重启程序坞才能生效。程序坞会短暂消失后重新出现。";
+"settings.advanced.dockRestart.confirm" = "立即重启程序坞";
+
+
+/* --- Settings · Updates ------------------------------------------------- */
+
+"settings.updates.checkForUpdates" = "检查更新";
+"settings.updates.checkNow" = "立即检查…";
+
+/* %@ is a version number, e.g. "1.4.0" */
+"settings.updates.installedVersion" = "当前已安装版本 %@。";
+
+"settings.updates.notice" = "Space Rabbit 不会自动更新，更新需要手动安装。不过，有新版本可用时我们会通知你。";
+
+
+/* --- Settings · About --------------------------------------------------- */
+
+/* Author names are proper nouns — leave them untranslated */
+"about.copyright" = "© 2026 Yaël Guilloux 与 Valerian Saliou";
+
+
+/* --- Update check and install ------------------------------------------- */
+
+/* Heading of both the menu bar banner and the manual-check alert */
+"update.available.title" = "有可用更新";
+"update.available.message" = "Space Rabbit 有新版本可用。要立即下载并安装吗？";
+"update.install" = "立即安装";
+
+"update.upToDate.title" = "已是最新版本";
+"update.upToDate.message" = "Space Rabbit 已在使用最新版本。";
+
+"update.checkFailed.title" = "无法检查更新";
+"update.checkFailed.message" = "请检查你的互联网连接，然后重试。";
+
+/* Download/install progress window */
+"update.window.title" = "Space Rabbit 更新";
+"update.preparing" = "正在准备下载…";
+"update.downloading" = "正在下载更新…";
+"update.installing" = "正在安装…";
+
+"update.installed.title" = "更新已安装";
+"update.installed.message" = "请重新启动 Space Rabbit 以使用新版本。";
+"update.restartNow" = "立即重新启动";
+
+"update.failed.title" = "无法更新 Space Rabbit";
+"update.failed.message" = "下载或安装更新时出错。";

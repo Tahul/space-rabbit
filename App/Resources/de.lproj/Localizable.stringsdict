@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Localizable.stringsdict (German) — plural-sensitive strings.
+
+  German declares one/other in CLDR, both supplied here. Note that German uses
+  the plural for 0 ("0 Wechsel" happens to be identical anyway, since "Wechsel"
+  is invariable in the plural).
+
+  Arguments, as in en.lproj: %1$… is the raw count selecting the plural
+  category, %2$@ that count formatted for the locale ("1.204") for display.
+-->
+<plist version="1.0">
+<dict>
+    <key>stats.switches</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@switches@</string>
+        <key>switches</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%2$@ Wechsel</string>
+            <key>other</key>
+            <string>%2$@ Wechsel</string>
+        </dict>
+    </dict>
+</dict>
+</plist>

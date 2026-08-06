@@ -61,7 +61,7 @@
 
 /* Sidebar rows, also used as the heading of the pane they select. Kept short:
    the sidebar is a fixed 165 pt and truncates with an ellipsis. */
-"settings.pane.autoStart" = "Démarrage auto.";
+"settings.pane.autoStart" = "Démarrage";
 "settings.pane.features" = "Fonctionnalités";
 "settings.pane.advanced" = "Avancé";
 "settings.pane.updates" = "Mises à jour";

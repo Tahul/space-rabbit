@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Localizable.stringsdict (Russian) — plural-sensitive strings.
+
+  Russian declares FOUR plural categories in CLDR, all supplied here. This is
+  the case that makes .stringsdict non-negotiable — an `== 1` ternary in Swift
+  could never produce correct Russian:
+
+    one    n % 10 == 1 and n % 100 != 11   → 1, 21, 101   переключение
+    few    n % 10 in 2…4 and n % 100 not in 12…14
+                                           → 2, 23, 104   переключения
+    many   n % 10 == 0, or 5…9, or 11…14   → 0, 5, 11, 25 переключений
+    other  fractional values                              переключения
+
+  Arguments, as in en.lproj: %1$… is the raw count selecting the plural
+  category, %2$@ that count formatted for the locale ("1 204") for display.
+-->
+<plist version="1.0">
+<dict>
+    <key>stats.switches</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@switches@</string>
+        <key>switches</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%2$@ переключение</string>
+            <key>few</key>
+            <string>%2$@ переключения</string>
+            <key>many</key>
+            <string>%2$@ переключений</string>
+            <key>other</key>
+            <string>%2$@ переключения</string>
+        </dict>
+    </dict>
+</dict>
+</plist>

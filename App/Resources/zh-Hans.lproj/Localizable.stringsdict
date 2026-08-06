@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Localizable.stringsdict (Simplified Chinese) — plural-sensitive strings.
+
+  Chinese has no grammatical number: CLDR declares "other" only, so a single
+  variant covers every count. The entry still belongs here rather than in
+  Localizable.strings, because the KEY must exist in the same table in every
+  language (the validator enforces that).
+
+  Arguments, as in en.lproj: %1$… is the raw count selecting the plural
+  category, %2$@ that count formatted for the locale ("1,204") for display.
+  次 is the measure word for occurrences; no space before it.
+-->
+<plist version="1.0">
+<dict>
+    <key>stats.switches</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@switches@</string>
+        <key>switches</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>other</key>
+            <string>%2$@ 次切换</string>
+        </dict>
+    </dict>
+</dict>
+</plist>

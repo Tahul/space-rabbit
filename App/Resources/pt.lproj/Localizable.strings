@@ -1,0 +1,159 @@
+/*
+ * Localizable.strings (Portuguese)
+ *
+ * Mirrors en.lproj/Localizable.strings key for key — `make build` fails on any
+ * divergence. Read the English file's header before editing; it documents the
+ * format-specifier rules.
+ *
+ * Bare "pt" deliberately: macOS resolves BOTH pt-BR and pt-PT to this table, so
+ * the wording avoids the terms where the two variants diverge most. If the
+ * variants ever need to differ, split this into pt-BR.lproj and pt-PT.lproj —
+ * the more specific table then wins for its region.
+ */
+
+/* Product name. Do not translate; transliterate only where the script requires it. */
+"app.name" = "Space Rabbit";
+
+
+/* --- Shared button titles and labels ------------------------------------ */
+
+"common.ok" = "OK";
+"common.cancel" = "Cancelar";
+"common.later" = "Mais tarde";
+"common.tryAgain" = "Tentar novamente";
+
+/* %@ is a version number, e.g. "1.4.0" */
+"common.version" = "Versão %@";
+
+
+/* --- Menu bar dropdown -------------------------------------------------- */
+
+/* Feature toggles. The trailing glyphs are the macOS shortcut they replace
+   (Control + left/right arrow, and Command + Tab) — keep them as-is. */
+"menu.instantSpaceSwitch" = "Mudança de espaço instantânea ⌃↔";
+"menu.instantAppSwitch" = "Mudança de app instantânea ⌘⇥";
+
+/* Small grey section headings */
+"menu.section.configure" = "Configurar:";
+"menu.section.statistics" = "Estatísticas:";
+
+"menu.preferences" = "Preferências…";
+"menu.quit" = "Sair do Space Rabbit";
+
+/* Warning banner shown when the app is not registered as a login item */
+"menu.banner.notAutoLaunching" = "Não abre automaticamente";
+"menu.banner.clickToFix" = "Clique para corrigir";
+
+/* Call to action on the update banner (its heading is update.available.title) */
+"menu.banner.clickToInstall" = "Clique para instalar";
+
+/* Statistics row. %1$@ is a switch count with its unit ("1.204 mudanças", from
+   stats.switches), %2$@ a duration ("20 min", system-formatted). Phrased as a
+   noun ("de economia") to avoid agreeing with the duration, whose gender and
+   number are not knowable here. */
+"menu.stats.line" = "%1$@  ·  %2$@ de economia";
+
+
+/* --- Settings window ---------------------------------------------------- */
+
+"settings.window.title" = "Preferências do Space Rabbit";
+
+/* Sidebar rows, also used as the heading of the pane they select. Kept short:
+   the sidebar is a fixed 165 pt and truncates with an ellipsis. */
+"settings.pane.autoStart" = "Início auto.";
+"settings.pane.features" = "Funções";
+"settings.pane.advanced" = "Avançado";
+"settings.pane.updates" = "Atualizações";
+"settings.pane.about" = "Sobre";
+
+
+/* --- Settings · Auto-Start ---------------------------------------------- */
+
+"settings.autoStart.launchAtLogin" = "Abrir ao iniciar sessão";
+
+/* Orange banner. The quoted part must match settings.autoStart.launchAtLogin. */
+"settings.autoStart.warning" = "O Space Rabbit não está configurado para abrir ao iniciar sessão. Ative “Abrir ao iniciar sessão” abaixo para que ele inicie automaticamente.";
+
+"settings.autoStart.approvalNeeded" = "Autorização necessária: verifique os itens de início nos Ajustes do Sistema.";
+
+/* %@ is a system error message, itself localized by macOS */
+"settings.autoStart.error" = "Não foi possível atualizar o item de início: %@";
+
+
+/* --- Settings · Features ------------------------------------------------ */
+
+"settings.features.instantSpaceSwitch" = "Mudança de espaço instantânea";
+"settings.features.instantAppSwitch" = "Mudança de app instantânea";
+"settings.features.transitionSpeed" = "Velocidade da transição";
+
+/* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own
+   animation (Space Rabbit stands down); "Instant" is the no-animation end.
+   Feminine, agreeing with "velocidade". */
+"settings.features.speed.normal" = "Normal";
+"settings.features.speed.fast" = "Rápida";
+"settings.features.speed.faster" = "Mais rápida";
+"settings.features.speed.fastest" = "Muito rápida";
+"settings.features.speed.instant" = "Instantânea";
+
+
+/* --- Settings · Advanced ------------------------------------------------ */
+
+"settings.advanced.instantDockHide" = "Ocultar o Dock instantaneamente";
+"settings.advanced.dockSubtitle" = "Isto altera um ajuste global do macOS.";
+"settings.advanced.resetToDefault" = "Restaurar o valor padrão";
+
+"settings.advanced.showMenuBarIcon" = "Mostrar o ícone na barra de menus";
+
+/* Subtitle under the menu bar icon toggle: what turning it off will do, and
+   once it is off, how to reach the settings window again. */
+"settings.advanced.menuBarSubtitle.visible" = "Isto oculta o ícone do Space Rabbit.";
+"settings.advanced.menuBarSubtitle.hidden" = "Abra o Space Rabbit novamente para acessar as preferências.";
+
+/* Alert shown after changing the Dock setting (with common.later) */
+"settings.advanced.dockRestart.title" = "Reiniciar o Dock para aplicar as alterações?";
+"settings.advanced.dockRestart.message" = "O Dock precisa ser reiniciado para que este ajuste tenha efeito. O seu Dock desaparecerá e voltará a aparecer por um instante.";
+"settings.advanced.dockRestart.confirm" = "Reiniciar o Dock";
+
+
+/* --- Settings · Updates ------------------------------------------------- */
+
+"settings.updates.checkForUpdates" = "Procurar atualizações";
+"settings.updates.checkNow" = "Procurar…";
+
+/* %@ is a version number, e.g. "1.4.0" */
+"settings.updates.installedVersion" = "A versão %@ está instalada atualmente.";
+
+"settings.updates.notice" = "O Space Rabbit não se atualiza automaticamente; as atualizações precisam ser aplicadas manualmente. Ainda assim, avisaremos quando houver uma nova atualização disponível.";
+
+
+/* --- Settings · About --------------------------------------------------- */
+
+/* Author names are proper nouns — leave them untranslated */
+"about.copyright" = "© 2026 Yaël Guilloux e Valerian Saliou";
+
+
+/* --- Update check and install ------------------------------------------- */
+
+/* Heading of both the menu bar banner and the manual-check alert */
+"update.available.title" = "Atualização disponível";
+"update.available.message" = "Há uma nova versão do Space Rabbit disponível. Deseja baixá-la e instalá-la agora?";
+"update.install" = "Instalar agora";
+
+"update.upToDate.title" = "Tudo atualizado";
+"update.upToDate.message" = "O Space Rabbit já está na versão mais recente.";
+
+"update.checkFailed.title" = "Não foi possível procurar atualizações";
+"update.checkFailed.message" = "Verifique a sua conexão à internet e tente novamente.";
+
+/* Download/install progress window */
+"update.window.title" = "Atualização do Space Rabbit";
+"update.preparing" = "Preparando a transferência…";
+"update.downloading" = "Transferindo a atualização…";
+"update.installing" = "Instalando…";
+
+"update.installed.title" = "Atualização instalada";
+"update.installed.message" = "Reinicie o Space Rabbit para começar a usar a nova versão.";
+"update.restartNow" = "Reiniciar agora";
+
+"update.failed.title" = "Não foi possível atualizar o Space Rabbit";
+"update.failed.message" = "Ocorreu um erro ao transferir ou instalar a atualização.";

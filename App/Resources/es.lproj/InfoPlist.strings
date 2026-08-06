@@ -1,0 +1,9 @@
+/*
+ * InfoPlist.strings (Spanish) — localized overrides for Info.plist values.
+ *
+ * Mirrors en.lproj/InfoPlist.strings key for key. These are Info.plist keys
+ * read by macOS, not by our code.
+ */
+
+/* Shown by macOS when Space Rabbit asks for Accessibility access */
+"NSAccessibilityUsageDescription" = "Space Rabbit necesita acceso a Accesibilidad para interceptar los atajos de teclado y cambiar de espacio al instante.";

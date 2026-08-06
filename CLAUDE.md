@@ -366,7 +366,8 @@ Standard macOS `.lproj` bundle localization — no Xcode string catalogs
 (`.xcstrings` would need `xcstringstool` from Xcode's build system; the plain
 `.strings` tables here are copied into the bundle verbatim by the `Makefile`).
 
-Shipped languages: **English** (`en`, development language) and **French** (`fr`).
+Seven shipped languages — `en` (development language), `fr`, `es`, `de`, `pt`,
+`zh-Hans`, `ru`. Each is one `.lproj` holding the same three files:
 
 ```
 App/Resources/
@@ -374,14 +375,38 @@ App/Resources/
     Localizable.strings        — all UI strings (the table L() reads)
     Localizable.stringsdict    — plural-sensitive strings only
     InfoPlist.strings          — localized Info.plist values
-  fr.lproj/                    ← same three files, same keys,
-    ...                          nothing more, nothing less
+  fr.lproj/ es.lproj/ de.lproj/ pt.lproj/ zh-Hans.lproj/ ru.lproj/
+    ...                        ← same three files, same keys,
+                                 nothing more, nothing less
 ```
 
-French typography conventions used in `fr.lproj` (keep them when editing):
-non-breaking space `\U00A0` before `: ; ! ?` and inside `« … »`, and the
-typographic apostrophe `’` rather than `'`. The `\U00A0` escape is used instead
-of a literal U+00A0 so the file stays reviewable in a diff.
+**Language code choices** (verified against `Bundle.preferredLocalizations`):
+
+| Code | Also matches | Notes |
+|---|---|---|
+| `zh-Hans` | `zh-Hans-CN`, `zh-CN`, `zh` | Apple's script-based code. Traditional (`zh-Hant-TW`, `zh-HK`) deliberately does **not** match and falls back to English — add `zh-Hant.lproj` to support it. Legacy `zh_CN` naming also resolves but cannot express the Simplified/Traditional split |
+| `pt` | `pt-BR`, `pt-PT` | Bare code on purpose, so one table serves both. Wording avoids the terms where the variants diverge. Split into `pt-BR.lproj` / `pt-PT.lproj` if they ever need to differ — the region-specific table then wins |
+| `es` | `es-ES`, `es-MX`, `es-419` | Neutral wording, neither Peninsular- nor Latin American-specific |
+| `de` | `de-DE`, `de-AT`, `de-CH` | |
+| `fr` | `fr-FR`, `fr-CA`, `fr-BE`, `fr-CH` | |
+
+**Per-language typography** (keep it when editing):
+
+- **French** — `\U00A0` before `: ; ! ?` and inside `« … »`; apostrophe `’` not `'`.
+  The escape is used rather than a literal U+00A0 so the file stays reviewable in a diff.
+- **German** — `„ … “` quotation marks.
+- **Spanish / Portuguese** — `“ … ”`; Spanish keeps its opening `¿`.
+- **Simplified Chinese** — fullwidth punctuation (`：` `“ ”` `？`), no space before a
+  colon, no space between a number and its measure word (`1,204 次切换`).
+- **Russian** — `« … »` with **no** spaces inside (unlike French).
+
+**Sidebar label budget.** `settings.pane.*` strings are also the sidebar rows,
+which truncate with an ellipsis inside the fixed `Layout.sidebarWidth` (165 pt).
+Measured empirically: **94.8 pt renders in full, 101.2 pt truncates** at 13 pt
+system font, so keep new pane titles at or under ~95 pt. That is why several
+languages use a shortened title (`Inicio auto.`, `Funções`, `Дополнения`) rather
+than the literal translation. Raising `Layout.sidebarWidth` is the alternative if
+a future language cannot fit.
 
 ### Reading a string
 
@@ -414,8 +439,11 @@ when one is shipped, and otherwise falls back to `CFBundleDevelopmentRegion`
 ### Plurals
 
 Count-dependent wording goes in `Localizable.stringsdict`, never in
-`Localizable.strings` with an `== 1` ternary in Swift — English's two forms are
-not enough for e.g. Polish or Arabic. Entries take the count **twice**: `%1$…`
+`Localizable.strings` with an `== 1` ternary in Swift. Russian is the proof: it
+needs **four** forms (`1 переключение`, `2 переключения`, `5 переключений`,
+`21 переключение`), which no ternary can produce. Chinese needs only `other`;
+each language declares exactly the categories CLDR gives it, and a missing
+category falls back to `other`. Entries take the count **twice**: `%1$…`
 selects the plural category, `%2$@` is the same count pre-formatted by
 `NumberFormatter` (so the locale's grouping separator survives) and is what gets
 displayed.
@@ -558,7 +586,8 @@ App/
   Info.plist            — bundle metadata (version placeholder: __VERSION__)
   Resources/            — localization tables, copied into the bundle as-is
     en.lproj/           — Localizable.strings + .stringsdict + InfoPlist.strings
-    fr.lproj/           — same three files, same keys (enforced by the build)
+    fr.lproj/ es.lproj/ de.lproj/ pt.lproj/ zh-Hans.lproj/ ru.lproj/
+                        — same three files, same keys (enforced by the build)
 Tools/                  — build-time asset generators (not compiled into the app)
   Localization/
     Validate.swift      — cross-language key check run by `make build`
