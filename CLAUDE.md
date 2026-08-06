@@ -366,15 +366,22 @@ Standard macOS `.lproj` bundle localization — no Xcode string catalogs
 (`.xcstrings` would need `xcstringstool` from Xcode's build system; the plain
 `.strings` tables here are copied into the bundle verbatim by the `Makefile`).
 
+Shipped languages: **English** (`en`, development language) and **French** (`fr`).
+
 ```
 App/Resources/
   en.lproj/                    ← development language, defines the key set
     Localizable.strings        — all UI strings (the table L() reads)
     Localizable.stringsdict    — plural-sensitive strings only
     InfoPlist.strings          — localized Info.plist values
-  fr.lproj/                    ← any further language: same three files,
-    ...                          same keys, nothing more, nothing less
+  fr.lproj/                    ← same three files, same keys,
+    ...                          nothing more, nothing less
 ```
+
+French typography conventions used in `fr.lproj` (keep them when editing):
+non-breaking space `\U00A0` before `: ; ! ?` and inside `« … »`, and the
+typographic apostrophe `’` rather than `'`. The `\U00A0` escape is used instead
+of a literal U+00A0 so the file stays reviewable in a diff.
 
 ### Reading a string
 
@@ -401,8 +408,8 @@ L("stats.switches", count, formattedCount)      // plural (stringsdict)
 Entirely the bundle loader's job — there is no in-app language setting and no
 locale plumbing. macOS picks the `.lproj` matching the user's preferred language
 when one is shipped, and otherwise falls back to `CFBundleDevelopmentRegion`
-(`en`, set in `Info.plist`). So a French system gets `fr.lproj`, a German system
-falls back to English until `de.lproj` exists.
+(`en`, set in `Info.plist`). Verified end-to-end: a French system resolves
+`fr.lproj`, a German system falls back to `en.lproj` until `de.lproj` exists.
 
 ### Plurals
 
@@ -551,6 +558,7 @@ App/
   Info.plist            — bundle metadata (version placeholder: __VERSION__)
   Resources/            — localization tables, copied into the bundle as-is
     en.lproj/           — Localizable.strings + .stringsdict + InfoPlist.strings
+    fr.lproj/           — same three files, same keys (enforced by the build)
 Tools/                  — build-time asset generators (not compiled into the app)
   Localization/
     Validate.swift      — cross-language key check run by `make build`

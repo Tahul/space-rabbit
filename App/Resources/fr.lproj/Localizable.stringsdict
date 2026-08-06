@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Localizable.stringsdict (French) — plural-sensitive strings.
+
+  French declares one/many/other in CLDR. Only one/other are supplied here:
+  "many" applies to compactly-written large numbers ("1 million"), which this
+  app never produces, and an absent category falls back to "other".
+
+  Note that "one" covers 0 as well as 1 in French, so a zero count correctly
+  reads "0 changement" and not "0 changements".
+
+  Arguments, as in en.lproj: %1$… is the raw count selecting the plural
+  category, %2$@ that count formatted for the locale ("1 204") for display.
+-->
+<plist version="1.0">
+<dict>
+    <key>stats.switches</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@switches@</string>
+        <key>switches</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%2$@ changement</string>
+            <key>other</key>
+            <string>%2$@ changements</string>
+        </dict>
+    </dict>
+</dict>
+</plist>
