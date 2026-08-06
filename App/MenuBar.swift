@@ -71,7 +71,7 @@ final class SwoopMenu: NSObject {
     private let statusItem:            NSStatusItem
     private let instantSwitchItem:     NSMenuItem
     private let autoFollowItem:        NSMenuItem
-    private let threeFingerSwipeItem:  NSMenuItem
+    private let trackpadSwipeItem:     NSMenuItem
     private let statsItem:             NSMenuItem
 
     /// Header row at the top of the menu: app name + master enable switch.
@@ -99,7 +99,7 @@ final class SwoopMenu: NSObject {
             Defaults.enabled:          true,
             Defaults.instantSwitch:    true,
             Defaults.autoFollow:       true,
-            Defaults.threeFingerSwipe: false,   // opt-in — swallows a real gesture
+            Defaults.trackpadSwipe:    false,  // opt-in — swallows a real gesture
             Defaults.switchSpeed:      1.0,
             Defaults.switchCount:      0,
             Defaults.showMenuBarIcon:  true,
@@ -110,7 +110,7 @@ final class SwoopMenu: NSObject {
         gEnabled                 = defaults.bool(forKey: Defaults.enabled)
         gInstantSwitchEnabled    = defaults.bool(forKey: Defaults.instantSwitch)
         gAutoFollowEnabled       = defaults.bool(forKey: Defaults.autoFollow)
-        gThreeFingerSwipeEnabled = defaults.bool(forKey: Defaults.threeFingerSwipe)
+        gTrackpadSwipeEnabled    = defaults.bool(forKey: Defaults.trackpadSwipe)
         gSwitchSpeed             = defaults.double(forKey: Defaults.switchSpeed)
         gSwitchCount             = defaults.integer(forKey: Defaults.switchCount)
         gSwitchCountSaved        = gSwitchCount
@@ -126,9 +126,9 @@ final class SwoopMenu: NSObject {
         autoFollowItem    = NSMenuItem(title: L("menu.instantAppSwitch"),
                                        action: #selector(toggleAutoFollow(_:)),
                                        keyEquivalent: "f")
-        threeFingerSwipeItem = NSMenuItem(title: L("menu.instantThreeFingerSwipe"),
-                                          action: #selector(toggleThreeFingerSwipe(_:)),
-                                          keyEquivalent: "3")
+        trackpadSwipeItem = NSMenuItem(title: L("menu.instantTrackpadSwipe"),
+                                       action: #selector(toggleTrackpadSwipe(_:)),
+                                       keyEquivalent: "t")
         statsItem         = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
         super.init()
@@ -209,8 +209,8 @@ final class SwoopMenu: NSObject {
         instantSwitchItem.state     = gInstantSwitchEnabled    ? .on : .off
         autoFollowItem.target       = self
         autoFollowItem.state        = gAutoFollowEnabled       ? .on : .off
-        threeFingerSwipeItem.target = self
-        threeFingerSwipeItem.state  = gThreeFingerSwipeEnabled ? .on : .off
+        trackpadSwipeItem.target = self
+        trackpadSwipeItem.state  = gTrackpadSwipeEnabled ? .on : .off
         statsItem.isEnabled         = false  // Non-interactive display item
     }
 
@@ -229,7 +229,7 @@ final class SwoopMenu: NSObject {
         if let img = NSImage(systemSymbolName: "rectangle.and.hand.point.up.left.filled",
                              accessibilityDescription: nil) {
             img.isTemplate = true
-            threeFingerSwipeItem.image = img
+            trackpadSwipeItem.image = img
         }
         if let img = NSImage(systemSymbolName: "timer",
                              accessibilityDescription: nil) {
@@ -258,7 +258,7 @@ final class SwoopMenu: NSObject {
         statusMenu.addItem(menuHeader(L("menu.section.configure")))
         statusMenu.addItem(instantSwitchItem)
         statusMenu.addItem(autoFollowItem)
-        statusMenu.addItem(threeFingerSwipeItem)
+        statusMenu.addItem(trackpadSwipeItem)
         statusMenu.addItem(.separator())
 
         // Statistics section
@@ -534,7 +534,7 @@ final class SwoopMenu: NSObject {
     func syncMenuItems() {
         instantSwitchItem.state    = gInstantSwitchEnabled    ? .on : .off
         autoFollowItem.state       = gAutoFollowEnabled       ? .on : .off
-        threeFingerSwipeItem.state = gThreeFingerSwipeEnabled ? .on : .off
+        trackpadSwipeItem.state = gTrackpadSwipeEnabled ? .on : .off
     }
 
     @objc private func toggleInstantSwitch(_ sender: NSMenuItem) {
@@ -551,10 +551,10 @@ final class SwoopMenu: NSObject {
         SettingsWindowController.shared.syncPanes()
     }
 
-    @objc private func toggleThreeFingerSwipe(_ sender: NSMenuItem) {
-        gThreeFingerSwipeEnabled.toggle()
-        sender.state = gThreeFingerSwipeEnabled ? .on : .off
-        UserDefaults.standard.set(gThreeFingerSwipeEnabled, forKey: Defaults.threeFingerSwipe)
+    @objc private func toggleTrackpadSwipe(_ sender: NSMenuItem) {
+        gTrackpadSwipeEnabled.toggle()
+        sender.state = gTrackpadSwipeEnabled ? .on : .off
+        UserDefaults.standard.set(gTrackpadSwipeEnabled, forKey: Defaults.trackpadSwipe)
         updateSwipeTap()
         SettingsWindowController.shared.syncPanes()
     }

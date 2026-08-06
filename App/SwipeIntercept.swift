@@ -1,7 +1,7 @@
 /*
- * SwipeIntercept.swift — Feature 3: Instant 3-finger swipe
+ * SwipeIntercept.swift — Feature 3: Instant trackpad swipe
  *
- * Removes the slide animation from real 3-finger trackpad swipes.
+ * Removes the slide animation from real trackpad swipes.
  *
  * macOS turns a horizontal 3-finger (or 4-finger, per the trackpad
  * setting) swipe into private DockSwipe events — the same event family
@@ -54,13 +54,13 @@ private let kSwipeDirectionReversed: Bool =
 // MARK: - Tap Lifecycle
 
 /// Creates or tears down the swipe-intercept tap to match the current
-/// feature state (`gEnabled && gThreeFingerSwipeEnabled`).
+/// feature state (`gEnabled && gTrackpadSwipeEnabled`).
 ///
 /// Called at startup and from every place that flips either toggle (the
 /// menu bar dropdown, the master switch, and the settings window). Safe to
 /// call redundantly — it no-ops when the tap already matches the state.
 func updateSwipeTap() {
-    let shouldRun = gEnabled && gThreeFingerSwipeEnabled
+    let shouldRun = gEnabled && gTrackpadSwipeEnabled
 
     if shouldRun, gSwipeTap == nil {
         let mask = CGEventMask((1 << UInt64(kCGSEventGesture))
@@ -162,7 +162,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // Feature gates. The tap is torn down when the feature is off, so
     // these mostly guard the "Normal" speed tick (native animation wanted
     // — let the real swipe through untouched) and toggle races.
-    guard gEnabled, gThreeFingerSwipeEnabled, !isNativeSwitchSpeed() else {
+    guard gEnabled, gTrackpadSwipeEnabled, !isNativeSwitchSpeed() else {
         gSwipeTracking = false
         gSwipeFired    = false
         return passthrough

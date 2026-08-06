@@ -851,7 +851,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
 
     private var instantSwitchControl:    NSSwitch!
     private var autoFollowControl:       NSSwitch!
-    private var threeFingerSwipeControl: NSSwitch!
+    private var trackpadSwipeControl:    NSSwitch!
     private var speedSlider:             NSSlider!
     private var speedValueLabel:         NSTextField!
     private var speedBoltIcon:           NSImageView!
@@ -859,7 +859,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
     override func buildContent() -> [NSView] {
         instantSwitchControl    = makeSwitch(gInstantSwitchEnabled,    #selector(toggleInstantSwitch))
         autoFollowControl       = makeSwitch(gAutoFollowEnabled,       #selector(toggleAutoFollow))
-        threeFingerSwipeControl = makeSwitch(gThreeFingerSwipeEnabled, #selector(toggleThreeFingerSwipe))
+        trackpadSwipeControl    = makeSwitch(gTrackpadSwipeEnabled,    #selector(toggleTrackpadSwipe))
 
         let togglesGroup = groupBox([
             settingsRow(label: L("settings.features.instantSpaceSwitch"),
@@ -868,8 +868,8 @@ final class FeaturesPaneController: SettingsPaneViewController {
             settingsRow(label: L("settings.features.instantAppSwitch"),
                         control: autoFollowControl),
             rowDivider(),
-            settingsRow(label: L("settings.features.instantThreeFingerSwipe"),
-                        control: threeFingerSwipeControl),
+            settingsRow(label: L("settings.features.instantTrackpadSwipe"),
+                        control: trackpadSwipeControl),
         ])
         let speedGroup = groupBox([
             settingsRow(label: L("settings.features.transitionSpeed"),
@@ -883,7 +883,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
         // menu bar, whether or not this pane was visible at the time
         instantSwitchControl.state    = gInstantSwitchEnabled    ? .on : .off
         autoFollowControl.state       = gAutoFollowEnabled       ? .on : .off
-        threeFingerSwipeControl.state = gThreeFingerSwipeEnabled ? .on : .off
+        trackpadSwipeControl.state    = gTrackpadSwipeEnabled    ? .on : .off
         speedSlider.doubleValue       = gSwitchSpeed
         updateSpeedDisplay()
     }
@@ -1023,9 +1023,9 @@ final class FeaturesPaneController: SettingsPaneViewController {
         gMenu?.syncMenuItems()
     }
 
-    @objc private func toggleThreeFingerSwipe() {
-        gThreeFingerSwipeEnabled = threeFingerSwipeControl.state == .on
-        UserDefaults.standard.set(gThreeFingerSwipeEnabled, forKey: Defaults.threeFingerSwipe)
+    @objc private func toggleTrackpadSwipe() {
+        gTrackpadSwipeEnabled = trackpadSwipeControl.state == .on
+        UserDefaults.standard.set(gTrackpadSwipeEnabled, forKey: Defaults.trackpadSwipe)
         updateSwipeTap()
         gMenu?.syncMenuItems()
     }

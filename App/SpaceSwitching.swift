@@ -244,7 +244,7 @@ private let kMissionControlWindowLayer: Int32 = 18
 /// Show Desktop) is currently on screen.
 ///
 /// The overview drives space navigation itself: it consumes the system
-/// space shortcuts and 3-finger swipes to slide its own carousel. A
+/// space shortcuts and trackpad swipes to slide its own carousel. A
 /// synthetic DockSwipe posted into it is evaluated against the overview's
 /// state instead of the desktop's, so the screen blanks, swipes, and lands
 /// back on the space the user started from — no switch at all (issue #16).

@@ -69,15 +69,16 @@ Listens for `NSWorkspace.didActivateApplicationNotification`. When an app is act
 
 The app is intentionally **never activated by us** (`app.activate()` is not called): the system activation already in progress brings the app to focus, and sending a `kAEActivate` Apple Event makes some apps (e.g. Safari) exit background modes like Picture-in-Picture.
 
-### Feature 3: Instant 3-finger swipe (`swipeTapCallback` in `SwipeIntercept.swift`)
+### Feature 3: Instant trackpad swipe (`swipeTapCallback` in `SwipeIntercept.swift`)
 
-**Off by default** (`spacerabbit.threeFingerSwipe`, opt-in) — it swallows the user's
+**Off by default** (`Defaults.trackpadSwipe`, stored under the legacy key
+`spacerabbit.threeFingerSwipe` so existing opt-ins survive the rename) — it swallows the user's
 physical gesture, a bigger behavioral change than the additive features above.
 Ported from [joshuarli/iss](https://github.com/joshuarli/iss) (same repo the macOS 27
 augmentation came from).
 
 A second CGEvent tap listens for the private gesture (29) + DockControl (30) event
-types and intercepts the *real* horizontal 3-finger trackpad swipe:
+types and intercepts the *real* horizontal 3-finger (or 4-finger) trackpad swipe:
 
 1. **Began** → start tracking, swallow (the native animated switch never starts)
 2. **Changed** → first non-zero `kCGEventGestureSwipeProgress` reveals the direction;
@@ -103,7 +104,7 @@ tracking state (`resetSwipeIntercept()`) whenever the tap's continuity breaks.
 
 **Tap lifecycle** — unlike the keyboard tap (installed once at startup), this tap is
 created/torn down on demand by `updateSwipeTap()` so it only exists while
-`gEnabled && gThreeFingerSwipeEnabled`. Called from startup, `SwoopMenu.setEnabled`,
+`gEnabled && gTrackpadSwipeEnabled`. Called from startup, `SwoopMenu.setEnabled`,
 and both feature toggles (menu + settings). The "Normal" speed tick is gated inside
 the callback (`isNativeSwitchSpeed()` → everything passes through untouched).
 
@@ -251,7 +252,7 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | `gEnabled` | `Bool` | Master on/off toggle |
 | `gInstantSwitchEnabled` | `Bool` | Feature 1 toggle |
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
-| `gThreeFingerSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
+| `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
 | `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
 | `gSwipePassthroughCount` | `Int` | Synthetic events pre-counted so the swipe tap doesn't re-intercept Space Rabbit's own gestures |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
@@ -264,7 +265,7 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 ### UserDefaults keys (`Defaults` enum)
 
-`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`.
+`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`.
 
 Menu bar icon visibility has no `g` global: the live truth is `statusItem.isVisible` (`SwoopMenu.isMenuBarIconVisible`), persisted through `setMenuBarIconVisible(_:)`.
 
@@ -329,11 +330,11 @@ Both call `startUpdate(downloadURL:)` which delegates to `UpdaterWindowControlle
 
 Toggles can be changed from two places. The sync pattern:
 
-1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`/`toggleThreeFingerSwipe`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
-2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`/`toggleThreeFingerSwipe`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
+1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`/`toggleTrackpadSwipe`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
+2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`/`toggleTrackpadSwipe`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
 3. **Settings pane appears** (`viewWillAppear`, fires on every pane swap): refreshes its switch controls from globals
 
-The 3-finger swipe toggle additionally calls `updateSwipeTap()` from both places (its
+The trackpad swipe toggle additionally calls `updateSwipeTap()` from both places (its
 tap only exists while the feature is active).
 
 Master enable/disable (`gEnabled`) is only togglable from the menu bar (header-row switch or right-click on the icon; both go through `setEnabled`, which keeps the switch state in sync and calls `updateSwipeTap()`).
@@ -366,7 +367,7 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        ├─ "Configure:" section header
        ├─ Instant space switch toggle (checkmark, shortcut: S)
        ├─ Auto-follow on ⌘⇥ toggle (checkmark, shortcut: F)
-       ├─ Instant 3-finger swipe toggle (checkmark, shortcut: 3,
+       ├─ Instant trackpad swipe toggle (checkmark, shortcut: T,
        │    icon: rectangle.and.hand.point.up.left.filled)
        ├─ "Statistics:" section header
        ├─ Switch count + time-saved display (non-interactive)
@@ -386,7 +387,7 @@ SettingsWindowController (singleton, NSWindowDelegate)
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
        │    + Launch at Login (SMAppService)
        ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow +
-       │    Instant 3-finger swipe toggles, then Transition speed slider on its
+       │    Instant trackpad swipe toggles, then Transition speed slider on its
        │    own (5 ticks, snapping: Normal = native macOS animation / Fast /
        │    Faster / Fastest / right end cap = "Instant", the default)
        ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
@@ -662,7 +663,7 @@ App/
   EventTap.swift        — CGEvent tap callback (Feature 1: instant switch)
   AutoFollow.swift      — app-activation observer (Feature 2: auto-follow)
   SwipeIntercept.swift  — gesture tap intercepting real trackpad swipes
-                          (Feature 3: instant 3-finger swipe)
+                          (Feature 3: instant trackpad swipe)
   MenuBar.swift         — SwoopMenu status item and dropdown menu
   Settings.swift        — preferences window (General + About tabs) — largest file
   UpdateCheck.swift     — GitHub release version checking
@@ -705,7 +706,7 @@ local.env               — git-ignored; signing credentials
 
 ## Known limitations
 
-- Trackpad swipe gestures animate unless the opt-in "Instant 3-Finger Swipe"
+- Trackpad swipe gestures animate unless the opt-in "Instant Trackpad Swipe"
   feature is enabled (they bypass the keyboard event tap; Feature 3 intercepts
   them with its own gesture tap).
 - Space switches inside a Mission Control overview are left to macOS (animated) — the overview cannot be driven by synthetic DockSwipes at all (see "Mission Control stand-down").

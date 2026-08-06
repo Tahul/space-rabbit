@@ -21,7 +21,7 @@ var gTap: CFMachPort?
 
 /// The swipe-intercept CGEvent tap (Feature 3). Unlike `gTap`, this one is
 /// created and torn down on demand: it only exists while both the master
-/// switch and the 3-finger swipe feature are enabled (see `updateSwipeTap()`
+/// switch and the trackpad-swipe feature are enabled (see `updateSwipeTap()`
 /// in SwipeIntercept.swift).
 var gSwipeTap: CFMachPort?
 
@@ -44,11 +44,11 @@ var gInstantSwitchEnabled: Bool = true
 /// Only effective when `gEnabled` is also `true`.
 var gAutoFollowEnabled: Bool = true
 
-/// Feature 3 toggle: intercept real 3-finger trackpad swipes and replace
+/// Feature 3 toggle: intercept real trackpad swipes and replace
 /// them with instant switches. Off by default (opt-in) — it swallows the
 /// user's physical gesture, which is a bigger behavioral change than the
 /// purely additive features above. Only effective when `gEnabled` is `true`.
-var gThreeFingerSwipeEnabled: Bool = false
+var gTrackpadSwipeEnabled: Bool = false
 
 /// Space-switch transition speed as a slider tick position (0.0–1.0 in
 /// steps of 0.25). 1.0 (the end cap) means instant — no animation at all.
@@ -76,7 +76,7 @@ var gLastSpaceSwitchTime: Date = .distantPast
 // these flags carry the decision "we own this gesture" across it.
 // Reset together via resetSwipeIntercept() in SwipeIntercept.swift.
 
-/// Whether a real 3-finger dock swipe is currently being intercepted
+/// Whether a real trackpad dock swipe is currently being intercepted
 /// (its Began phase was swallowed, so we must handle the rest too).
 var gSwipeTracking: Bool = false
 
@@ -141,7 +141,10 @@ enum Defaults {
     static let enabled          = "spacerabbit.enabled"
     static let instantSwitch    = "spacerabbit.instantSwitch"
     static let autoFollow       = "spacerabbit.autoFollow"
-    static let threeFingerSwipe = "spacerabbit.threeFingerSwipe"
+    /// The stored key keeps its original `threeFingerSwipe` spelling on
+    /// purpose — the feature was renamed to "Instant Trackpad Swipe", and
+    /// renaming the key would silently reset the opt-in for existing users.
+    static let trackpadSwipe    = "spacerabbit.threeFingerSwipe"
     static let switchSpeed      = "spacerabbit.switchSpeed"
     static let switchCount      = "spacerabbit.switchCount"
     /// When `false`, the rabbit icon is removed from the menu bar.
