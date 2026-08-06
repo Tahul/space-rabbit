@@ -44,6 +44,8 @@ private enum Layout {
     static let groupCornerRadius: CGFloat = 10
     static let aboutIconSize:     CGFloat = 80
     static let aboutSpacing:      CGFloat = 20
+    static let speedSliderWidth:  CGFloat = 140
+    static let speedTailSpacing:  CGFloat = 3
 }
 
 // MARK: - Panes
@@ -876,7 +878,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
         // stays put) without dead space opening up between icon and text.
         let tail = NSStackView(views: [speedBoltIcon, speedValueLabel])
         tail.orientation = .horizontal
-        tail.spacing     = 3
+        tail.spacing     = Layout.speedTailSpacing
         tail.alignment   = .centerY
         tail.translatesAutoresizingMaskIntoConstraints = false
 
@@ -890,8 +892,8 @@ final class FeaturesPaneController: SettingsPaneViewController {
         stack.alignment   = .centerY
 
         NSLayoutConstraint.activate([
-            speedSlider.widthAnchor.constraint(equalToConstant: 140),
-            tailWrapper.widthAnchor.constraint(equalToConstant: 52),
+            speedSlider.widthAnchor.constraint(equalToConstant: Layout.speedSliderWidth),
+            tailWrapper.widthAnchor.constraint(equalToConstant: speedTailWidth()),
             tailWrapper.heightAnchor.constraint(equalTo: tail.heightAnchor),
             tail.trailingAnchor.constraint(equalTo: tailWrapper.trailingAnchor),
             tail.centerYAnchor.constraint(equalTo: tailWrapper.centerYAnchor),
@@ -912,16 +914,64 @@ final class FeaturesPaneController: SettingsPaneViewController {
         speedBoltIcon.isHidden         = !isInstant
     }
 
-    /// Human-readable name for the current transition-speed tick.
-    /// "Normal" means macOS's native animation (no synthetic gestures).
-    private func speedDescription() -> String {
-        guard gSwitchSpeed < 1.0 else { return L("settings.features.speed.instant") }
+    /// Localized names of the five slider ticks, slowest first — "Normal" being
+    /// macOS's native animation (no synthetic gestures) and "Instant" the right
+    /// end cap.
+    ///
+    /// The keys are spelled out as literals rather than looped over an array of
+    /// key strings, so the build-time localization validator can see them (it
+    /// scans the sources for `L("…")` textually).
+    private func speedTickNames() -> [String] {
+        [
+            L("settings.features.speed.normal"),
+            L("settings.features.speed.fast"),
+            L("settings.features.speed.faster"),
+            L("settings.features.speed.fastest"),
+            L("settings.features.speed.instant"),
+        ]
+    }
+
+    /// Index into `speedTickNames()` of the tick the slider currently rests on.
+    private func speedTickIndex() -> Int {
+        guard gSwitchSpeed < 1.0 else { return 4 }
         switch gSwitchSpeed {
-        case ..<0.25: return L("settings.features.speed.normal")
-        case ..<0.50: return L("settings.features.speed.fast")
-        case ..<0.75: return L("settings.features.speed.faster")
-        default:      return L("settings.features.speed.fastest")
+        case ..<0.25: return 0
+        case ..<0.50: return 1
+        case ..<0.75: return 2
+        default:      return 3
         }
+    }
+
+    /// Human-readable name for the current transition-speed tick.
+    private func speedDescription() -> String {
+        speedTickNames()[speedTickIndex()]
+    }
+
+    /// Width the trailing value column has to reserve.
+    ///
+    /// Measured from the actual localized tick names instead of hardcoded: they
+    /// differ enormously between languages ("Fast" against "Instantánea" or
+    /// "Мгновенная"), and because the column's content is pinned to its trailing
+    /// edge, a label wider than the column overflows *leftwards* and draws on top
+    /// of the slider. Sizing to the widest name keeps the slider clear of the text
+    /// and stops it shifting as the value changes.
+    ///
+    /// - Returns: The width in points, including the bolt icon and its spacing
+    ///   for the "Instant" tick — the only tick that shows it.
+    private func speedTailWidth() -> CGFloat {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: speedValueLabel.font ?? .systemFont(ofSize: 11)
+        ]
+        let boltAllowance = (speedBoltIcon.image?.size.width ?? 0) + Layout.speedTailSpacing
+
+        let names = speedTickNames()
+        let widest = names.indices.map { index -> CGFloat in
+            let textWidth = (names[index] as NSString).size(withAttributes: attributes).width
+            // The bolt is only ever shown on the last ("Instant") tick
+            return index == names.count - 1 ? textWidth + boltAllowance : textWidth
+        }.max() ?? 0
+
+        return ceil(widest)
     }
 
     @objc private func toggleInstantSwitch() {
