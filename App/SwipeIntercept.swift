@@ -96,6 +96,35 @@ func updateSwipeTap() {
     }
 }
 
+/// Brings a dead swipe tap back to life after system sleep or screen lock.
+///
+/// Same failure mode as the keyboard tap (see `reviveEventTapIfNeeded()`
+/// in EventTap.swift): the self-re-enable in `swipeTapCallback` never runs
+/// when the tap is disabled — or its Mach port invalidated — while the
+/// process is suspended. `updateSwipeTap()` alone can't recover either:
+/// it no-ops while `gSwipeTap` is non-nil, even if that port is dead.
+/// Called from the wake/unlock observers and the flush timer in main.swift.
+func reviveSwipeTapIfNeeded() {
+    guard let tap = gSwipeTap else { return }  // feature off — nothing to revive
+
+    if CFMachPortIsValid(tap) {
+        if !CGEvent.tapIsEnabled(tap: tap) {
+            CGEvent.tapEnable(tap: tap, enable: true)
+            resetSwipeIntercept()
+        }
+        return
+    }
+
+    // Port invalidated — clear out the corpse so updateSwipeTap() sees
+    // "not installed" and rebuilds the tap for the still-enabled feature.
+    if let source = gSwipeTapSource {
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+    }
+    gSwipeTap       = nil
+    gSwipeTapSource = nil
+    updateSwipeTap()
+}
+
 /// Clears all per-gesture tracking state and the synthetic-event
 /// passthrough counter. Called whenever the tap's continuity breaks
 /// (created, torn down, or re-enabled after a system disable) — stale

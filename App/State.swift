@@ -14,10 +14,16 @@ import Foundation
 
 // MARK: - Event Tap State
 
-/// The active CGEvent tap (installed at startup, never replaced).
+/// The active CGEvent tap (installed at startup via `installEventTap()`).
 /// Used by the event tap callback to intercept space-switch shortcuts,
-/// and re-enabled automatically if macOS disables it.
+/// and re-enabled automatically if macOS disables it. Recreated by
+/// `reviveEventTapIfNeeded()` when its Mach port dies across system
+/// sleep or screen lock.
 var gTap: CFMachPort?
+
+/// Run loop source backing `gTap`, kept so the source can be removed
+/// when the tap is recreated after wake (and on termination).
+var gTapSource: CFRunLoopSource?
 
 /// The swipe-intercept CGEvent tap (Feature 3). Unlike `gTap`, this one is
 /// created and torn down on demand: it only exists while both the master

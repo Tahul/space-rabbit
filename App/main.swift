@@ -106,9 +106,13 @@ DispatchQueue.main.asyncAfter(deadline: .now() + 5) { checkForUpdates() }
 // Persist the switch count to disk every 5 minutes.
 // This batching reduces disk I/O compared to writing on every switch.
 // The count is also flushed on termination (see cleanup section below).
+// The timer doubles as a periodic tap health check — a safety net for
+// any tap death the wake/unlock observers below don't catch.
 let flushInterval: TimeInterval = 300
 Timer.scheduledTimer(withTimeInterval: flushInterval, repeats: true) { _ in
     flushSwitchCount()
+    reviveEventTapIfNeeded()
+    reviveSwipeTapIfNeeded()
 }
 
 // MARK: - Event Tap Installation
@@ -117,29 +121,10 @@ Timer.scheduledTimer(withTimeInterval: flushInterval, repeats: true) { _ in
 // When a space-switch shortcut is detected, the original event is
 // swallowed and replaced with a synthetic DockSwipe gesture.
 
-let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-
-gTap = CGEvent.tapCreate(
-    tap: .cgSessionEventTap,
-    place: .headInsertEventTap,
-    options: .defaultTap,
-    eventsOfInterest: eventMask,
-    callback: eventTapCallback,
-    userInfo: nil
-)
-
-guard let tap = gTap else {
+guard installEventTap() else {
     fputs("Space Rabbit: failed to create event tap\n", stderr)
     exit(1)
 }
-
-guard let runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
-    fputs("Space Rabbit: failed to create run loop source\n", stderr)
-    exit(1)
-}
-
-CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-CGEvent.tapEnable(tap: tap, enable: true)
 
 // Install the swipe-intercept tap (Feature 3) if the feature is enabled.
 // Must come after gMenu is created — it reads the persisted toggles.
@@ -183,6 +168,36 @@ NSWorkspace.shared.notificationCenter.addObserver(
     loadSpaceSwitchShortcuts()
 }
 
+// MARK: - Event Tap Revival After Sleep/Wake
+//
+// macOS can disable the event taps — or invalidate their Mach ports —
+// while the process is suspended around system sleep or screen lock.
+// The disable notice is delivered through the tap callbacks themselves,
+// so a tap that dies during sleep never gets the chance to self-heal
+// (see reviveEventTapIfNeeded in EventTap.swift). Check tap health on
+// every wake and unlock, and rebuild whatever died.
+
+NSWorkspace.shared.notificationCenter.addObserver(
+    forName: NSWorkspace.didWakeNotification,
+    object: nil, queue: .main
+) { _ in
+    reviveEventTapIfNeeded()
+    reviveSwipeTapIfNeeded()
+}
+
+// Screen unlock arrives via the distributed notification center, not
+// NSWorkspace. It fires after lock-screen sessions with no full sleep
+// (where didWakeNotification never comes) and doubles as a second,
+// later chance after wake — the window server is guaranteed up again
+// once the user has unlocked.
+DistributedNotificationCenter.default().addObserver(
+    forName: Notification.Name("com.apple.screenIsUnlocked"),
+    object: nil, queue: .main
+) { _ in
+    reviveEventTapIfNeeded()
+    reviveSwipeTapIfNeeded()
+}
+
 // MARK: - Cleanup on Exit
 //
 // Flush stats to disk and tear down the event tap when the app terminates.
@@ -195,8 +210,10 @@ NotificationCenter.default.addObserver(
 ) { _ in
     flushSwitchCount()
     NSWorkspace.shared.notificationCenter.removeObserver(observer)
-    CGEvent.tapEnable(tap: tap, enable: false)
-    CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+    if let tap = gTap { CGEvent.tapEnable(tap: tap, enable: false) }
+    if let source = gTapSource {
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+    }
     if let swipeTap = gSwipeTap { CGEvent.tapEnable(tap: swipeTap, enable: false) }
 }
 

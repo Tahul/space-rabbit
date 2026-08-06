@@ -26,6 +26,69 @@ private let kRelevantModifiers: CGEventFlags = [
     .maskControl, .maskCommand, .maskAlternate, .maskShift
 ]
 
+// MARK: - Tap Lifecycle
+
+/// Creates the session-level keyDown tap, attaches it to the main run
+/// loop and enables it. Stores the tap and its source in `gTap` /
+/// `gTapSource`.
+///
+/// Called once at startup (main.swift, where a failure is fatal) and
+/// again by `reviveEventTapIfNeeded()` when the tap has to be rebuilt.
+///
+/// - Returns: `false` when the tap could not be created (e.g.
+///   Accessibility permission missing or revoked).
+func installEventTap() -> Bool {
+    let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+
+    guard let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap,
+        place: .headInsertEventTap,
+        options: .defaultTap,
+        eventsOfInterest: eventMask,
+        callback: eventTapCallback,
+        userInfo: nil
+    ), let source = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
+        return false
+    }
+
+    CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
+
+    gTap       = tap
+    gTapSource = source
+    return true
+}
+
+/// Brings a dead event tap back to life after system sleep or screen lock.
+///
+/// The self-re-enable in `eventTapCallback` only works while the callback
+/// is still being invoked: macOS delivers `tapDisabledByTimeout` /
+/// `tapDisabledByUserInput` *through the tap itself*. When the tap is
+/// disabled — or its Mach port invalidated outright — while the process
+/// is suspended around sleep or lock, that notice never arrives and the
+/// tap stays dead until relaunch. Called from the wake/unlock observers
+/// and the periodic flush timer in main.swift.
+func reviveEventTapIfNeeded() {
+    if let tap = gTap, CFMachPortIsValid(tap) {
+        if !CGEvent.tapIsEnabled(tap: tap) {
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+        return
+    }
+
+    // The Mach port was invalidated — its run loop source died with it,
+    // so drop both and rebuild the tap from scratch.
+    if let source = gTapSource {
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+    }
+    gTap       = nil
+    gTapSource = nil
+
+    if !installEventTap() {
+        fputs("Space Rabbit: failed to recreate event tap after wake\n", stderr)
+    }
+}
+
 // MARK: - Event Tap Callback
 //
 // This is a C-compatible global function used as the CGEvent tap callback.
