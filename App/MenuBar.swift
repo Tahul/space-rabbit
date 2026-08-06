@@ -122,11 +122,12 @@ final class SwoopMenu: NSObject {
         // the user has toggled anything)
         let defaults = UserDefaults.standard
         defaults.register(defaults: [
-            Defaults.enabled:       true,
-            Defaults.instantSwitch: true,
-            Defaults.autoFollow:    true,
-            Defaults.switchSpeed:   1.0,
-            Defaults.switchCount:   0,
+            Defaults.enabled:         true,
+            Defaults.instantSwitch:   true,
+            Defaults.autoFollow:      true,
+            Defaults.switchSpeed:     1.0,
+            Defaults.switchCount:     0,
+            Defaults.showMenuBarIcon: true,
         ])
 
         // Load persisted state from UserDefaults into the global variables
@@ -140,6 +141,7 @@ final class SwoopMenu: NSObject {
 
         // Create the status bar item (variable width to accommodate the icon)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.isVisible = defaults.bool(forKey: Defaults.showMenuBarIcon)
 
         // Create the main menu items with keyboard shortcuts
         instantSwitchItem = NSMenuItem(title: "Instant Space Switch \u{2303}\u{2194}",
@@ -335,6 +337,20 @@ final class SwoopMenu: NSObject {
     }
 
     // MARK: - Menu Bar Icon
+
+    /// Whether the rabbit icon is currently shown in the menu bar.
+    var isMenuBarIconVisible: Bool { statusItem.isVisible }
+
+    /// Shows or hides the menu bar icon and persists the preference.
+    ///
+    /// When hidden, Space Rabbit keeps running; Preferences can be opened
+    /// again by launching the app from Spotlight or the Applications folder.
+    ///
+    /// - Parameter visible: `true` to show the icon, `false` to hide it.
+    func setMenuBarIconVisible(_ visible: Bool) {
+        statusItem.isVisible = visible
+        UserDefaults.standard.set(visible, forKey: Defaults.showMenuBarIcon)
+    }
 
     /// Updates the menu bar icon appearance based on the enabled state.
     ///
