@@ -68,6 +68,15 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         return passthrough
     }
 
+    // Window managers such as Rectangle Pro and Raycast move a window to an
+    // adjacent Space by holding its title bar while invoking the system Space
+    // shortcut. Replacing that shortcut with a DockSwipe switches Spaces but
+    // leaves the held window behind, so preserve macOS's native handling while
+    // the primary mouse button is down.
+    if CGEventSource.buttonState(.combinedSessionState, button: .left) {
+        return passthrough
+    }
+
     let flags   = event.flags
     let keycode = event.getIntegerValueField(.keyboardEventKeycode)
 
