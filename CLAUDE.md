@@ -34,12 +34,13 @@ Exact initialization order — getting this wrong causes subtle bugs:
 5. `gMenu = SwoopMenu()` — creates status item (hidden via `statusItem.isVisible` if so configured), loads persisted state from UserDefaults into globals
 6. Delayed `checkForUpdates()` — 5 seconds after launch (background network request)
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
-8. **Event tap creation** — `CGEvent.tapCreate` → `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
+8. **Event tap creation** — `installEventTap()` (EventTap.swift): `CGEvent.tapCreate` → `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`, stores tap + source in `gTap`/`gTapSource`
 9. **Swipe-intercept tap** — `updateSwipeTap()` installs the Feature 3 tap if the persisted toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
 10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
-11. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
-12. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
-13. `app.run()` — enter run loop
+11. **Tap revival observers** — `NSWorkspace.didWakeNotification` + distributed `com.apple.screenIsUnlocked` → `reviveEventTapIfNeeded()` + `reviveSwipeTapIfNeeded()` (see "Event tap lifetime" below); the step 7 timer runs the same checks as a safety net
+12. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
+13. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
+14. `app.run()` — enter run loop
 
 ## Three core features
 
@@ -51,7 +52,7 @@ A `CGEvent` tap at `.cgSessionEventTap` / `.headInsertEventTap` listens for `key
 2. `postSwitchGesture(direction:)` posts a Began+Ended gesture pair with high velocity.
 3. The Dock handles the gesture and switches the space with no animation.
 
-The tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to stay alive.
+**Event tap lifetime:** the tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to stay alive — but those notices arrive *through the tap callback itself*, so a tap disabled (or its Mach port invalidated) while the process is suspended around system sleep or screen lock never self-heals. `reviveEventTapIfNeeded()` (EventTap.swift) and `reviveSwipeTapIfNeeded()` (SwipeIntercept.swift) cover that hole: re-enable a valid-but-disabled tap, or tear down an invalidated port and rebuild the tap. They run on `NSWorkspace.didWakeNotification`, on the distributed `com.apple.screenIsUnlocked` notification, and from the 300 s flush timer as a safety net.
 
 **Shortcut matching logic** in `eventTapCallback`:
 - Extract `flags` and `keycode` from the event
