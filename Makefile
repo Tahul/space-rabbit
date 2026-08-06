@@ -22,6 +22,9 @@ ICNS       = Tools/Icon/AppIcon.icns
 
 # DMG window layout — must stay in sync with Tools/Dmg/CreateBackground.swift
 DMG_BACKGROUND ?= Tools/Dmg/Background.tiff
+# Scratch space for `make dmg` (both git-ignored, removed when the build ends)
+DMG_STAGING    = Tools/Dmg/_staging
+DMG_RW         = Tools/Dmg/_writable.dmg
 DMG_VOLNAME    = Space Rabbit $(VERSION)
 DMG_WIN_W      = 700
 DMG_WIN_H      = 460
@@ -98,29 +101,29 @@ Tools/Dmg/Background.tiff: Tools/Dmg/CreateBackground.swift
 
 dmg: app $(DMG_BACKGROUND)
 	@echo "==> Creating $(DMG_NAME)..."
-	@rm -f $(Q_DMG) _dmg_rw.dmg
-	@rm -rf _dmg_staging
-	@mkdir -p _dmg_staging/.background
-	@cp -R $(Q_BUNDLE) _dmg_staging/
-	@ln -s /Applications _dmg_staging/Applications
-	@cp $(DMG_BACKGROUND) _dmg_staging/.background/background.tiff
+	@rm -f $(Q_DMG) $(DMG_RW)
+	@rm -rf $(DMG_STAGING)
+	@mkdir -p $(DMG_STAGING)/.background
+	@cp -R $(Q_BUNDLE) $(DMG_STAGING)/
+	@ln -s /Applications $(DMG_STAGING)/Applications
+	@cp $(DMG_BACKGROUND) $(DMG_STAGING)/.background/background.tiff
 	@# A leftover volume of the same name would make macOS mount ours under a
 	@# suffixed name, and the Finder layout script would target the wrong disk
 	@for vol in "/Volumes/$(DMG_VOLNAME)"*; do \
 	  [ -d "$$vol" ] && hdiutil detach "$$vol" -force >/dev/null 2>&1 || true; \
 	done
 	@echo "==> Building writable image..."
-	@size_mb=$$(( $$(du -sm _dmg_staging | cut -f1) + 50 )); \
+	@size_mb=$$(( $$(du -sm $(DMG_STAGING) | cut -f1) + 50 )); \
 	hdiutil create -quiet \
 	    -volname "$(DMG_VOLNAME)" \
-	    -srcfolder _dmg_staging \
+	    -srcfolder $(DMG_STAGING) \
 	    -size $${size_mb}m \
 	    -fs HFS+ -format UDRW -ov \
-	    _dmg_rw.dmg
+	    $(DMG_RW)
 	@echo "==> Applying window layout..."
-	@mount_point=$$(hdiutil attach _dmg_rw.dmg -readwrite -nobrowse -noautoopen \
+	@mount_point=$$(hdiutil attach $(DMG_RW) -readwrite -nobrowse -noautoopen \
 	    | grep -E '^/dev/' | sed -n 's/.*\(\/Volumes\/.*\)$$/\1/p' | head -1); \
-	if [ -z "$$mount_point" ]; then echo "==> ERROR: failed to mount _dmg_rw.dmg"; exit 1; fi; \
+	if [ -z "$$mount_point" ]; then echo "==> ERROR: failed to mount $(DMG_RW)"; exit 1; fi; \
 	trap 'hdiutil detach "$$mount_point" -force >/dev/null 2>&1 || true' EXIT; \
 	osascript Tools/Dmg/Layout.applescript "$$(basename "$$mount_point")" \
 	    $(DMG_WIN_W) $(DMG_WIN_H) $(DMG_ICON_SIZE) \
@@ -133,9 +136,9 @@ dmg: app $(DMG_BACKGROUND)
 	trap - EXIT; \
 	hdiutil detach "$$mount_point" -force >/dev/null
 	@echo "==> Compressing..."
-	@hdiutil convert _dmg_rw.dmg -quiet -format UDZO -imagekey zlib-level=9 -o $(Q_DMG)
-	@rm -f _dmg_rw.dmg
-	@rm -rf _dmg_staging
+	@hdiutil convert $(DMG_RW) -quiet -format UDZO -imagekey zlib-level=9 -o $(Q_DMG)
+	@rm -f $(DMG_RW)
+	@rm -rf $(DMG_STAGING)
 	@echo "==> Created $(DMG_NAME)"
 
 notarize:
@@ -168,5 +171,5 @@ notarize:
 release: dmg notarize
 
 clean:
-	rm -f $(BIN) $(ICNS) Tools/Dmg/Background.tiff _dmg_rw.dmg
-	rm -rf AppIcon.iconset $(Q_BUNDLE) $(Q_DMG) _dmg_staging
+	rm -f $(BIN) $(ICNS) Tools/Dmg/Background.tiff $(DMG_RW)
+	rm -rf AppIcon.iconset $(Q_BUNDLE) $(Q_DMG) $(DMG_STAGING)

@@ -382,7 +382,10 @@ Everything goes through the `Makefile`. No Xcode project.
 `make dmg` produces a styled installer window (700×460 pt content, 128 pt icons, app on
 the left, `/Applications` symlink on the right, drag arrow in the background):
 
-1. Stage `Space Rabbit.app`, the `Applications` symlink and `.background/background.tiff`.
+1. Stage `Space Rabbit.app`, the `Applications` symlink and `.background/background.tiff`
+   into `Tools/Dmg/_staging` (`DMG_STAGING`). The intermediate read-write image is
+   `Tools/Dmg/_writable.dmg` (`DMG_RW`). Both are git-ignored and deleted when the build
+   ends; `make clean` removes them too.
 2. Detach any leftover `/Volumes/Space Rabbit *` volume — a same-named volume would make
    ours mount under a suffixed name and the layout script would target the wrong disk.
 3. `hdiutil create … -format UDRW` (sized `du` + 50 MB of slack) → mount read-write.
