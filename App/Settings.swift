@@ -957,6 +957,7 @@ final class AdvancedPaneController: SettingsPaneViewController {
 
     private var instantDockHideControl: NSSwitch!
     private var showMenuBarIconControl: NSSwitch!
+    private var menuBarSubtitle:        NSTextField!
     private var dockResetDivider:       NSView!
     private var dockResetRow:           NSView!
 
@@ -978,15 +979,16 @@ final class AdvancedPaneController: SettingsPaneViewController {
             #selector(toggleDockInstantHide)
         )
 
-        let menuBarSubtitle = NSTextField(wrappingLabelWithString:
-            "When hidden, launch Space Rabbit again to open Preferences.")
+        showMenuBarIconControl = makeSwitch(
+            UserDefaults.standard.bool(forKey: Defaults.showMenuBarIcon),
+            #selector(toggleShowMenuBarIcon)
+        )
+
+        menuBarSubtitle = NSTextField(wrappingLabelWithString: "")
         menuBarSubtitle.font                    = .systemFont(ofSize: 11)
         menuBarSubtitle.textColor               = .secondaryLabelColor
         menuBarSubtitle.preferredMaxLayoutWidth = 240
-
-        let menuBarVisible = UserDefaults.standard.object(forKey: Defaults.showMenuBarIcon) as? Bool
-            ?? true
-        showMenuBarIconControl = makeSwitch(menuBarVisible, #selector(toggleShowMenuBarIcon))
+        updateMenuBarSubtitle()
 
         // "Reset to system default" link button (only visible when overridden)
         let resetBtn = LinkButton(title: "", target: self, action: #selector(resetDockToDefault))
@@ -1047,8 +1049,9 @@ final class AdvancedPaneController: SettingsPaneViewController {
         super.viewWillAppear()
         instantDockHideControl.state = isDockInstantHideEnabled() ? .on : .off
         let menuBarVisible = gMenu?.isMenuBarIconVisible
-            ?? (UserDefaults.standard.object(forKey: Defaults.showMenuBarIcon) as? Bool ?? true)
+            ?? UserDefaults.standard.bool(forKey: Defaults.showMenuBarIcon)
         showMenuBarIconControl.state = menuBarVisible ? .on : .off
+        updateMenuBarSubtitle()
         updateDockResetLink()
     }
 
@@ -1112,9 +1115,20 @@ final class AdvancedPaneController: SettingsPaneViewController {
         promptDockRestart()
     }
 
+    /// Updates the menu bar row's subtitle to match the toggle state:
+    /// what flipping it off will do while the icon is visible, and how to
+    /// reach Preferences again once it is hidden.
+    private func updateMenuBarSubtitle() {
+        menuBarSubtitle.stringValue = showMenuBarIconControl.state == .on
+            ? "This hides the Space Rabbit icon."
+            : "Start Space Rabbit again to open settings."
+    }
+
     @objc private func toggleShowMenuBarIcon() {
         let visible = showMenuBarIconControl.state == .on
         gMenu?.setMenuBarIconVisible(visible)
+        updateMenuBarSubtitle()
+        resizePaneToFit()
     }
 }
 

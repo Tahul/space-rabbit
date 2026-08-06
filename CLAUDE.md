@@ -27,17 +27,18 @@ Technique borrowed from [InstantSpaceSwitcher](https://github.com/jurplel/Instan
 
 Exact initialization order — getting this wrong causes subtle bugs:
 
-1. `NSApplication.shared.setActivationPolicy(.accessory)` — hide from Dock
-2. **Accessibility check** — `AXIsProcessTrustedWithOptions` with prompt; exits if denied
-3. `loadSpaceSwitchShortcuts()` — reads keycodes/modifiers from system prefs into `gKeyLeft`/`gKeyRight`/`gModMask`
-4. `gMenu = SwoopMenu()` — creates status item, loads persisted state from UserDefaults into globals
-5. Delayed `checkForUpdates()` — 5 seconds after launch (background network request)
-6. `Timer` for `flushSwitchCount()` — every 300 seconds
-7. **Event tap creation** — `CGEvent.tapCreate` → `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
-8. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
-9. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable tap
-10. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
-11. `app.run()` — enter run loop
+1. `app.delegate = AppDelegate()` — reopen handler (relaunching the app shows Preferences — the recovery path when the menu bar icon is hidden, deep-linking to the Advanced pane in that case). `applicationDidFinishLaunching` also opens Preferences when the icon is hidden and the launch was manual — login-item launches are exempted via `isLaunchedAsLoginItem()`, which reads the launch Apple event's `keyAELaunchedAsLogInItem` flag. That check is only valid while the launch event is current (inside `finishLaunching`) — it must NOT be called from top-level `main.swift` code, where it always returns false.
+2. `NSApplication.shared.setActivationPolicy(.accessory)` — hide from Dock
+3. **Accessibility check** — `AXIsProcessTrustedWithOptions` with prompt; exits if denied
+4. `loadSpaceSwitchShortcuts()` — reads keycodes/modifiers from system prefs into `gKeyLeft`/`gKeyRight`/`gModMask`
+5. `gMenu = SwoopMenu()` — creates status item (hidden via `statusItem.isVisible` if so configured), loads persisted state from UserDefaults into globals
+6. Delayed `checkForUpdates()` — 5 seconds after launch (background network request)
+7. `Timer` for `flushSwitchCount()` — every 300 seconds
+8. **Event tap creation** — `CGEvent.tapCreate` → `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
+9. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
+10. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable tap
+11. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
+12. `app.run()` — enter run loop
 
 ## Two core features
 
@@ -190,7 +191,9 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 ### UserDefaults keys (`Defaults` enum)
 
-`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`.
+`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`.
+
+Menu bar icon visibility has no `g` global: the live truth is `statusItem.isVisible` (`SwoopMenu.isMenuBarIconVisible`), persisted through `setMenuBarIconVisible(_:)`.
 
 Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount != gSwitchCountSaved`. Called every 300s by timer and once on app termination. Acceptable to lose a few counts on crash.
 
@@ -305,7 +308,9 @@ SettingsWindowController (singleton, NSWindowDelegate)
        │    native macOS animation / Fast / Faster / Fastest / right end cap =
        │    "Instant", the default)
        ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
-       │    autohide-time-modifier, killall Dock)
+       │    autohide-time-modifier, killall Dock) + Show menu bar icon toggle
+       │    (statusItem.isVisible; when hidden, relaunching the app reopens
+       │    Preferences — see the AppDelegate notes in "Startup sequence")
        ├─ UpdatesPaneController — "Check Now…" button (mirrors the menu's manual
        │    check: sheet alerts, shows tray banner + startUpdate on install)
        │    + manual-update notice box

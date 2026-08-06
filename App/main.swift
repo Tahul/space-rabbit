@@ -16,19 +16,33 @@
 import AppKit
 import CoreGraphics
 import ApplicationServices
-import Carbon.HIToolbox
 
 // MARK: - Application Delegate
 
-/// Handles reopen (user launches Space Rabbit while it is already running).
+/// Handles launch and reopen (user launches Space Rabbit while it is
+/// already running).
 ///
 /// Needed when the menu bar icon is hidden: there is otherwise no UI entry
 /// point. Opening the app again from Spotlight or Finder surfaces Preferences.
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // If the menu bar icon is hidden and the user launched the app
+        // manually (not as a login item), open Preferences so they still
+        // have a way in. This must run here — not in top-level code — since
+        // the launch Apple event is only current while it is dispatched,
+        // which happens during finishLaunching.
+        if gMenu?.isMenuBarIconVisible == false, !isLaunchedAsLoginItem() {
+            SettingsWindowController.shared.show(pane: .advanced)
+        }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication,
                                        hasVisibleWindows flag: Bool) -> Bool {
-        SettingsWindowController.shared.show(pane: .advanced)
+        // Deep-link to the Advanced pane (where the icon toggle lives) only
+        // when the icon is hidden; otherwise open the default pane.
+        let pane: SettingsPane? = gMenu?.isMenuBarIconVisible == false ? .advanced : nil
+        SettingsWindowController.shared.show(pane: pane)
         return false
     }
 }
@@ -39,6 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 ///
 /// Used so a hidden menu bar icon does not pop Preferences at every login,
 /// while a manual launch of the app still opens Preferences as the recovery path.
+///
+/// Only valid while the launch Apple event is being dispatched (i.e. from
+/// `applicationDidFinishLaunching`); before `app.run()` it always returns `false`.
 private func isLaunchedAsLoginItem() -> Bool {
     guard let event = NSAppleEventManager.shared().currentAppleEvent else { return false }
     guard event.eventID == AEEventID(kAEOpenApplication) else { return false }
@@ -79,14 +96,6 @@ loadSpaceSwitchShortcuts()
 // Create the menu bar status item and load persisted preferences
 // (switch count, feature toggles, etc.) from UserDefaults
 gMenu = SwoopMenu()
-
-// If the menu bar icon is hidden and the user launched the app manually
-// (not as a login item), open Preferences so they still have a way in.
-if gMenu?.isMenuBarIconVisible == false, !isLaunchedAsLoginItem() {
-    DispatchQueue.main.async {
-        SettingsWindowController.shared.show(pane: .advanced)
-    }
-}
 
 // Check for updates 5 seconds after launch, giving the app time to
 // settle before making a network request. Launch-only by design: no
