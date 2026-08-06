@@ -93,7 +93,7 @@ export SIGN_ID=Developer ID Application: Your Developer Name (IDENTIFIER_HERE)
 
 ## Help translate
 
-This app supports localization. The base language is English (`en`). It is translated in languages such as French (`fr`), German (`de`) and more.
+This app supports localization. The base language is English (`en`). It is translated in languages such as French (`fr`), German (`de`), Spanish (`es`) and more.
 
 If your spoken language is missing, you can add it by asking your AI coding agent to auto-translate from English. To check it, build the app for yourself and manually check all localized strings. Then, you may submit a Pull Request.
 
