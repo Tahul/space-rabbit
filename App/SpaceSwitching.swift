@@ -37,9 +37,9 @@ private let kInstantSwitchProgress: Double = 2.0
 private let kInstantSwitchVelocity: Double = 400.0
 
 /// Instant-switch velocity used on macOS 27+, where the Dock's velocity
-/// threshold changed alongside the stricter event validation. Note the
-/// inverted sign convention on the augmented path: NEGATIVE velocity and
-/// progress move right, positive move left.
+/// threshold changed alongside the stricter event validation. The sign
+/// convention matches the legacy path: positive velocity and progress
+/// move right, negative move left (verified on build 26A5388g).
 private let kAugmentedInstantVelocity: Double = 9999.0
 
 /// Velocity range for animated (non-instant) switches, mapped from the
@@ -541,8 +541,11 @@ private func displayID(forIdentifier identifier: String) -> CGDirectDisplayID? {
 //   3. Post a full Began+Changed+Ended phase sequence (the pre-27 path
 //      gets away with Began+Ended only).
 //
-// The sign convention also inverted on this path: negative progress and
-// velocity move RIGHT, positive move LEFT.
+// The sign convention matches the legacy path: positive progress and
+// velocity move RIGHT, negative move LEFT. (Some earlier macOS 27 betas
+// reportedly accepted inverted signs; build 26A5388g wants the normal
+// orientation — inverted signs there swipe toward the wrong edge and
+// rubber-band back.)
 
 /// Whether this macOS release requires the augmented gesture path
 /// (macOS 27 and later). Evaluated once on first use.
@@ -672,8 +675,8 @@ private func augmentDockSwipeEvent(_ event: CGEvent) -> CGEvent? {
 
 /// Creates one phase of the macOS 27 dock swipe, with the extra fields
 /// the 27 Dock validates (phase mirror, flavor, timestamp, non-zero
-/// position). Progress/velocity signs are INVERTED relative to the
-/// legacy path: negative moves right, positive moves left.
+/// position). Progress/velocity signs follow the legacy convention:
+/// positive moves right, negative moves left.
 ///
 /// - Parameters:
 ///   - phase: `kCGSGesturePhaseBegan`, `...Changed`, or `...Ended`.
@@ -687,7 +690,7 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
     ev.setIntegerValueField(kCGSEventTypeField,          value: kCGSEventDockControl)
     ev.setIntegerValueField(kCGEventGestureHIDType,      value: kIOHIDEventTypeDockSwipe)
     ev.setIntegerValueField(kCGEventGesturePhase,        value: phase)
-    ev.setDoubleValueField(kCGEventGestureSwipeProgress, value: isRight ? -1.0 : 1.0)
+    ev.setDoubleValueField(kCGEventGestureSwipeProgress, value: isRight ? 1.0 : -1.0)
     ev.setIntegerValueField(kCGEventGestureSwipeMotion,  value: 1)
     ev.setIntegerValueField(kCGEventGesturePhase2,       value: phase)
     ev.setDoubleValueField(kCGEventGestureFlavor,        value: Double(kIOHIDGestureFlavorDockPrimary))
@@ -696,7 +699,7 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
 
     if phase == kCGSGesturePhaseEnded {
         ev.setDoubleValueField(kCGEventGestureSwipeVelocityX,
-                               value: isRight ? -velocity : velocity)
+                               value: isRight ? velocity : -velocity)
     }
     return ev
 }
