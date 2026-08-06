@@ -243,8 +243,8 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 // MARK: - Direction & Firing
 
 /// Whether the given progress/velocity sign means "move to the space on
-/// the right". The sign convention of REAL trackpad DockSwipe events has
-/// flipped across macOS releases (independently of the posting-side
+/// the right". The raw sign convention of REAL trackpad DockSwipe events
+/// has flipped across macOS releases (independently of the posting-side
 /// convention documented in SpaceSwitching.swift):
 ///
 ///   - macOS ≤ 25: negative = right
@@ -254,9 +254,13 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 /// - Parameter sign: A non-zero swipe progress or X velocity sample.
 /// - Returns: `true` when the swipe targets the next space to the right.
 private func isRightSwipe(_ sign: Double) -> Bool {
-    if requiresEventAugmentation() { return sign < 0 }
-    if kSwipeDirectionReversed     { return sign > 0 }
-    return sign < 0
+    let naturalScrolling = UserDefaults.standard.object(
+        forKey: "com.apple.swipescrolldirection"
+    ) as? Bool ?? true
+    let adjustedSign = naturalScrolling ? -sign : sign
+    if requiresEventAugmentation() { return adjustedSign < 0 }
+    if kSwipeDirectionReversed     { return adjustedSign > 0 }
+    return adjustedSign < 0
 }
 
 /// Fires the instant switch replacing an intercepted swipe, mirroring the
