@@ -111,6 +111,34 @@ the callback (`isNativeSwitchSpeed()` → everything passes through untouched).
 
 The two features suppress each other to prevent loops. After instant-switch fires, `gLastSpaceSwitchTime` is stamped. Auto-follow checks this timestamp and skips if within 300ms. The `activeSpaceDidChangeNotification` observer in `main.swift` also stamps this time for trackpad-initiated switches (which bypass the event tap entirely).
 
+### Mission Control stand-down (`isMissionControlActive()` in `SpaceSwitching.swift`)
+
+All three features stand down while a Mission Control-style overview (Mission
+Control, App Exposé, Show Desktop) is on screen, letting macOS handle the input
+natively. The overview drives space navigation itself, and a synthetic DockSwipe
+posted into it is evaluated against the overview's state rather than the
+desktop's: the screen blanks, swipes, and lands back on the space the user
+started from (issue #16).
+
+Detection is a synchronous `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` scan
+for a **Dock-owned window at `kCGWindowLayer` 18** — the display-sized overlay the
+Dock keeps up for the whole duration of the overview, and the same marker yabai
+uses (`src/mission_control.c`). `kCGWindowName` is deliberately *not* part of the
+test (yabai additionally requires it to be nil): it needs Screen Recording
+permission, which Space Rabbit never asks for, so it reads as `nil` for every
+window regardless of state.
+
+Where the check runs matters — it copies the window list, so it is only reached
+once an action is about to happen, never per event:
+
+- **Feature 1** — after a shortcut has matched (both the left/right bindings and
+  the "Switch to Desktop N" loop), not for every `keyDown`.
+- **Feature 3** — on the Began phase only. Standing down means *not tracking* the
+  gesture, so all later phases pass through via the existing `gSwipeTracking`
+  checks, one lookup per swipe instead of one per sample.
+- **Feature 2** — after the speed and suppression-window guards, before the
+  window-to-space lookups.
+
 ## Private APIs in use (`PrivateAPI.swift`)
 
 ### CGS functions (resolved via `loadSymbol()` / `dlsym` at startup)
@@ -252,6 +280,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kAugmentedInstantVelocity` | SpaceSwitching | `9999.0` | Instant velocity on the macOS 27+ augmented path (sign inverted: negative = right) |
 | `kAnimatedVelocityMin/Max` | SpaceSwitching | `40.0` / `80.0` | Animated velocity band for the transition-speed slider (from InstantSpaceSwitcher's presets). `currentSwitchVelocity()` interpolates the Fast/Faster/Fastest ticks to 50/60/70, or returns `kInstantSwitchVelocity` at the "Instant" end cap. At the "Normal" tick `isNativeSwitchSpeed()` is true and **no gestures are posted at all** — the event tap passes shortcuts through and auto-follow stands down, giving macOS's native animation |
 | `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period before auto-follow kicks in |
+| `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the Mission Control marker |
 | `kGestureMotionHorizontal` | SwipeIntercept | `1` (Int64) | `kCGEventGestureSwipeMotion` value of a horizontal swipe (vertical swipes pass through) |
 | `kSwipeDirectionReversed` | SwipeIntercept | macOS major ≥ 26 | Real-swipe sign inversion introduced by macOS 26 (27+ short-circuits via the augmentation check first) |
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
@@ -679,6 +708,7 @@ local.env               — git-ignored; signing credentials
 - Trackpad swipe gestures animate unless the opt-in "Instant 3-Finger Swipe"
   feature is enabled (they bypass the keyboard event tap; Feature 3 intercepts
   them with its own gesture tap).
+- Space switches inside a Mission Control overview are left to macOS (animated) — the overview cannot be driven by synthetic DockSwipes at all (see "Mission Control stand-down").
 - Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display: at the "Instant" speed setting, `switchOnOtherDisplay` warps the cursor to that display, posts the gesture, and restores the cursor after `kCursorWarpRestoreDelay` (skipping the restore if the user moved it); at animated speeds it stands down and macOS's native animated switch handles it. Direct APIs are not an option (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates. macOS 27 already did this once: it rejects bare synthetic DockSwipe events, requiring the augmented path (see "macOS 27+ gesture augmentation").
 - The macOS 27+ augmented path always posts the equivalent of an instant switch at the "Instant" slider setting; the animated velocity band (Fast/Faster/Fastest) is passed through but uncalibrated on macOS 27.

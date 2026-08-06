@@ -177,6 +177,13 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         let phase = event.getIntegerValueField(kCGEventGesturePhase)
 
         if phase == kCGSGesturePhaseBegan {
+            // Mission Control slides its own carousel from this gesture —
+            // see isMissionControlActive(). Stand down for the whole swipe
+            // by not tracking it: every later phase then passes through
+            // untouched, so the window-list lookup runs once per gesture
+            // rather than for every high-frequency sample.
+            guard !isMissionControlActive() else { return passthrough }
+
             gSwipeTracking = true
             gSwipeFired    = false
             return nil

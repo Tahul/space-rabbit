@@ -49,6 +49,10 @@ final class SwoopObserver: NSObject {
         guard Date().timeIntervalSince(gLastSpaceSwitchTime) > kAutoFollowSuppressionWindow
         else { return }
 
+        // A Mission Control overview handles navigation itself and our
+        // gestures land back where they started — see isMissionControlActive()
+        guard !isMissionControlActive() else { return }
+
         guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
                         as? NSRunningApplication else { return }
 

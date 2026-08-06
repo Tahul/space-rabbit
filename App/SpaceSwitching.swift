@@ -233,6 +233,47 @@ private func getAllCurrentSpaces() -> [CGSSpaceID] {
     }
 }
 
+// MARK: - Mission Control Detection
+
+/// Window layer of the full-screen overlay windows the Dock puts up while
+/// a Mission Control-style overview is on screen (`kCGWindowLayer` 18).
+/// Nothing else the Dock owns sits at that layer.
+private let kMissionControlWindowLayer: Int32 = 18
+
+/// Whether a Mission Control-style overview (Mission Control, App Exposé,
+/// Show Desktop) is currently on screen.
+///
+/// The overview drives space navigation itself: it consumes the system
+/// space shortcuts and 3-finger swipes to slide its own carousel. A
+/// synthetic DockSwipe posted into it is evaluated against the overview's
+/// state instead of the desktop's, so the screen blanks, swipes, and lands
+/// back on the space the user started from — no switch at all (issue #16).
+/// All three features therefore stand down while it is up and let macOS
+/// handle the input natively.
+///
+/// Detection uses the same marker yabai relies on (`src/mission_control.c`):
+/// for the whole duration of the overview the Dock owns a display-sized
+/// window at layer 18 on every display. `kCGWindowName` is deliberately not
+/// part of the test — it requires Screen Recording permission, which Space
+/// Rabbit does not ask for, so it reads as `nil` for every window here.
+///
+/// - Returns: `true` while an overview is on screen.
+func isMissionControlActive() -> Bool {
+    guard let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
+            as? [[String: Any]]
+    else { return false }
+
+    for window in windowList {
+        guard (window["kCGWindowLayer"] as? NSNumber)?.int32Value == kMissionControlWindowLayer,
+              (window["kCGWindowOwnerName"] as? String) == "Dock"
+        else { continue }
+
+        return true
+    }
+
+    return false
+}
+
 // MARK: - Window-to-Space Mapping
 
 /// Space information for one group of a process's windows.
