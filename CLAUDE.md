@@ -353,13 +353,102 @@ Writes `autohide-time-modifier` to `com.apple.dock` preferences:
 - Shows a confirmation alert before restarting the Dock
 - "Reset to system default" link appears when the key is overridden
 
+## Localization
+
+> [!IMPORTANT]
+> **No user-visible string may be hardcoded in Swift, and every string must exist
+> in _every_ language.** Adding one means editing `en.lproj` **and each other
+> `<lang>.lproj`** in the same change. `make build` fails otherwise — that is
+> deliberate, so an untranslated string can never ship. Do not work around the
+> validator by deleting a language or skipping a key.
+
+Standard macOS `.lproj` bundle localization — no Xcode string catalogs
+(`.xcstrings` would need `xcstringstool` from Xcode's build system; the plain
+`.strings` tables here are copied into the bundle verbatim by the `Makefile`).
+
+```
+App/Resources/
+  en.lproj/                    ← development language, defines the key set
+    Localizable.strings        — all UI strings (the table L() reads)
+    Localizable.stringsdict    — plural-sensitive strings only
+    InfoPlist.strings          — localized Info.plist values
+  fr.lproj/                    ← any further language: same three files,
+    ...                          same keys, nothing more, nothing less
+```
+
+### Reading a string
+
+`App/Localization.swift` exposes exactly one lookup function:
+
+```swift
+L("menu.quit")                                  // plain
+L("common.version", version)                    // %@ substitution
+L("stats.switches", count, formattedCount)      // plural (stringsdict)
+```
+
+- **Keys must be string literals at the call site.** The validator scans for
+  `L("…")` textually; a key held in a variable is invisible to it and will be
+  reported as an unused key.
+- `L` returns the key itself when nothing declares it — harmless at runtime, and
+  the build-time check makes it unreachable.
+- Key naming: `area.subarea.thing`, lowerCamelCase leaves
+  (`settings.advanced.dockRestart.confirm`). `app.*` and `common.*` are the
+  shared namespaces; reuse `common.ok` / `common.cancel` / `common.later` /
+  `common.tryAgain` rather than adding another "OK".
+
+### Language selection
+
+Entirely the bundle loader's job — there is no in-app language setting and no
+locale plumbing. macOS picks the `.lproj` matching the user's preferred language
+when one is shipped, and otherwise falls back to `CFBundleDevelopmentRegion`
+(`en`, set in `Info.plist`). So a French system gets `fr.lproj`, a German system
+falls back to English until `de.lproj` exists.
+
+### Plurals
+
+Count-dependent wording goes in `Localizable.stringsdict`, never in
+`Localizable.strings` with an `== 1` ternary in Swift — English's two forms are
+not enough for e.g. Polish or Arabic. Entries take the count **twice**: `%1$…`
+selects the plural category, `%2$@` is the same count pre-formatted by
+`NumberFormatter` (so the locale's grouping separator survives) and is what gets
+displayed.
+
+Unit names for durations are **not** in the tables at all: `localizedDuration()`
+uses `DateComponentsFormatter`, so "2 days, 5 hr" comes from the system already
+translated and pluralized in every language.
+
+### Not localized (on purpose)
+
+Proper nouns and technical text: author names and `space-rabbit.app` in the About
+pane (inline in `Settings.swift`), the `"—"` placeholder for a missing version
+string, and every `fputs`/`print` diagnostic — those are developer-facing logs,
+so they stay English. The product name itself is the `app.name` key, to be
+transliterated but not translated.
+
+### What `make build` enforces
+
+`Tools/Localization/Validate.swift`, run by the `verify-localizations` target
+(~0.5 s). Any one of these fails the build:
+
+1. A `.lproj` is missing a table file that `en.lproj` has — or has an extra one.
+2. A key is missing from a language, or exists in a language but not in English.
+3. A translation's format specifiers don't match English's (compared as a
+   multiset, so `%1$@`/`%2$@` reordering for word order is allowed — dropping or
+   inventing a `%@` is not).
+4. A `.strings` file doesn't parse. Worth breaking the build over: a stray
+   missing semicolon otherwise degrades silently to raw keys on screen.
+5. A key is used by the code but undeclared, or declared but never used.
+
+Plural *categories* are intentionally not compared across languages — each
+language declares the ones its rules define.
+
 ## Build system
 
 Everything goes through the `Makefile`. No Xcode project.
 
 | Target | What it does |
 |---|---|
-| `make build` | Compiles `App/*.swift` → `spacerabbit` binary |
+| `make build` | Compiles `App/*.swift` → `spacerabbit` binary, then verifies the min-macOS target and the localization tables (see "Localization") |
 | `make assets` | Regenerates both build-time assets: `Tools/Icon/AppIcon.icns` (from `Tools/Icon/CreateIcon.swift`) and `Tools/Dmg/Background.tiff` (from `Tools/Dmg/CreateBackground.swift`) |
 | `make app` | `build` + assembles `Space Rabbit.app` bundle + code-signs |
 | `make app-dev` | `app` + kills any running instance + relaunches — **use this during development** |
@@ -448,6 +537,7 @@ from measuring the label string, so the two plates differ in width by design.
 ```
 App/
   main.swift            — entry point: permissions, event tap, observers, run loop
+  Localization.swift    — L() string lookup + localizedDuration()
   PrivateAPI.swift      — undocumented CGEvent fields, CGS types, dlsym resolution
   State.swift           — global runtime state, UserDefaults keys, persistence
   Shortcuts.swift       — reads macOS space-switch keyboard shortcuts
@@ -459,7 +549,11 @@ App/
   UpdateCheck.swift     — GitHub release version checking
   UpdateInstall.swift   — automatic update download, DMG install, and restart
   Info.plist            — bundle metadata (version placeholder: __VERSION__)
+  Resources/            — localization tables, copied into the bundle as-is
+    en.lproj/           — Localizable.strings + .stringsdict + InfoPlist.strings
 Tools/                  — build-time asset generators (not compiled into the app)
+  Localization/
+    Validate.swift      — cross-language key check run by `make build`
   Icon/
     AppIcon.icns        — compiled icon (git-ignored, regenerated by `make assets`)
     CreateIcon.swift    — generates the icns programmatically
@@ -478,6 +572,7 @@ local.env               — git-ignored; signing credentials
 
 ## Coding conventions
 
+- **No hardcoded user-visible strings** — every one goes through `L("key")` and must be declared in *all* `.lproj` tables (see "Localization"). Developer-facing `fputs`/`print` diagnostics stay in English.
 - **Globals prefixed `g`** — all mutable runtime state (e.g. `gEnabled`, `gTap`). Single-threaded app, no locks needed.
 - **Constants prefixed `k`** — named magic numbers (e.g. `kSLSSpaceTypeAll`, `kInstantSwitchVelocity`).
 - **Enums for grouping constants** — `Defaults` (UserDefaults keys), `CarbonModifier` (bitmasks), `Layout` (UI sizing), `ToggleColors`.

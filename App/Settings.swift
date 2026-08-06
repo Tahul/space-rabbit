@@ -59,11 +59,11 @@ enum SettingsPane: Int, CaseIterable {
     /// Title shown in the sidebar row and as the pane header.
     var title: String {
         switch self {
-        case .autoStart: return "Auto-Start"
-        case .features:  return "Features"
-        case .advanced:  return "Advanced"
-        case .updates:   return "Updates"
-        case .about:     return "About"
+        case .autoStart: return L("settings.pane.autoStart")
+        case .features:  return L("settings.pane.features")
+        case .advanced:  return L("settings.pane.advanced")
+        case .updates:   return L("settings.pane.updates")
+        case .about:     return L("settings.pane.about")
         }
     }
 
@@ -133,7 +133,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         )
         // The sidebar extends into the title bar area; each pane shows its
         // own header instead of a window title
-        window.title                       = "Space Rabbit Settings"
+        window.title                       = L("settings.window.title")
         window.titleVisibility             = .hidden
         window.titlebarAppearsTransparent  = true
         window.isMovableByWindowBackground = true
@@ -684,7 +684,7 @@ final class AutoStartPaneController: SettingsPaneViewController {
         launchWarningBanner = makeLaunchWarningBanner()
 
         let group = groupBox([settingsRow(
-            label:    "Launch at login",
+            label:    L("settings.autoStart.launchAtLogin"),
             control:  launchAtLoginControl,
             subtitle: launchStatusLabel
         )])
@@ -743,8 +743,7 @@ final class AutoStartPaneController: SettingsPaneViewController {
         iconView.contentTintColor = .systemOrange
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
-        let label = NSTextField(wrappingLabelWithString:
-            "Space Rabbit is not set to launch at login. Enable \u{201C}Launch at login\u{201D} below so it starts automatically.")
+        let label = NSTextField(wrappingLabelWithString: L("settings.autoStart.warning"))
         label.font      = .systemFont(ofSize: 12)
         label.textColor = NSColor.systemOrange
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -785,7 +784,7 @@ final class AutoStartPaneController: SettingsPaneViewController {
             launchStatusLabel.stringValue = msg
             launchStatusLabel.isHidden    = false
         } else if status == .requiresApproval {
-            launchStatusLabel.stringValue = "Approval needed — check Login Items in System Settings."
+            launchStatusLabel.stringValue = L("settings.autoStart.approvalNeeded")
             launchStatusLabel.isHidden    = false
         } else {
             launchStatusLabel.isHidden = true
@@ -801,7 +800,7 @@ final class AutoStartPaneController: SettingsPaneViewController {
             }
             updateLaunchAtLoginUI()
         } catch {
-            let msg = "Could not update login item: \(error.localizedDescription)"
+            let msg = L("settings.autoStart.error", error.localizedDescription)
             fputs("Space Rabbit: launch at login: \(error)\n", stderr)
             updateLaunchAtLoginUI(errorMessage: msg)
         }
@@ -826,12 +825,15 @@ final class FeaturesPaneController: SettingsPaneViewController {
         autoFollowControl    = makeSwitch(gAutoFollowEnabled,    #selector(toggleAutoFollow))
 
         let togglesGroup = groupBox([
-            settingsRow(label: "Instant Space switch", control: instantSwitchControl),
+            settingsRow(label: L("settings.features.instantSpaceSwitch"),
+                        control: instantSwitchControl),
             rowDivider(),
-            settingsRow(label: "Instant App switch",   control: autoFollowControl),
+            settingsRow(label: L("settings.features.instantAppSwitch"),
+                        control: autoFollowControl),
         ])
         let speedGroup = groupBox([
-            settingsRow(label: "Transition speed",     control: makeSpeedControl()),
+            settingsRow(label: L("settings.features.transitionSpeed"),
+                        control: makeSpeedControl()),
         ])
         return [togglesGroup, speedGroup]
     }
@@ -866,7 +868,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
         // Thunder bolt shown only at the "Instant" end cap
         speedBoltIcon = NSImageView()
         speedBoltIcon.image = NSImage(systemSymbolName: "bolt.fill",
-                                      accessibilityDescription: "Instant")?
+                                      accessibilityDescription: L("settings.features.speed.instant"))?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
 
         // Bolt + label hug each other and anchor to the trailing edge of a
@@ -913,12 +915,12 @@ final class FeaturesPaneController: SettingsPaneViewController {
     /// Human-readable name for the current transition-speed tick.
     /// "Normal" means macOS's native animation (no synthetic gestures).
     private func speedDescription() -> String {
-        guard gSwitchSpeed < 1.0 else { return "Instant" }
+        guard gSwitchSpeed < 1.0 else { return L("settings.features.speed.instant") }
         switch gSwitchSpeed {
-        case ..<0.25: return "Normal"
-        case ..<0.50: return "Fast"
-        case ..<0.75: return "Faster"
-        default:      return "Fastest"
+        case ..<0.25: return L("settings.features.speed.normal")
+        case ..<0.50: return L("settings.features.speed.fast")
+        case ..<0.75: return L("settings.features.speed.faster")
+        default:      return L("settings.features.speed.fastest")
         }
     }
 
@@ -969,7 +971,7 @@ final class AdvancedPaneController: SettingsPaneViewController {
 
     override func buildContent() -> [NSView] {
         let dockSubtitle = NSTextField(wrappingLabelWithString:
-            "This changes a global macOS setting.")
+            L("settings.advanced.dockSubtitle"))
         dockSubtitle.font                    = .systemFont(ofSize: 11)
         dockSubtitle.textColor               = .secondaryLabelColor
         dockSubtitle.preferredMaxLayoutWidth = 240
@@ -993,7 +995,7 @@ final class AdvancedPaneController: SettingsPaneViewController {
         // "Reset to system default" link button (only visible when overridden)
         let resetBtn = LinkButton(title: "", target: self, action: #selector(resetDockToDefault))
         resetBtn.isBordered = false
-        resetBtn.attributedTitle = NSAttributedString(string: "Reset to system default", attributes: [
+        resetBtn.attributedTitle = NSAttributedString(string: L("settings.advanced.resetToDefault"), attributes: [
             .font:            NSFont.systemFont(ofSize: 11),
             .foregroundColor: NSColor.linkColor,
         ])
@@ -1028,7 +1030,7 @@ final class AdvancedPaneController: SettingsPaneViewController {
 
         let dockGroup = groupBox([
             settingsRow(
-                label:    "Instant Dock hide",
+                label:    L("settings.advanced.instantDockHide"),
                 control:  instantDockHideControl,
                 subtitle: dockSubtitle
             ),
@@ -1037,7 +1039,7 @@ final class AdvancedPaneController: SettingsPaneViewController {
         ])
         let menuBarGroup = groupBox([
             settingsRow(
-                label:    "Show menu bar icon",
+                label:    L("settings.advanced.showMenuBarIcon"),
                 control:  showMenuBarIconControl,
                 subtitle: menuBarSubtitle
             ),
@@ -1086,11 +1088,10 @@ final class AdvancedPaneController: SettingsPaneViewController {
     /// This shows an alert with "Restart Dock Now" and "Later" buttons.
     private func promptDockRestart() {
         let alert = NSAlert()
-        alert.messageText     = "Restart Dock to apply changes?"
-        alert.informativeText = "The Dock needs to restart for this setting to take effect. "
-                              + "Your Dock will briefly disappear and reappear."
-        alert.addButton(withTitle: "Restart Dock Now")
-        alert.addButton(withTitle: "Later")
+        alert.messageText     = L("settings.advanced.dockRestart.title")
+        alert.informativeText = L("settings.advanced.dockRestart.message")
+        alert.addButton(withTitle: L("settings.advanced.dockRestart.confirm"))
+        alert.addButton(withTitle: L("common.later"))
         alert.alertStyle = .informational
 
         if alert.runModal() == .alertFirstButtonReturn {
@@ -1120,8 +1121,8 @@ final class AdvancedPaneController: SettingsPaneViewController {
     /// reach Preferences again once it is hidden.
     private func updateMenuBarSubtitle() {
         menuBarSubtitle.stringValue = showMenuBarIconControl.state == .on
-            ? "This hides the Space Rabbit icon."
-            : "Start Space Rabbit again to open settings."
+            ? L("settings.advanced.menuBarSubtitle.visible")
+            : L("settings.advanced.menuBarSubtitle.hidden")
     }
 
     @objc private func toggleShowMenuBarIcon() {
@@ -1145,17 +1146,17 @@ final class UpdatesPaneController: SettingsPaneViewController {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
 
         let subtitle = NSTextField(wrappingLabelWithString:
-            "Version \(version) is currently installed.")
+            L("settings.updates.installedVersion", version))
         subtitle.font                    = .systemFont(ofSize: 11)
         subtitle.textColor               = .secondaryLabelColor
         subtitle.preferredMaxLayoutWidth = 240
 
-        checkButton = NSButton(title: "Check Now\u{2026}", target: self,
+        checkButton = NSButton(title: L("settings.updates.checkNow"), target: self,
                                action: #selector(checkNow))
         checkButton.bezelStyle = .rounded
 
         let group = groupBox([settingsRow(
-            label:    "Check for updates",
+            label:    L("settings.updates.checkForUpdates"),
             control:  checkButton,
             subtitle: subtitle
         )])
@@ -1177,9 +1178,9 @@ final class UpdatesPaneController: SettingsPaneViewController {
                 gMenu?.showUpdateBanner(downloadURL: downloadURL)
 
                 self.presentAlert(
-                    title:   "Update Available",
-                    text:    "A new version of Space Rabbit is available. Download and install it now?",
-                    buttons: ["Install Now", "Later"]
+                    title:   L("update.available.title"),
+                    text:    L("update.available.message"),
+                    buttons: [L("update.install"), L("common.later")]
                 ) { response in
                     if response == .alertFirstButtonReturn {
                         startUpdate(downloadURL: downloadURL)
@@ -1190,18 +1191,18 @@ final class UpdatesPaneController: SettingsPaneViewController {
                 guard let self else { return }
                 self.checkButton.isEnabled = true
                 self.presentAlert(
-                    title:   "You're Up to Date",
-                    text:    "Space Rabbit is already running the latest version.",
-                    buttons: ["OK"]
+                    title:   L("update.upToDate.title"),
+                    text:    L("update.upToDate.message"),
+                    buttons: [L("common.ok")]
                 )
             },
             onError: { [weak self] in
                 guard let self else { return }
                 self.checkButton.isEnabled = true
                 self.presentAlert(
-                    title:   "Could Not Check for Updates",
-                    text:    "Please check your internet connection and try again.",
-                    buttons: ["OK"]
+                    title:   L("update.checkFailed.title"),
+                    text:    L("update.checkFailed.message"),
+                    buttons: [L("common.ok")]
                 )
             }
         )
@@ -1234,9 +1235,7 @@ final class UpdatesPaneController: SettingsPaneViewController {
             icon.heightAnchor.constraint(equalToConstant: 14),
         ])
 
-        let text = NSTextField(wrappingLabelWithString:
-            "Space Rabbit does not update automatically. Updates must be applied manually. "
-          + "However, we will notify you when there is a new update available.")
+        let text = NSTextField(wrappingLabelWithString: L("settings.updates.notice"))
         text.preferredMaxLayoutWidth = 380
         text.font      = .systemFont(ofSize: 11)
         text.textColor = .secondaryLabelColor
@@ -1315,15 +1314,15 @@ final class AboutPaneController: SettingsPaneViewController {
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
 
-        let nameLabel = NSTextField(labelWithString: "Space Rabbit")
+        let nameLabel = NSTextField(labelWithString: L("app.name"))
         nameLabel.font      = .boldSystemFont(ofSize: 15)
         nameLabel.textColor = .labelColor
 
-        let versionLabel = NSTextField(labelWithString: "Version \(version)")
+        let versionLabel = NSTextField(labelWithString: L("common.version", version))
         versionLabel.font      = .systemFont(ofSize: 12)
         versionLabel.textColor = .secondaryLabelColor
 
-        let copyrightLabel = NSTextField(labelWithString: "\u{00A9} 2026 Ya\u{00EB}l Guilloux & Valerian Saliou")
+        let copyrightLabel = NSTextField(labelWithString: L("about.copyright"))
         copyrightLabel.font      = .systemFont(ofSize: 11)
         copyrightLabel.textColor = .tertiaryLabelColor
 

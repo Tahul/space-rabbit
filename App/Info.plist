@@ -5,6 +5,10 @@
 <dict>
     <key>CFBundleIdentifier</key>
     <string>app.spacerabbit</string>
+    <!-- Development language: the .lproj macOS falls back to when it ships no
+         .lproj for the user's preferred language (see App/Resources) -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
     <key>CFBundleName</key>
     <string>Space Rabbit</string>
     <key>CFBundleDisplayName</key>

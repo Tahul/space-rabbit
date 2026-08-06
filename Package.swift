@@ -12,7 +12,10 @@ let package = Package(
         .executableTarget(
             name: "SpaceRabbit",
             path: "App",
-            exclude: ["Info.plist"],
+            // Resources/ holds the .lproj localization tables, which the
+            // Makefile copies into the bundle itself — SPM would otherwise
+            // complain about unhandled resource files
+            exclude: ["Info.plist", "Resources"],
             swiftSettings: [
                 // Match the Makefile's swiftc invocation (Swift 5 language
                 // mode) so the LSP doesn't report Swift 6 strict-concurrency

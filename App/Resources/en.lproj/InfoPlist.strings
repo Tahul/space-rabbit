@@ -1,0 +1,13 @@
+/*
+ * InfoPlist.strings (English) — localized overrides for Info.plist values.
+ *
+ * Keys here are Info.plist keys, read by macOS rather than by our code, so
+ * the validator does not cross-check them against the sources. It does still
+ * require the same key set in every <lang>.lproj.
+ *
+ * CFBundleName / CFBundleDisplayName are deliberately absent: the product
+ * name is the same in every language.
+ */
+
+/* Shown by macOS when Space Rabbit asks for Accessibility access */
+"NSAccessibilityUsageDescription" = "Space Rabbit requires Accessibility access to intercept keyboard shortcuts for instant space switching.";

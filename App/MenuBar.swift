@@ -30,33 +30,6 @@ private let kEnableRowHeight: CGFloat = 28
 /// with the text of regular menu items.
 private let kEnableRowInset: CGFloat = 14
 
-// MARK: - Time Formatting
-
-/// Formats a number of seconds into a human-readable "time saved" string.
-///
-/// Each space switch saves roughly 1 second of animation time, so the
-/// input is treated as both "switch count" and "seconds saved".
-///
-/// - Parameter seconds: Total seconds (= switch count) to format.
-/// - Returns: A compact time string like "42 sec", "3 min", "1 hr 20 min", "2 days 5 hr".
-private func formatTimeSaved(_ seconds: Int) -> String {
-    switch seconds {
-    case ..<60:
-        return "\(seconds) sec"
-    case ..<3600:
-        return "\(seconds / 60) min"
-    case ..<86400:
-        let hours   = seconds / 3600
-        let minutes = (seconds % 3600) / 60
-        return minutes > 0 ? "\(hours) hr \(minutes) min" : "\(hours) hr"
-    default:
-        let days    = seconds / 86400
-        let hours   = (seconds % 86400) / 3600
-        let daysStr = days == 1 ? "\(days) day" : "\(days) days"
-        return hours > 0 ? "\(daysStr) \(hours) hr" : daysStr
-    }
-}
-
 // MARK: - Menu Key Appearance
 
 /// Menu item container view that forces the menu's backing window into its
@@ -144,10 +117,10 @@ final class SwoopMenu: NSObject {
         statusItem.isVisible = defaults.bool(forKey: Defaults.showMenuBarIcon)
 
         // Create the main menu items with keyboard shortcuts
-        instantSwitchItem = NSMenuItem(title: "Instant Space Switch \u{2303}\u{2194}",
+        instantSwitchItem = NSMenuItem(title: L("menu.instantSpaceSwitch"),
                                        action: #selector(toggleInstantSwitch(_:)),
                                        keyEquivalent: "s")
-        autoFollowItem    = NSMenuItem(title: "Instant App Switch \u{2318}\u{21E5}",
+        autoFollowItem    = NSMenuItem(title: L("menu.instantAppSwitch"),
                                        action: #selector(toggleAutoFollow(_:)),
                                        keyEquivalent: "f")
         statsItem         = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -173,7 +146,7 @@ final class SwoopMenu: NSObject {
     /// Builds the header row shown at the very top of the menu: the app name
     /// in bold next to a native switch bound to the master enabled state.
     private func configureEnableSwitchRow() {
-        let label = NSTextField(labelWithString: "Space Rabbit")
+        let label = NSTextField(labelWithString: L("app.name"))
         label.font      = NSFont.systemFont(ofSize: 13, weight: .bold)
         label.textColor = .labelColor
 
@@ -269,20 +242,20 @@ final class SwoopMenu: NSObject {
         statusMenu.addItem(launchWarningSep)
 
         // Feature toggles section
-        statusMenu.addItem(menuHeader("Configure:"))
+        statusMenu.addItem(menuHeader(L("menu.section.configure")))
         statusMenu.addItem(instantSwitchItem)
         statusMenu.addItem(autoFollowItem)
         statusMenu.addItem(.separator())
 
         // Statistics section
-        statusMenu.addItem(menuHeader("Statistics:"))
+        statusMenu.addItem(menuHeader(L("menu.section.statistics")))
         statusMenu.addItem(statsItem)
         statusMenu.addItem(.separator())
 
         // Footer: version, preferences, quit
-        statusMenu.addItem(greyLabel("Version \(version)"))
+        statusMenu.addItem(greyLabel(L("common.version", version)))
 
-        let settings = NSMenuItem(title: "Preferences\u{2026}",
+        let settings = NSMenuItem(title: L("menu.preferences"),
                                   action: #selector(openSettings),
                                   keyEquivalent: ",")
         settings.target = self
@@ -294,7 +267,7 @@ final class SwoopMenu: NSObject {
         statusMenu.addItem(settings)
         statusMenu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "Quit Space Rabbit",
+        let quit = NSMenuItem(title: L("menu.quit"),
                               action: #selector(NSApplication.terminate(_:)),
                               keyEquivalent: "q")
         if let img = NSImage(systemSymbolName: "xmark.rectangle",
@@ -358,7 +331,7 @@ final class SwoopMenu: NSObject {
     /// to 25% opacity to visually indicate the inactive state.
     private func updateMenuBarIcon() {
         if let img = NSImage(systemSymbolName: "hare.fill",
-                             accessibilityDescription: "Space Rabbit") {
+                             accessibilityDescription: L("app.name")) {
             img.isTemplate = true
             statusItem.button?.image = img
         }
@@ -498,7 +471,7 @@ final class SwoopMenu: NSObject {
 
         if notEnabled {
             launchWarningItem.attributedTitle = bannerTitle(
-                "Not Auto-Launching", action: "Click to Fix",
+                L("menu.banner.notAutoLaunching"), action: L("menu.banner.clickToFix"),
                 color: .systemOrange, weight: .medium
             )
             launchWarningItem.image = tintedSymbol(
@@ -520,7 +493,7 @@ final class SwoopMenu: NSObject {
 
         // Only the "Update Available" part is emphasized; the call to action stays regular
         updateAvailableItem.attributedTitle = bannerTitle(
-            "Update Available", action: "Click to Install",
+            L("update.available.title"), action: L("menu.banner.clickToInstall"),
             color: .labelColor, weight: .semibold
         )
         updateAvailableItem.image    = tintedSymbol("arrow.down.circle.fill", color: .systemBlue)
@@ -559,13 +532,19 @@ final class SwoopMenu: NSObject {
 
     // MARK: - Statistics
 
-    /// Updates the stats menu item with the current switch count and estimated time saved.
+    /// Updates the stats menu item with the current switch count and estimated
+    /// time saved (each space switch saves roughly one second of animation,
+    /// so the count doubles as a number of seconds).
     private func updateStatsDisplay() {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         let countStr = formatter.string(from: NSNumber(value: gSwitchCount)) ?? "\(gSwitchCount)"
-        let switchesStr = gSwitchCount == 1 ? "switch" : "switches"
-        statsItem.title = "\(countStr) \(switchesStr)  \u{00B7}  \(formatTimeSaved(gSwitchCount)) saved"
+
+        // The count is passed twice: once to pick the plural form, once
+        // pre-formatted with the locale's grouping separator for display
+        let switchesStr = L("stats.switches", gSwitchCount, countStr)
+
+        statsItem.title = L("menu.stats.line", switchesStr, localizedDuration(gSwitchCount))
     }
 
     /// Increments the switch counter and refreshes the stats display.

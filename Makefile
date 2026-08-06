@@ -20,6 +20,13 @@ Q_BUNDLE   = "$(APP_BUNDLE)"
 Q_DMG      = "$(DMG_NAME)"
 ICNS       = Tools/Icon/AppIcon.icns
 
+# Localization tables, one <lang>.lproj per supported language. English is the
+# development language and defines the reference key set; every other language
+# must declare exactly the same keys or `make build` fails.
+LPROJ_DIR  = App/Resources
+LPROJS     = $(wildcard $(LPROJ_DIR)/*.lproj)
+LPROJ_SRCS = $(wildcard $(LPROJ_DIR)/*.lproj/*)
+
 # DMG window layout — must stay in sync with Tools/Dmg/CreateBackground.swift
 DMG_BACKGROUND ?= Tools/Dmg/Background.tiff
 # Custom installer artwork: drop a 1400x920 px PNG here and `make assets`
@@ -44,9 +51,10 @@ APPLE_APP_PASSWORD ?=
 
 VERSION   ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
-.PHONY: build assets app app-dev dmg notarize release clean verify-macos-min
+.PHONY: build assets app app-dev dmg notarize release clean \
+        verify-macos-min verify-localizations
 
-build: $(BIN) verify-macos-min
+build: $(BIN) verify-macos-min verify-localizations
 
 $(BIN): $(SRCS) Makefile
 	$(SWIFTC) $(SWIFTFLAGS) -target $(SWIFT_TARGET) -o $@ $(SRCS) $(LDFLAGS)
@@ -71,6 +79,12 @@ verify-macos-min: $(BIN)
 	  exit 1; \
 	fi
 
+# Fails the build on any localization gap: a key used by the code but not
+# declared, a declared key nobody uses, a key missing from one language, or a
+# translation whose format specifiers do not match English
+verify-localizations: $(LPROJ_SRCS) $(SRCS) Tools/Localization/Validate.swift
+	@swift Tools/Localization/Validate.swift $(LPROJ_DIR) App
+
 assets: $(ICNS) $(DMG_BACKGROUND)
 
 app: build $(ICNS)
@@ -80,6 +94,9 @@ app: build $(ICNS)
 	@mkdir -p $(Q_BUNDLE)/Contents/Resources
 	@cp $(BIN) $(Q_BUNDLE)/Contents/MacOS/$(BIN)
 	@cp $(ICNS) $(Q_BUNDLE)/Contents/Resources/AppIcon.icns
+	@# The .lproj directories must land in Resources before signing, so the
+	@# code signature seals them
+	@cp -R $(LPROJS) $(Q_BUNDLE)/Contents/Resources/
 	@sed 's/__VERSION__/$(VERSION)/g;s/__MACOS_MIN__/$(MACOS_MIN)/g' App/Info.plist > $(Q_BUNDLE)/Contents/Info.plist
 	@sign_id="$(SIGN_ID)"; \
 	if [ -z "$$sign_id" ]; then \

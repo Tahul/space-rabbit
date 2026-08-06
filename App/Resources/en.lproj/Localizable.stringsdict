@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Localizable.stringsdict (English) — plural-sensitive strings.
+
+  Keys live here instead of Localizable.strings when their wording depends on
+  a count. English needs two forms (one/other); other languages need more
+  (Polish: one/few/many/other, Arabic: zero/one/two/few/many/other). Supply
+  exactly the categories your language's plural rules define — the validator
+  compares the KEYS across languages, never the categories.
+
+  Every entry takes two arguments:
+    %1$…  the raw count, which selects the plural category
+    %2$@  that same count already formatted for the locale ("1,204"), which
+          is what gets displayed
+-->
+<plist version="1.0">
+<dict>
+    <key>stats.switches</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@switches@</string>
+        <key>switches</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>d</string>
+            <key>one</key>
+            <string>%2$@ switch</string>
+            <key>other</key>
+            <string>%2$@ switches</string>
+        </dict>
+    </dict>
+</dict>
+</plist>

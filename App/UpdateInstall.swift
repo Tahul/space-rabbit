@@ -90,11 +90,11 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
             backing:     .buffered,
             defer:       false
         )
-        window.title = "Space Rabbit Update"
+        window.title = L("update.window.title")
         window.isReleasedWhenClosed      = false
         window.isMovableByWindowBackground = true
 
-        statusLabel = NSTextField(labelWithString: "Preparing download…")
+        statusLabel = NSTextField(labelWithString: L("update.preparing"))
         statusLabel.font = .systemFont(ofSize: 13)
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -104,7 +104,7 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
         progressBar.translatesAutoresizingMaskIntoConstraints = false
 
         // Escape key dismisses the window (standard macOS convention)
-        cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+        cancelButton = NSButton(title: L("common.cancel"), target: nil, action: nil)
         cancelButton.keyEquivalent = "\u{1b}"
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
 
@@ -162,7 +162,7 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
         downloadTask = nil
 
         // Reset UI to initial downloading state
-        statusLabel.stringValue     = "Downloading update…"
+        statusLabel.stringValue     = L("update.downloading")
         progressBar.isIndeterminate = true
         progressBar.startAnimation(nil)
         cancelButton.isEnabled      = true
@@ -296,7 +296,7 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
                 return
             }
             self.isInstalling                = true
-            self.statusLabel.stringValue     = "Installing…"
+            self.statusLabel.stringValue     = L("update.installing")
             self.progressBar.isIndeterminate = true
             self.progressBar.startAnimation(nil)
             self.cancelButton.isEnabled      = false
@@ -493,10 +493,10 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
         window.close()
 
         let alert = NSAlert()
-        alert.messageText      = "Update installed"
-        alert.informativeText  = "Restart Space Rabbit to start using the new version."
-        alert.addButton(withTitle: "Restart Now")
-        alert.addButton(withTitle: "Later")
+        alert.messageText      = L("update.installed.title")
+        alert.informativeText  = L("update.installed.message")
+        alert.addButton(withTitle: L("update.restartNow"))
+        alert.addButton(withTitle: L("common.later"))
 
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -529,10 +529,10 @@ final class UpdaterWindowController: NSObject, NSWindowDelegate, URLSessionDownl
             self.window.close()
 
             let alert = NSAlert()
-            alert.messageText     = "Could not update Space Rabbit"
-            alert.informativeText = "Something went wrong while downloading or installing the update."
-            alert.addButton(withTitle: "Try Again")
-            alert.addButton(withTitle: "Cancel")
+            alert.messageText     = L("update.failed.title")
+            alert.informativeText = L("update.failed.message")
+            alert.addButton(withTitle: L("common.tryAgain"))
+            alert.addButton(withTitle: L("common.cancel"))
 
             NSApp.activate(ignoringOtherApps: true)
             if alert.runModal() == .alertFirstButtonReturn, let url = self.currentURL {
