@@ -598,6 +598,28 @@ transliterated but not translated.
 Plural *categories* are intentionally not compared across languages — each
 language declares the ones its rules define.
 
+## Changelog format
+
+When asked to generate a changelog (typically between two git tags), follow these rules exactly:
+
+- **Do not wrap lines.** No 80-column padding, no manual line breaks inside an entry — one entry is one long line.
+- **Section titles are always `###` (H3).**
+- **List items always use `-`**, never `*`.
+- **Section wording is one of:** `Added`, `Fixed`, `Changed`, `Miscellaneous`, `Breaking`. Nothing else.
+- **Every entry is `**Subject**: explanation`** — the subject in bold, followed by a colon and the explanation.
+- **Always credit the author**, with the PR/issue as a short `#ID` link and the `@author` handle, in parentheses at the end of the entry.
+- **Keep it short and non-technical.** The audience is end users, not developers. One or two sentences per entry, describing what they will notice — not the internals. No mention of event taps, gesture phases, private APIs, timing windows, globals or file names. If an entry needs a paragraph to explain, it is being written for the wrong reader.
+
+Example:
+
+```markdown
+### Fixed
+
+- **Trackpad swipes**: swiping between spaces could jump two spaces at once or go the wrong way. ([#23](https://github.com/Tahul/space-rabbit/issues/23), [#22](https://github.com/Tahul/space-rabbit/pull/22), thanks @srajangarg and @valeriansaliou)
+```
+
+Source the entries from `git log <tagA>..<tagB>`, folding a fix and its own follow-up correction into a single entry rather than narrating the intermediate state. A `chore:` commit that changes user-visible strings belongs under `Changed`, not `Miscellaneous`.
+
 ## Build system
 
 Everything goes through the `Makefile`. No Xcode project.
