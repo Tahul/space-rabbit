@@ -32,7 +32,7 @@ Exact initialization order — getting this wrong causes subtle bugs:
 3. **Accessibility check** — `AXIsProcessTrustedWithOptions` with prompt; exits if denied
 4. `loadSpaceSwitchShortcuts()` — reads keycodes/modifiers from system prefs into `gKeyLeft`/`gKeyRight`/`gModMask`
 5. `gMenu = SwoopMenu()` — creates status item (hidden via `statusItem.isVisible` if so configured), loads persisted state from UserDefaults into globals
-6. Delayed `checkForUpdates()` — 5 seconds after launch (background network request)
+6. `checkForUpdatesAutomatically()` — owns its own 5-second delay, and applies it only when it is actually going to make a network request (a throttled launch restores the update banner from UserDefaults immediately). Must run after step 5, which creates `gMenu`, the banner's host
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
 8. **Event tap creation** — `CGEvent.tapCreate` → `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
 9. **Swipe-intercept tap** — `updateSwipeTap()` installs the Feature 3 tap if the persisted toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
@@ -300,7 +300,10 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 ### UserDefaults keys (`Defaults` enum)
 
-`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`.
+`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`,
+`spacerabbit.lastUpdateCheck`, `spacerabbit.pendingUpdateVersion`,
+`spacerabbit.pendingUpdateURL` (the last three belong to the update throttle — see
+"Update flow"; none has a `g` global, they are read and written where they are used).
 
 Menu bar icon visibility has no `g` global: the live truth is `statusItem.isVisible` (`SwoopMenu.isMenuBarIconVisible`), persisted through `setMenuBarIconVisible(_:)`.
 
@@ -325,6 +328,8 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |
+| `kUpdateCheckInterval` | UpdateCheck | `3600` (TimeInterval) | Minimum gap between two *automatic* update checks; a launch inside the window reads the remembered release instead of the network |
+| `kUpdateCheckLaunchDelay` | UpdateCheck | `5` (TimeInterval) | Settle time before the automatic check hits the network — skipped entirely on the cached path |
 | `kMenuIconSize` | MenuBar | `16` (CGFloat) | Tinted SF Symbol size in menu items |
 | `kDisabledIconAlpha` | MenuBar | `0.25` (CGFloat) | Menu bar icon opacity when disabled |
 | `kEnableRowHeight` / `kEnableRowInset` | MenuBar | `36` / `14` (CGFloat) | Sizing for the header row hosting the master enable switch |
@@ -338,10 +343,27 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 ### Version checking
 
 Two entry points in `UpdateCheck.swift`:
-- **Automatic** (`checkForUpdates()`): fires 5 s after launch, silently shows the menu bar banner if a newer release exists.
-- **Manual** (`checkForUpdatesManually()`): triggered from the "Check Now…" button in the settings window's Updates pane, reports results via callbacks so the caller can show dialogs.
+- **Automatic** (`checkForUpdatesAutomatically()`): called at launch, silently shows the menu bar banner if a newer release exists. **Throttled to one network check per hour** (`kUpdateCheckInterval`, stamped into `Defaults.lastUpdateCheck` by *both* entry points) — the app is quit and relaunched freely, and that must not turn into a burst of API requests.
+- **Manual** (`checkForUpdatesManually()`): triggered from the "Check Now…" button in the settings window's Updates pane, reports results via callbacks so the caller can show dialogs. Never throttled, and it also passes `.reloadIgnoringLocalCacheData` — the GitHub API sends `Cache-Control: max-age=60`, so `URLSession`'s default policy would otherwise answer a user-requested check from the URL cache. The automatic path keeps the default policy, where the hour throttle makes the URL cache unreachable anyway.
 
 Both hit `GET /repos/Tahul/space-rabbit/releases/latest` on the GitHub API, extract the `tag_name` and the first `.dmg` asset URL, and compare against `CFBundleShortVersionString`.
+
+**Throttled launches still show the banner.** Every fetch caches its outcome:
+a newer release is remembered in `Defaults.pendingUpdateVersion` +
+`pendingUpdateURL`, and an up-to-date answer clears both. A launch that skips
+the network restores the banner from that record, so an update stays visible
+across relaunches instead of disappearing until the hour is up.
+`pendingUpdateDownloadURL()` re-compares the stored tag against the running
+version and self-clears when it is no longer newer — otherwise the record left
+behind by an update the user has since installed would raise a banner for a
+version already in place.
+
+The `kUpdateCheckLaunchDelay` (5 s) courtesy delay lives *inside*
+`checkForUpdatesAutomatically()` and wraps only the network path. The cached
+path just reads UserDefaults, so it runs synchronously — delaying it would make
+the banner appear late for no benefit. `main.swift` therefore calls
+`checkForUpdatesAutomatically()` directly rather than wrapping it in its own
+`asyncAfter`.
 
 ### Download and installation
 
@@ -400,7 +422,7 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        │    while the app is inactive, WITHOUT stealing focus (never call
        │    NSApp.activate when opening the menu — it deactivates the
        │    frontmost app). Same technique Klack uses.
-       ├─ Update-available banner (hidden by default, shown by checkForUpdates)
+       ├─ Update-available banner (hidden by default, shown by checkForUpdatesAutomatically)
        ├─ Launch-at-login warning banner (hidden when SMAppService.mainApp.status == .enabled)
        ├─ "Configure:" section header
        ├─ Instant space switch toggle (checkmark, shortcut: S)

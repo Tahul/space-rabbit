@@ -4,15 +4,19 @@
  * Checks the GitHub Releases API for a newer version of Space Rabbit.
  *
  * Two entry points:
- *   - checkForUpdates()         — called once at launch (5 s delay), silently
- *                                 shows the tray banner when a newer DMG exists.
- *                                 Throttled: stands down when a check already
- *                                 ran less than an hour ago, so relaunching the
- *                                 app repeatedly does not hammer the API.
- *   - checkForUpdatesManually() — called from "Check Now…" in the settings
- *                                 window's Updates pane, reports the result via
- *                                 callbacks so the caller can show dialogs and
- *                                 drive the install flow.
+ *   - checkForUpdatesAutomatically() — called once at launch, silently shows the
+ *                                     tray banner when a newer DMG exists.
+ *                                     Throttled: when a check already ran less
+ *                                     than an hour ago it skips the network
+ *                                     entirely and restores the banner from the
+ *                                     remembered release, so relaunching the app
+ *                                     does not hammer the API. Only the network
+ *                                     path is delayed — the cached one runs
+ *                                     synchronously.
+ *   - checkForUpdatesManually()      — called from "Check Now…" in the settings
+ *                                     window's Updates pane, reports the result
+ *                                     via callbacks so the caller can show
+ *                                     dialogs and drive the install flow.
  */
 
 import Foundation
@@ -28,6 +32,14 @@ private let kReleasesURL = "https://api.github.com/repos/Tahul/space-rabbit/rele
 ///
 /// Manual checks from the Updates pane are never throttled.
 private let kUpdateCheckInterval: TimeInterval = 3600
+
+/// How long after launch the automatic check waits before hitting the network,
+/// giving the app time to settle first.
+///
+/// Applies **only** when a request is actually going to be made: a throttled
+/// launch reads the remembered release instead, which costs nothing and so has
+/// no reason to make the user wait for the banner.
+private let kUpdateCheckLaunchDelay: TimeInterval = 5
 
 /// Records "now" as the moment of the last update check.
 private func stampUpdateCheck() {
@@ -175,14 +187,19 @@ private func fetchRelease(bypassHTTPCache: Bool = false,
 /// Fetches the latest GitHub release and, if a newer DMG exists, shows the
 /// update banner in the menu bar dropdown.
 ///
-/// Runs once, 5 seconds after launch, on a background URLSession thread.
-/// The UI update is dispatched back to the main thread.
+/// Called once at launch, from the main thread.
 ///
 /// Skips the network request when a check (automatic or manual) already ran
 /// less than `kUpdateCheckInterval` ago — quitting and relaunching the app is
 /// cheap and must not turn into a burst of API requests. The banner still
 /// shows in that case, from the release remembered by the last real check.
-func checkForUpdates() {
+///
+/// That cached path shows the banner **immediately**: it only reads
+/// UserDefaults, so the `kUpdateCheckLaunchDelay` courtesy delay would serve no
+/// purpose other than making the banner appear late. The network path keeps the
+/// delay and runs on a background URLSession thread, dispatching its UI update
+/// back to the main thread.
+func checkForUpdatesAutomatically() {
     guard isAutomaticCheckDue() else {
         if let downloadURL = pendingUpdateDownloadURL() {
             gMenu?.showUpdateBanner(downloadURL: downloadURL)
@@ -190,11 +207,13 @@ func checkForUpdates() {
         return
     }
 
-    stampUpdateCheck()
+    DispatchQueue.main.asyncAfter(deadline: .now() + kUpdateCheckLaunchDelay) {
+        stampUpdateCheck()
 
-    fetchRelease { result in
-        guard case .newer(_, let downloadURL) = result else { return }
-        DispatchQueue.main.async { gMenu?.showUpdateBanner(downloadURL: downloadURL) }
+        fetchRelease { result in
+            guard case .newer(_, let downloadURL) = result else { return }
+            DispatchQueue.main.async { gMenu?.showUpdateBanner(downloadURL: downloadURL) }
+        }
     }
 }
 

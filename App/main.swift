@@ -97,12 +97,14 @@ loadSpaceSwitchShortcuts()
 // (switch count, feature toggles, etc.) from UserDefaults
 gMenu = SwoopMenu()
 
-// Check for updates 5 seconds after launch, giving the app time to
-// settle before making a network request. Launch-only by design: no
-// periodic background re-check (a manual check lives in the settings
-// window's Updates pane). Throttled to at most one check per hour, so
-// a quick quit-and-relaunch cycle does not re-hit the API each time.
-DispatchQueue.main.asyncAfter(deadline: .now() + 5) { checkForUpdates() }
+// Check for updates. Launch-only by design: no periodic background
+// re-check (a manual check lives in the settings window's Updates pane).
+// Throttled to at most one network check per hour, so a quick
+// quit-and-relaunch cycle does not re-hit the API each time — a throttled
+// launch instead restores the banner from the remembered release.
+// The function owns its own launch delay, and applies it only when it is
+// actually going to make a request.
+checkForUpdatesAutomatically()
 
 // Persist the switch count to disk every 5 minutes.
 // This batching reduces disk I/O compared to writing on every switch.
