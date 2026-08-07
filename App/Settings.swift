@@ -852,6 +852,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
     private var instantSwitchControl:    NSSwitch!
     private var autoFollowControl:       NSSwitch!
     private var trackpadSwipeControl:    NSSwitch!
+    private var invertSwipeControl:      NSSwitch!
     private var speedSlider:             NSSlider!
     private var speedValueLabel:         NSTextField!
     private var speedBoltIcon:           NSImageView!
@@ -860,6 +861,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
         instantSwitchControl    = makeSwitch(gInstantSwitchEnabled,    #selector(toggleInstantSwitch))
         autoFollowControl       = makeSwitch(gAutoFollowEnabled,       #selector(toggleAutoFollow))
         trackpadSwipeControl    = makeSwitch(gTrackpadSwipeEnabled,    #selector(toggleTrackpadSwipe))
+        invertSwipeControl      = makeSwitch(gSwipeDirectionInverted,  #selector(toggleInvertSwipe))
 
         let togglesGroup = groupBox([
             settingsRow(label: L("settings.features.instantSpaceSwitch"),
@@ -870,6 +872,9 @@ final class FeaturesPaneController: SettingsPaneViewController {
             rowDivider(),
             settingsRow(label: L("settings.features.instantTrackpadSwipe"),
                         control: trackpadSwipeControl),
+            rowDivider(),
+            settingsRow(label: L("settings.features.invertSwipeDirection"),
+                        control: invertSwipeControl),
         ])
         let speedGroup = groupBox([
             settingsRow(label: L("settings.features.transitionSpeed"),
@@ -884,8 +889,17 @@ final class FeaturesPaneController: SettingsPaneViewController {
         instantSwitchControl.state    = gInstantSwitchEnabled    ? .on : .off
         autoFollowControl.state       = gAutoFollowEnabled       ? .on : .off
         trackpadSwipeControl.state    = gTrackpadSwipeEnabled    ? .on : .off
+        invertSwipeControl.state      = gSwipeDirectionInverted  ? .on : .off
         speedSlider.doubleValue       = gSwitchSpeed
         updateSpeedDisplay()
+        updateInvertSwipeAvailability()
+    }
+
+    /// The invert toggle only has an effect while Space Rabbit is the one
+    /// handling swipes — dim it when the trackpad feature is off so it does
+    /// not read as a setting that changes macOS's own swipe direction.
+    private func updateInvertSwipeAvailability() {
+        invertSwipeControl.isEnabled = gTrackpadSwipeEnabled
     }
 
     /// Builds the transition-speed control: a 5-tick slider with a trailing
@@ -1027,7 +1041,13 @@ final class FeaturesPaneController: SettingsPaneViewController {
         gTrackpadSwipeEnabled = trackpadSwipeControl.state == .on
         UserDefaults.standard.set(gTrackpadSwipeEnabled, forKey: Defaults.trackpadSwipe)
         updateSwipeTap()
+        updateInvertSwipeAvailability()
         gMenu?.syncMenuItems()
+    }
+
+    @objc private func toggleInvertSwipe() {
+        gSwipeDirectionInverted = invertSwipeControl.state == .on
+        UserDefaults.standard.set(gSwipeDirectionInverted, forKey: Defaults.invertSwipe)
     }
 
     @objc private func speedChanged() {

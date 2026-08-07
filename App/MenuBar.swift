@@ -100,6 +100,7 @@ final class SwoopMenu: NSObject {
             Defaults.instantSwitch:    true,
             Defaults.autoFollow:       true,
             Defaults.trackpadSwipe:    false,  // opt-in — swallows a real gesture
+            Defaults.invertSwipe:      false,  // follow the system convention
             Defaults.switchSpeed:      1.0,
             Defaults.switchCount:      0,
             Defaults.showMenuBarIcon:  true,
@@ -111,6 +112,7 @@ final class SwoopMenu: NSObject {
         gInstantSwitchEnabled    = defaults.bool(forKey: Defaults.instantSwitch)
         gAutoFollowEnabled       = defaults.bool(forKey: Defaults.autoFollow)
         gTrackpadSwipeEnabled    = defaults.bool(forKey: Defaults.trackpadSwipe)
+        gSwipeDirectionInverted  = defaults.bool(forKey: Defaults.invertSwipe)
         gSwitchSpeed             = defaults.double(forKey: Defaults.switchSpeed)
         gSwitchCount             = defaults.integer(forKey: Defaults.switchCount)
         gSwitchCountSaved        = gSwitchCount

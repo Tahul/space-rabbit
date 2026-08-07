@@ -50,6 +50,18 @@ var gAutoFollowEnabled: Bool = true
 /// purely additive features above. Only effective when `gEnabled` is `true`.
 var gTrackpadSwipeEnabled: Bool = false
 
+/// Whether an intercepted trackpad swipe moves to the space *opposite* the
+/// one it normally would. Only consulted by Feature 3 — the keyboard and
+/// auto-follow paths derive their direction from the target space, not from
+/// a gesture, so there is nothing to invert there.
+///
+/// This is a user preference, not a compatibility shim: the built-in mapping
+/// (see `isRightSwipe`) already tracks macOS's per-release sign convention
+/// and the natural-scrolling setting. It exists for people who simply want
+/// the reverse of the system behavior — and as an escape hatch should a
+/// future macOS flip the sign again before Space Rabbit is updated.
+var gSwipeDirectionInverted: Bool = false
+
 /// Space-switch transition speed as a slider tick position (0.0–1.0 in
 /// steps of 0.25). 1.0 (the end cap) means instant — no animation at all.
 /// 0.0 ("Normal") means macOS's native animation: Space Rabbit posts no
@@ -156,6 +168,8 @@ enum Defaults {
     /// purpose — the feature was renamed to "Instant Trackpad Swipe", and
     /// renaming the key would silently reset the opt-in for existing users.
     static let trackpadSwipe    = "spacerabbit.threeFingerSwipe"
+    /// Reverses the direction an intercepted trackpad swipe moves in.
+    static let invertSwipe      = "spacerabbit.invertSwipeDirection"
     static let switchSpeed      = "spacerabbit.switchSpeed"
     static let switchCount      = "spacerabbit.switchCount"
     /// When `false`, the rabbit icon is removed from the menu bar.

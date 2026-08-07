@@ -89,6 +89,7 @@
 "settings.features.instantSpaceSwitch" = "Mudança de espaço instantânea";
 "settings.features.instantAppSwitch" = "Mudança de app instantânea";
 "settings.features.instantTrackpadSwipe" = "Deslize instantâneo no trackpad";
+"settings.features.invertSwipeDirection" = "Inverter a direção do deslize";
 "settings.features.transitionSpeed" = "Velocidade da transição";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

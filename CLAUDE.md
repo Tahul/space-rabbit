@@ -109,6 +109,15 @@ both modes and any correction on top of it double-flips the result. Measured on 
 move right — the same rule as ON. A direction complaint is far more likely to be the
 synthetic-echo bug below than a scrolling-preference bug.
 
+**"Invert swipe direction"** (`gSwipeDirectionInverted`, off by default) flips the
+result of `isRightSwipe` *after* the release table above has been applied — a user
+preference for people who want the opposite of the system behavior, and an escape
+hatch if a future macOS flips the sign again before Space Rabbit is updated. It is
+deliberately Feature 3-only: the keyboard and auto-follow paths derive their direction
+from a target space, not from a gesture sign, so there is nothing to invert there. Do
+**not** reach for it when diagnosing a direction bug — a wrong default direction is a
+bug in the table above (or the synthetic-echo bug below), not a missing preference.
+
 **Synthetic-event marker (`kSyntheticGestureMarker`)** — Space Rabbit's own synthetic
 gestures post into the same session tap and would loop right back into this tap.
 Every posting path in `SpaceSwitching.swift` calls `markSyntheticGesture(_:)` on each
@@ -287,6 +296,7 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | `gInstantSwitchEnabled` | `Bool` | Feature 1 toggle |
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
 | `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
+| `gSwipeDirectionInverted` | `Bool` | Reverses the direction of an intercepted swipe (Feature 3 only, default **false**) |
 | `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`). Stamped by Features 1/3 and by non-auto-follow space changes |
@@ -300,7 +310,7 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 ### UserDefaults keys (`Defaults` enum)
 
-`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`,
+`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.invertSwipeDirection`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`,
 `spacerabbit.lastUpdateCheck`, `spacerabbit.pendingUpdateVersion`,
 `spacerabbit.pendingUpdateURL` (the last three belong to the update throttle — see
 "Update flow"; none has a `g` global, they are read and written where they are used).
@@ -447,9 +457,11 @@ SettingsWindowController (singleton, NSWindowDelegate)
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
        │    + Launch at Login (SMAppService)
        ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow +
-       │    Instant trackpad swipe toggles, then Transition speed slider on its
-       │    own (5 ticks, snapping: Normal = native macOS animation / Fast /
-       │    Faster / Fastest / right end cap = "Instant", the default)
+       │    Instant trackpad swipe + Invert swipe direction toggles (the last
+       │    dimmed while trackpad swipe is off — it has no effect then), then
+       │    Transition speed slider on its own (5 ticks, snapping: Normal =
+       │    native macOS animation / Fast / Faster / Fastest / right end cap =
+       │    "Instant", the default)
        ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
        │    autohide-time-modifier, killall Dock) + Show menu bar icon toggle
        │    (statusItem.isVisible; when hidden, relaunching the app reopens

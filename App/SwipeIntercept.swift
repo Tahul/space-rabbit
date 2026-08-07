@@ -275,12 +275,18 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 /// it — measured on macOS 26, natural scrolling OFF: a left-to-right swipe
 /// reports progress +0.045 and must move right, same rule as ON.
 ///
+/// The user's "Invert swipe direction" preference is applied last, on top of
+/// the resolved system convention (`gSwipeDirectionInverted`).
+///
 /// - Parameter sign: A non-zero swipe progress or X velocity sample.
 /// - Returns: `true` when the swipe targets the next space to the right.
 private func isRightSwipe(_ sign: Double) -> Bool {
-    if requiresEventAugmentation() { return sign < 0 }
-    if kSwipeDirectionReversed     { return sign > 0 }
-    return sign < 0
+    let isRight: Bool
+    if requiresEventAugmentation()  { isRight = sign < 0 }
+    else if kSwipeDirectionReversed { isRight = sign > 0 }
+    else                            { isRight = sign < 0 }
+
+    return gSwipeDirectionInverted ? !isRight : isRight
 }
 
 /// Fires the instant switch replacing an intercepted swipe, mirroring the

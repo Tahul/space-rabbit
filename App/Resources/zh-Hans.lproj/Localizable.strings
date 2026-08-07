@@ -91,6 +91,7 @@
 "settings.features.instantSpaceSwitch" = "即时切换空间";
 "settings.features.instantAppSwitch" = "即时切换应用";
 "settings.features.instantTrackpadSwipe" = "即时触控板轻扫";
+"settings.features.invertSwipeDirection" = "反转轻扫方向";
 "settings.features.transitionSpeed" = "过渡速度";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

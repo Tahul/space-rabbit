@@ -91,6 +91,7 @@
 "settings.features.instantSpaceSwitch" = "Мгновенное переключение столов";
 "settings.features.instantAppSwitch" = "Мгновенное переключение приложений";
 "settings.features.instantTrackpadSwipe" = "Мгновенное смахивание на трекпаде";
+"settings.features.invertSwipeDirection" = "Инвертировать направление смахивания";
 "settings.features.transitionSpeed" = "Скорость перехода";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own
