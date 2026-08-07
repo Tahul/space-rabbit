@@ -815,13 +815,13 @@ private func postAugmentedSwitchGesture(isRight: Bool, velocity: Double) -> Bool
                                                      velocity: magnitude)
         else { return false }
 
-        // Mark before augmenting: augmentDockSwipeEvent flattens and rebuilds
-        // the event, so the stamp has to be part of what gets flattened.
-        markSyntheticGesture(dockEvent)
-
         guard let augmented    = augmentDockSwipeEvent(dockEvent),
               let gestureEvent = CGEvent(source: nil)
         else { return false }
+
+        // CGEventCreateFromData does not preserve eventSourceUserData, so
+        // stamp the rebuilt event before posting it through the swipe tap.
+        markSyntheticGesture(augmented)
 
         // The companion gesture envelope needs no augmentation
         gestureEvent.setIntegerValueField(kCGSEventTypeField, value: kCGSEventGesture)
