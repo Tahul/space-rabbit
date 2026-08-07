@@ -84,13 +84,6 @@ var gSwipeTracking: Bool = false
 /// (fires once per gesture, on the first Changed with non-zero progress).
 var gSwipeFired: Bool = false
 
-/// Number of upcoming gesture/dock-control events that were posted by
-/// Space Rabbit itself and must pass through the swipe-intercept tap
-/// untouched. Incremented when posting synthetic gestures (see
-/// `markSyntheticGesturePosted`), decremented as they arrive at the tap.
-/// Without this, our own DockSwipe events would be re-intercepted.
-var gSwipePassthroughCount: Int = 0
-
 // MARK: - Statistics
 
 /// Lifetime count of space switches performed by Space Rabbit.

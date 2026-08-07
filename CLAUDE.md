@@ -94,13 +94,27 @@ types and intercepts the *real* horizontal 3-finger (or 4-finger) trackpad swipe
 convention): right-space iff sign `< 0` on macOS ≤ 25 and 27+ (augmented check first),
 but `> 0` on macOS 26, which inverted the reported sign (`kSwipeDirectionReversed`,
 evaluated at runtime — iss does this at build time via `ISS_SWIPE_DIRECTION_REVERSED`).
+**"Natural scrolling" needs no handling** and reading
+`com.apple.swipescrolldirection` is a trap (PR #22, reverted): the window server
+already flips the reported sign when the setting is off, so the table above holds in
+both modes and any correction on top of it double-flips the result. Measured on macOS
+26 with natural scrolling OFF: a left-to-right swipe reports progress `+0.045` and must
+move right — the same rule as ON. A direction complaint is far more likely to be the
+synthetic-echo bug below than a scrolling-preference bug.
 
-**Passthrough counter (`gSwipePassthroughCount`)** — Space Rabbit's own synthetic
+**Synthetic-event marker (`kSyntheticGestureMarker`)** — Space Rabbit's own synthetic
 gestures post into the same session tap and would loop right back into this tap.
-Every posting path calls `markSyntheticGesturePosted()` (2 events per pair) right
-before posting; the swipe tap decrements and waves those events through. The counter
-only increments while the tap is installed, and is reset with the rest of the
-tracking state (`resetSwipeIntercept()`) whenever the tap's continuity breaks.
+Every posting path in `SpaceSwitching.swift` calls `markSyntheticGesture(_:)` on each
+event before posting, stamping `.eventSourceUserData`; the swipe tap checks that field
+first and waves those events straight through. On the macOS 27+ path the stamp must be
+applied **before** `augmentDockSwipeEvent` flattens and rebuilds the event.
+
+Do **not** go back to counting pending synthetic events (`gSwipePassthroughCount`, the
+joshuarli/iss technique, removed): the real gesture's own Changed samples carry the
+same event subtypes the counter keyed on, so they drained the budget before our
+synthetic events arrived. The leftover synthetic Ended was then read as a real swipe
+and fired a second switch from its `±kInstantSwitchVelocity` sign — a cascade that
+looks exactly like a direction bug.
 
 **Tap lifecycle** — unlike the keyboard tap (installed once at startup), this tap is
 created/torn down on demand by `updateSwipeTap()` so it only exists while
@@ -254,7 +268,6 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
 | `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
 | `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
-| `gSwipePassthroughCount` | `Int` | Synthetic events pre-counted so the swipe tap doesn't re-intercept Space Rabbit's own gestures |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`) |
 | `gSwitchCount` | `Int` | Lifetime switch counter (persisted periodically) |
@@ -284,6 +297,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the Mission Control marker |
 | `kGestureMotionHorizontal` | SwipeIntercept | `1` (Int64) | `kCGEventGestureSwipeMotion` value of a horizontal swipe (vertical swipes pass through) |
 | `kSwipeDirectionReversed` | SwipeIntercept | macOS major ≥ 26 | Real-swipe sign inversion introduced by macOS 26 (27+ short-circuits via the augmentation check first) |
+| `kSyntheticGestureMarker` | SwipeIntercept | `0x53504152` ('SPAR') | Stamped into `.eventSourceUserData` on every gesture Space Rabbit posts, so the swipe tap passes its own events through |
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |

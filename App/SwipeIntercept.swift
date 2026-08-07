@@ -21,11 +21,16 @@
  * swallowed too, so the Dock never sees any half of the real gesture.
  *
  * Because Space Rabbit's own synthetic gestures are posted into the same
- * session tap, they would loop right back into this tap. A passthrough
- * counter (`gSwipePassthroughCount`) is incremented for every synthetic
- * event just before it is posted, and events are waved through while the
- * counter drains (same technique as joshuarli/iss, from which this whole
- * interception scheme is ported).
+ * session tap, they would loop right back into this tap. Every event we
+ * post is stamped with `kSyntheticGestureMarker` in its source user-data
+ * field and waved straight through on the way back in.
+ *
+ * (joshuarli/iss, from which this interception scheme is ported, counts
+ * pending synthetic events instead. That cannot work here: the real
+ * gesture's own Changed samples match the same event subtypes, so they
+ * drain the counter before our synthetic events arrive, and the leftover
+ * synthetic Ended is then read as a real swipe — firing a second switch
+ * from its ±kInstantSwitchVelocity sign.)
  *
  * Unlike the keyboard tap (installed once at startup), this tap is created
  * and torn down on demand: gesture events are high-frequency while fingers
@@ -96,29 +101,44 @@ func updateSwipeTap() {
     }
 }
 
-/// Clears all per-gesture tracking state and the synthetic-event
-/// passthrough counter. Called whenever the tap's continuity breaks
-/// (created, torn down, or re-enabled after a system disable) — stale
-/// state from before the break must not leak into the next gesture.
+/// Clears all per-gesture tracking state. Called whenever the tap's
+/// continuity breaks (created, torn down, or re-enabled after a system
+/// disable) — stale state from before the break must not leak into the
+/// next gesture.
 func resetSwipeIntercept() {
-    gSwipeTracking          = false
-    gSwipeFired             = false
-    gSwipePassthroughCount  = 0
+    gSwipeTracking = false
+    gSwipeFired    = false
 }
 
-/// Pre-counts synthetic gesture events about to be posted, so the
-/// swipe-intercept tap passes them through instead of re-intercepting
-/// them (which would loop: intercept → post → intercept → …).
+// MARK: - Synthetic Event Marking
+
+/// Stamped into `.eventSourceUserData` on every gesture event Space Rabbit
+/// posts, so the swipe tap can recognise its own events on the way back in.
+/// The field is carried by the event record and survives the round trip
+/// through the session tap (including the macOS 27+ flatten/rebuild in
+/// `augmentDockSwipeEvent`, which is applied after the stamp).
+private let kSyntheticGestureMarker: Int64 = 0x5350_4152  // 'SPAR'
+
+/// Marks an event as posted by Space Rabbit, so the swipe-intercept tap
+/// passes it through instead of re-intercepting it (which would loop:
+/// intercept → post → intercept → …).
 ///
-/// Called by the gesture posting code in SpaceSwitching.swift right
-/// before each event pair goes out. No-op while the tap is not installed,
-/// so the counter can never accumulate while nothing drains it.
+/// Called by the gesture posting code in SpaceSwitching.swift on every
+/// event before it goes out — unconditionally, whether or not the tap is
+/// currently installed, so a tap installed mid-sequence still recognises
+/// events already in flight.
 ///
-/// - Parameter eventCount: How many events are about to be posted
-///   (a pair = one dock control + one gesture envelope = 2).
-func markSyntheticGesturePosted(eventCount: Int = 2) {
-    guard gSwipeTap != nil else { return }
-    gSwipePassthroughCount += eventCount
+/// - Parameter event: The gesture or dock-control event about to be posted.
+func markSyntheticGesture(_ event: CGEvent) {
+    event.setIntegerValueField(.eventSourceUserData, value: kSyntheticGestureMarker)
+}
+
+/// Whether an incoming event is one Space Rabbit posted itself.
+///
+/// - Parameter event: The event delivered to the swipe tap.
+/// - Returns: `true` when the event carries `kSyntheticGestureMarker`.
+private func isSyntheticGesture(_ event: CGEvent) -> Bool {
+    event.getIntegerValueField(.eventSourceUserData) == kSyntheticGestureMarker
 }
 
 // MARK: - Swipe Tap Callback
@@ -149,15 +169,12 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         return passthrough
     }
 
-    let subtype = event.getIntegerValueField(kCGSEventTypeField)
+    // Space Rabbit's own synthetic gestures (posted by any feature) land
+    // in this same session tap — wave them straight through, or they would
+    // be read as real swipes and fire a switch of their own.
+    if isSyntheticGesture(event) { return passthrough }
 
-    // Space Rabbit's own synthetic gestures (posted by any feature) —
-    // wave them through while the pre-posted counter drains.
-    if gSwipePassthroughCount > 0,
-       subtype == kCGSEventDockControl || subtype == kCGSEventGesture {
-        gSwipePassthroughCount -= 1
-        return passthrough
-    }
+    let subtype = event.getIntegerValueField(kCGSEventTypeField)
 
     // Feature gates. The tap is torn down when the feature is off, so
     // these mostly guard the "Normal" speed tick (native animation wanted
@@ -251,16 +268,19 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 ///   - macOS 26:   positive = right (reported sign inverted)
 ///   - macOS 27+:  negative = right (inverted back, augmented path)
 ///
+/// The "Natural scrolling" setting needs no handling here: the window
+/// server already flips the reported sign when the user turns it off, so
+/// the rows above hold in both modes and the mapping from sign to space is
+/// unconditional. Correcting for the setting on top of that double-flips
+/// it — measured on macOS 26, natural scrolling OFF: a left-to-right swipe
+/// reports progress +0.045 and must move right, same rule as ON.
+///
 /// - Parameter sign: A non-zero swipe progress or X velocity sample.
 /// - Returns: `true` when the swipe targets the next space to the right.
 private func isRightSwipe(_ sign: Double) -> Bool {
-    let naturalScrolling = UserDefaults.standard.object(
-        forKey: "com.apple.swipescrolldirection"
-    ) as? Bool ?? true
-    let adjustedSign = naturalScrolling ? -sign : sign
-    if requiresEventAugmentation() { return adjustedSign < 0 }
-    if kSwipeDirectionReversed     { return adjustedSign > 0 }
-    return adjustedSign < 0
+    if requiresEventAugmentation() { return sign < 0 }
+    if kSwipeDirectionReversed     { return sign > 0 }
+    return sign < 0
 }
 
 /// Fires the instant switch replacing an intercepted swipe, mirroring the

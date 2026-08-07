@@ -795,19 +795,24 @@ private func postAugmentedSwitchGesture(isRight: Bool, velocity: Double) -> Bool
 
     for phase in phases {
         guard let dockEvent = makeAugmentedDockEvent(phase: phase, isRight: isRight,
-                                                     velocity: magnitude),
-              let augmented    = augmentDockSwipeEvent(dockEvent),
+                                                     velocity: magnitude)
+        else { return false }
+
+        // Mark before augmenting: augmentDockSwipeEvent flattens and rebuilds
+        // the event, so the stamp has to be part of what gets flattened.
+        markSyntheticGesture(dockEvent)
+
+        guard let augmented    = augmentDockSwipeEvent(dockEvent),
               let gestureEvent = CGEvent(source: nil)
         else { return false }
 
         // The companion gesture envelope needs no augmentation
         gestureEvent.setIntegerValueField(kCGSEventTypeField, value: kCGSEventGesture)
+        markSyntheticGesture(gestureEvent)
         events.append((augmented, gestureEvent))
     }
 
     for (dock, gesture) in events {
-        // Pre-count for the swipe-intercept tap, same as the legacy path
-        markSyntheticGesturePosted()
         dock.post(tap: .cgSessionEventTap)
         gesture.post(tap: .cgSessionEventTap)
     }
@@ -872,8 +877,9 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
     // Post both events into the session event tap where the Dock can see
     // them. The dock control event must be posted first (it carries the
     // payload), followed by the gesture envelope. The swipe-intercept tap
-    // (Feature 3) sees these too — pre-count them so it passes them through.
-    markSyntheticGesturePosted()
+    // (Feature 3) sees these too — stamp them so it passes them through.
+    markSyntheticGesture(dockEvent)
+    markSyntheticGesture(gestureEvent)
     dockEvent.post(tap: .cgSessionEventTap)
     gestureEvent.post(tap: .cgSessionEventTap)
     return true
