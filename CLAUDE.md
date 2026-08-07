@@ -460,6 +460,8 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        ├─ Auto-follow on ⌘⇥ toggle (checkmark, shortcut: F)
        ├─ Instant trackpad swipe toggle (checkmark, shortcut: T,
        │    icon: rectangle.and.hand.point.up.left.filled)
+       ├─ Cycle Spaces toggle (checkmark, shortcut: C,
+       │    disabled while transition speed is Normal)
        ├─ "Statistics:" section header
        ├─ Switch count + time-saved display (non-interactive)
        ├─ Version label

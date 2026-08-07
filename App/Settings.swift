@@ -1224,6 +1224,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
             shortcutRecorder.setShortcut(gCycleShortcut)
         }
         persistCycleShortcut()
+        gMenu?.syncMenuItems()
     }
 
     /// Applies a shortcut recorded (or cleared) by the recorder field.
@@ -1233,6 +1234,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
         gCycleShortcutEnabled = shortcut != nil
         cycleShortcutControl.state = gCycleShortcutEnabled ? .on : .off
         persistCycleShortcut()
+        gMenu?.syncMenuItems()
     }
 
     @objc private func toggleTrackpadSwipe() {
@@ -1247,6 +1249,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
         UserDefaults.standard.set(gSwitchSpeed, forKey: Defaults.switchSpeed)
         updateSpeedDisplay()
         updateCycleShortcutAvailability(resize: true)
+        gMenu?.syncMenuItems()
     }
 }
 
