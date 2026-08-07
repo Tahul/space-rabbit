@@ -47,15 +47,6 @@ import Foundation
 /// are never intercepted.
 private let kGestureMotionHorizontal: Int64 = 1
 
-/// Whether the running macOS release inverted the reported swipe
-/// direction sign. macOS 26 reports horizontal swipe progress/velocity
-/// with the OPPOSITE sign of earlier releases; macOS 27 inverted it back
-/// (handled first via `requiresEventAugmentation()` in `isRightSwipe`).
-/// Mirrors joshuarli/iss's ISS_SWIPE_DIRECTION_REVERSED, evaluated at
-/// runtime instead of build time since one binary spans macOS 15…27+.
-private let kSwipeDirectionReversed: Bool =
-    ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
-
 // MARK: - Tap Lifecycle
 
 /// Creates or tears down the swipe-intercept tap to match the current
@@ -264,9 +255,8 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 /// has flipped across macOS releases (independently of the posting-side
 /// convention documented in SpaceSwitching.swift):
 ///
-///   - macOS ≤ 25: negative = right
-///   - macOS 26:   positive = right (reported sign inverted)
-///   - macOS 27+:  negative = right (inverted back, augmented path)
+///   - macOS ≤ 26: positive = right
+///   - macOS 27+:  negative = right (inverted on the augmented path)
 ///
 /// The "Natural scrolling" setting needs no handling here: the window
 /// server already flips the reported sign when the user turns it off, so
@@ -279,8 +269,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 /// - Returns: `true` when the swipe targets the next space to the right.
 private func isRightSwipe(_ sign: Double) -> Bool {
     if requiresEventAugmentation() { return sign < 0 }
-    if kSwipeDirectionReversed     { return sign > 0 }
-    return sign < 0
+    return sign > 0
 }
 
 /// Fires the instant switch replacing an intercepted swipe, mirroring the

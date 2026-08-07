@@ -98,9 +98,12 @@ types and intercepts the *real* horizontal 3-finger (or 4-finger) trackpad swipe
 4. Companion gesture (29) envelopes are swallowed while a swipe is tracked
 
 **Direction sign of real trackpad events** (independent of the posting-side
-convention): right-space iff sign `< 0` on macOS ≤ 25 and 27+ (augmented check first),
-but `> 0` on macOS 26, which inverted the reported sign (`kSwipeDirectionReversed`,
-evaluated at runtime — iss does this at build time via `ISS_SWIPE_DIRECTION_REVERSED`).
+convention): right-space iff sign `> 0` on macOS ≤ 26, but `< 0` on macOS 27+, whose
+augmented path inverted the reported sign (checked first, via
+`requiresEventAugmentation()`). Pre-Tahoe (macOS 15 and earlier) was long assumed to
+match 27+ — mirroring iss's build-time `ISS_SWIPE_DIRECTION_REVERSED` — but users on
+those releases reported every swipe going the wrong way, so the rule is now the same
+for everything below 27.
 **"Natural scrolling" needs no handling** and reading
 `com.apple.swipescrolldirection` is a trap (PR #22, reverted): the window server
 already flips the reported sign when the setting is off, so the table above holds in
@@ -323,7 +326,6 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kAutoFollowSelfChangeWindow` | AutoFollow | `1.5` (TimeInterval) | How long `gAutoFollowTargetSpace` stays credible as the cause of a space-change notification |
 | `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the Mission Control marker |
 | `kGestureMotionHorizontal` | SwipeIntercept | `1` (Int64) | `kCGEventGestureSwipeMotion` value of a horizontal swipe (vertical swipes pass through) |
-| `kSwipeDirectionReversed` | SwipeIntercept | macOS major ≥ 26 | Real-swipe sign inversion introduced by macOS 26 (27+ short-circuits via the augmentation check first) |
 | `kSyntheticGestureMarker` | SwipeIntercept | `0x53504152` ('SPAR') | Stamped into `.eventSourceUserData` on every gesture Space Rabbit posts, so the swipe tap passes its own events through |
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
