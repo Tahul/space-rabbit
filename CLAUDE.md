@@ -63,7 +63,14 @@ The tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to st
 
 Listens for `NSWorkspace.didActivateApplicationNotification`. When an app is activated:
 
-1. **Suppression check** — skip if within `kAutoFollowSuppressionWindow` (300ms) of the last space switch
+1. **Suppression checks** — two, deliberately narrow (issue #24: a blanket
+   time window made rapid Cmd+Tab fall back to the animated switch):
+   - *Echo guard* — skip if this is the **same PID** we followed within
+     `kAutoFollowEchoWindow` (300ms). Reset the moment any other app
+     activates, so alternating between two apps is never suppressed.
+   - *User-navigation guard* — skip if within `kAutoFollowSuppressionWindow`
+     (300ms) of `gLastSpaceSwitchTime`, which auto-follow's own switches
+     deliberately do not stamp (see below)
 2. `findSpaceForPid(_:)` uses `visibleWindowSpaces(for:)` to find the app's window spaces, returns 0 if already reachable (falls back to space-anchored helper windows for windowless apps — see "Window filtering criteria")
 3. `switchToSpace(_:)` computes direction + steps and posts that many gestures
 
@@ -125,6 +132,19 @@ the callback (`isNativeSwitchSpeed()` → everything passes through untouched).
 ### Feature interaction (suppression guard)
 
 The two features suppress each other to prevent loops. After instant-switch fires, `gLastSpaceSwitchTime` is stamped. Auto-follow checks this timestamp and skips if within 300ms. The `activeSpaceDidChangeNotification` observer in `main.swift` also stamps this time for trackpad-initiated switches (which bypass the event tap entirely).
+
+**Auto-follow's own switches are exempt from that stamp** (issue #24). The
+space-change notification lands only once the transition settles — hundreds of
+milliseconds later — so stamping it held auto-follow suppressed far past the
+300ms window and handed the user's next quick Cmd+Tab back to macOS's animated
+switch. That is why hammering Cmd+Tab animated while a gentle pace did not, and
+why Ctrl+Arrow was unaffected (Feature 1 never consults the guard). Auto-follow
+therefore records its destination in `gAutoFollowTargetSpace`; the observer
+recognizes the matching change as its own, clears the record and skips the
+stamp. The record expires after `kAutoFollowSelfChangeWindow` (1.5 s) so a
+switch that never landed cannot swallow an unrelated stamp later, and a
+multi-step follow's intermediate notifications (which don't match the
+destination) still stamp normally.
 
 ### Mission Control stand-down (`isMissionControlActive()` in `SpaceSwitching.swift`)
 
@@ -269,7 +289,9 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
 | `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
-| `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`) |
+| `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`). Stamped by Features 1/3 and by non-auto-follow space changes |
+| `gLastFollowedPid` / `gLastFollowedTime` | `pid_t` / `Date` | Last app auto-follow chased — the echo guard's scope (`-1` = none) |
+| `gAutoFollowTargetSpace` | `CGSSpaceID` | Destination of the outstanding auto-follow switch, so its own space-change notification is not mistaken for user navigation (`0` = none) |
 | `gSwitchCount` | `Int` | Lifetime switch counter (persisted periodically) |
 | `gSwitchCountSaved` | `Int` | Last persisted value (avoids redundant writes) |
 | `gKeyLeft` / `gKeyRight` | `Int64` | Keycodes (default: 123/124 = arrow keys) |
@@ -293,7 +315,9 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kInstantSwitchVelocity` | SpaceSwitching | `400.0` | Velocity above Dock's instant threshold |
 | `kAugmentedInstantVelocity` | SpaceSwitching | `9999.0` | Instant velocity on the macOS 27+ augmented path (sign inverted: negative = right) |
 | `kAnimatedVelocityMin/Max` | SpaceSwitching | `40.0` / `80.0` | Animated velocity band for the transition-speed slider (from InstantSpaceSwitcher's presets). `currentSwitchVelocity()` interpolates the Fast/Faster/Fastest ticks to 50/60/70, or returns `kInstantSwitchVelocity` at the "Instant" end cap. At the "Normal" tick `isNativeSwitchSpeed()` is true and **no gestures are posted at all** — the event tap passes shortcuts through and auto-follow stands down, giving macOS's native animation |
-| `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period before auto-follow kicks in |
+| `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period after a *user-driven* space switch before auto-follow kicks in |
+| `kAutoFollowEchoWindow` | AutoFollow | `0.3` (TimeInterval) | Window in which a repeat activation of the **same** app reads as the echo of our own follow |
+| `kAutoFollowSelfChangeWindow` | AutoFollow | `1.5` (TimeInterval) | How long `gAutoFollowTargetSpace` stays credible as the cause of a space-change notification |
 | `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the Mission Control marker |
 | `kGestureMotionHorizontal` | SwipeIntercept | `1` (Int64) | `kCGEventGestureSwipeMotion` value of a horizontal swipe (vertical swipes pass through) |
 | `kSwipeDirectionReversed` | SwipeIntercept | macOS major ≥ 26 | Real-swipe sign inversion introduced by macOS 26 (27+ short-circuits via the augmentation check first) |

@@ -214,8 +214,11 @@ private func displayUUIDUnderCursor() -> String? {
 /// Used by auto-follow to determine whether an app is already visible
 /// on any display (in which case we don't need to switch).
 ///
+/// Also used by the `activeSpaceDidChangeNotification` observer in
+/// `main.swift` to confirm a space change was the one auto-follow requested.
+///
 /// - Returns: An array of space IDs, one per display that has an active space.
-private func getAllCurrentSpaces() -> [CGSSpaceID] {
+func getAllCurrentSpaces() -> [CGSSpaceID] {
     guard let mainConn    = cgsMainConnection,
           let getDisplays = cgsCopyDisplaySpaces else { return [] }
 

@@ -69,6 +69,24 @@ var gSwitchSpeed: Double = 1.0
 /// window on yet another space.
 var gLastSpaceSwitchTime: Date = .distantPast
 
+/// Process ID of the app auto-follow last chased to another space, or `-1`
+/// when no follow is pending an echo. Cleared as soon as a *different* app
+/// activates, so it only ever suppresses back-to-back notifications for the
+/// same app — never the user's next Cmd+Tab (issue #24).
+var gLastFollowedPid: pid_t = -1
+
+/// Timestamp paired with `gLastFollowedPid`.
+var gLastFollowedTime: Date = .distantPast
+
+/// Space ID auto-follow last asked the Dock to move to, or `0` when none is
+/// outstanding. The `activeSpaceDidChangeNotification` observer in
+/// `main.swift` uses it to recognize the space change it caused itself and
+/// skip stamping `gLastSpaceSwitchTime` for it — that notification arrives
+/// only once the transition settles, so stamping it would keep auto-follow
+/// suppressed for far longer than `kAutoFollowSuppressionWindow` and hand
+/// the user's next rapid Cmd+Tab back to macOS's animated switch (issue #24).
+var gAutoFollowTargetSpace: CGSSpaceID = 0
+
 // MARK: - Swipe Intercept State
 //
 // Tracking state for the swipe-intercept tap (Feature 3). One physical

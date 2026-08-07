@@ -164,10 +164,29 @@ NSWorkspace.shared.notificationCenter.addObserver(
 // which bypass the event tap entirely). This notification arrives before
 // the app activation notification, so the auto-follow suppression guard
 // fires correctly for trackpad-initiated switches too.
+//
+// Exception: a change auto-follow itself asked for is not the user
+// navigating. This notification lands only once the transition has settled
+// (hundreds of milliseconds later), so stamping it would hold auto-follow
+// suppressed well past kAutoFollowSuppressionWindow and let macOS animate
+// the user's next quick Cmd+Tab (issue #24).
 NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.activeSpaceDidChangeNotification,
     object: nil, queue: .main
-) { _ in gLastSpaceSwitchTime = Date() }
+) { _ in
+    // A multi-step follow reports intermediate spaces first; only the
+    // notification that actually lands on the destination counts as ours
+    // and retires the record. Anything older than the grace window is
+    // treated as a switch that never landed.
+    if gAutoFollowTargetSpace != 0,
+       Date().timeIntervalSince(gLastFollowedTime) <= kAutoFollowSelfChangeWindow,
+       getAllCurrentSpaces().contains(gAutoFollowTargetSpace) {
+        gAutoFollowTargetSpace = 0
+        return
+    }
+
+    gLastSpaceSwitchTime = Date()
+}
 
 // Reload the space-switch shortcuts whenever System Settings deactivates —
 // the only place the user can edit them. Without this, shortcut changes
