@@ -100,7 +100,8 @@ gMenu = SwoopMenu()
 // Check for updates 5 seconds after launch, giving the app time to
 // settle before making a network request. Launch-only by design: no
 // periodic background re-check (a manual check lives in the settings
-// window's Updates pane).
+// window's Updates pane). Throttled to at most one check per hour, so
+// a quick quit-and-relaunch cycle does not re-hit the API each time.
 DispatchQueue.main.asyncAfter(deadline: .now() + 5) { checkForUpdates() }
 
 // Persist the switch count to disk every 5 minutes.

@@ -161,6 +161,15 @@ enum Defaults {
     /// When `false`, the rabbit icon is removed from the menu bar.
     /// Preferences remain reachable by launching Space Rabbit again.
     static let showMenuBarIcon  = "spacerabbit.showMenuBarIcon"
+    /// `Date.timeIntervalSinceReferenceDate` of the last update check
+    /// (automatic or manual), used to throttle the launch-time check.
+    static let lastUpdateCheck  = "spacerabbit.lastUpdateCheck"
+    /// Release tag of the newer version found by the last check, and the DMG
+    /// URL to install it. Kept so the update banner survives a relaunch that
+    /// is throttled out of checking again. Cleared once the check reports the
+    /// running version is up to date.
+    static let pendingUpdateVersion = "spacerabbit.pendingUpdateVersion"
+    static let pendingUpdateURL     = "spacerabbit.pendingUpdateURL"
 }
 
 // MARK: - Persistence
