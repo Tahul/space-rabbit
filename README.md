@@ -15,6 +15,10 @@ Space Rabbit removes animations when switching macOS Spaces. Reclaim hours of yo
 - ✅ **Tiny native macOS app** - 2MB binary size, 12MB memory usage, zero CPU usage
 - ✅ **No system changes needed** - just classic accessibility permissions
 
+## Demo video
+
+<video src="https://github.com/user-attachments/assets/b7d377d9-c57b-4a9b-9a58-c58f0bc5d24d" width="1114" height="720"></video>
+
 ## Screenshots
 
 ![space-rabbit-menu](https://github.com/user-attachments/assets/64f35b7e-9d67-413a-b186-f9aff6374507)
