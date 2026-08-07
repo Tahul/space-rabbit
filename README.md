@@ -17,7 +17,7 @@ Space Rabbit removes animations when switching macOS Spaces. Reclaim hours of yo
 
 ## Demo video
 
-First, you'll see macOS space switching swithout Space Rabbit. Then, we'll enable Space Rabbit for instant switching:
+First, you'll see default macOS space switching. Then, we'll enable Space Rabbit for instant switching:
 
 https://github.com/user-attachments/assets/ba73cabe-2443-4cf2-87aa-f1f7841e6c21
 
