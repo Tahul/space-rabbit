@@ -19,6 +19,16 @@ import Foundation
 /// and re-enabled automatically if macOS disables it.
 var gTap: CFMachPort?
 
+/// The swipe-intercept CGEvent tap (Feature 3). Unlike `gTap`, this one is
+/// created and torn down on demand: it only exists while both the master
+/// switch and the trackpad-swipe feature are enabled (see `updateSwipeTap()`
+/// in SwipeIntercept.swift).
+var gSwipeTap: CFMachPort?
+
+/// Run loop source backing `gSwipeTap`, kept so the source can be removed
+/// from the run loop when the tap is torn down.
+var gSwipeTapSource: CFRunLoopSource?
+
 // MARK: - Feature Toggles
 
 /// Master on/off toggle.
@@ -38,6 +48,12 @@ var gAutoFollowEnabled: Bool = true
 /// Only effective when `gEnabled` is true and the transition speed is not Normal.
 var gCycleShortcutEnabled: Bool = false
 
+/// Feature 3 toggle: intercept real trackpad swipes and replace
+/// them with instant switches. Off by default (opt-in) — it swallows the
+/// user's physical gesture, which is a bigger behavioral change than the
+/// purely additive features above. Only effective when `gEnabled` is `true`.
+var gTrackpadSwipeEnabled: Bool = false
+
 /// Space-switch transition speed as a slider tick position (0.0–1.0 in
 /// steps of 0.25). 1.0 (the end cap) means instant — no animation at all.
 /// 0.0 ("Normal") means macOS's native animation: Space Rabbit posts no
@@ -56,6 +72,39 @@ var gSwitchSpeed: Double = 1.0
 /// see the resulting app-activation notification and chase a second
 /// window on yet another space.
 var gLastSpaceSwitchTime: Date = .distantPast
+
+/// Process ID of the app auto-follow last chased to another space, or `-1`
+/// when no follow is pending an echo. Cleared as soon as a *different* app
+/// activates, so it only ever suppresses back-to-back notifications for the
+/// same app — never the user's next Cmd+Tab (issue #24).
+var gLastFollowedPid: pid_t = -1
+
+/// Timestamp paired with `gLastFollowedPid`.
+var gLastFollowedTime: Date = .distantPast
+
+/// Space ID auto-follow last asked the Dock to move to, or `0` when none is
+/// outstanding. The `activeSpaceDidChangeNotification` observer in
+/// `main.swift` uses it to recognize the space change it caused itself and
+/// skip stamping `gLastSpaceSwitchTime` for it — that notification arrives
+/// only once the transition settles, so stamping it would keep auto-follow
+/// suppressed for far longer than `kAutoFollowSuppressionWindow` and hand
+/// the user's next rapid Cmd+Tab back to macOS's animated switch (issue #24).
+var gAutoFollowTargetSpace: CGSSpaceID = 0
+
+// MARK: - Swipe Intercept State
+//
+// Tracking state for the swipe-intercept tap (Feature 3). One physical
+// swipe produces a Began → Changed… → Ended/Cancelled event sequence;
+// these flags carry the decision "we own this gesture" across it.
+// Reset together via resetSwipeIntercept() in SwipeIntercept.swift.
+
+/// Whether a real trackpad dock swipe is currently being intercepted
+/// (its Began phase was swallowed, so we must handle the rest too).
+var gSwipeTracking: Bool = false
+
+/// Whether the intercepted swipe already fired its instant switch
+/// (fires once per gesture, on the first Changed with non-zero progress).
+var gSwipeFired: Bool = false
 
 // MARK: - Statistics
 
@@ -217,18 +266,31 @@ var gMenu: SwoopMenu?
 /// All keys use the `"spacerabbit."` prefix to namespace them within
 /// the app's UserDefaults domain.
 enum Defaults {
-    static let enabled         = "spacerabbit.enabled"
-    static let instantSwitch   = "spacerabbit.instantSwitch"
-    static let autoFollow      = "spacerabbit.autoFollow"
+    static let enabled          = "spacerabbit.enabled"
+    static let instantSwitch    = "spacerabbit.instantSwitch"
+    static let autoFollow       = "spacerabbit.autoFollow"
+    /// The stored key keeps its original `threeFingerSwipe` spelling on
+    /// purpose — the feature was renamed to "Instant Trackpad Swipe", and
+    /// renaming the key would silently reset the opt-in for existing users.
+    static let trackpadSwipe    = "spacerabbit.threeFingerSwipe"
     static let cycleShortcutEnabled   = "spacerabbit.cycleShortcut.enabled"
     static let cycleShortcutKeycode   = "spacerabbit.cycleShortcut.keycode"
     static let cycleShortcutModifiers = "spacerabbit.cycleShortcut.modifiers"
     static let cycleShortcutLabel     = "spacerabbit.cycleShortcut.label"
-    static let switchSpeed     = "spacerabbit.switchSpeed"
-    static let switchCount     = "spacerabbit.switchCount"
+    static let switchSpeed      = "spacerabbit.switchSpeed"
+    static let switchCount      = "spacerabbit.switchCount"
     /// When `false`, the rabbit icon is removed from the menu bar.
     /// Preferences remain reachable by launching Space Rabbit again.
-    static let showMenuBarIcon = "spacerabbit.showMenuBarIcon"
+    static let showMenuBarIcon  = "spacerabbit.showMenuBarIcon"
+    /// `Date.timeIntervalSinceReferenceDate` of the last update check
+    /// (automatic or manual), used to throttle the launch-time check.
+    static let lastUpdateCheck  = "spacerabbit.lastUpdateCheck"
+    /// Release tag of the newer version found by the last check, and the DMG
+    /// URL to install it. Kept so the update banner survives a relaunch that
+    /// is throttled out of checking again. Cleared once the check reports the
+    /// running version is up to date.
+    static let pendingUpdateVersion = "spacerabbit.pendingUpdateVersion"
+    static let pendingUpdateURL     = "spacerabbit.pendingUpdateURL"
 }
 
 // MARK: - Persistence

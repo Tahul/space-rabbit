@@ -23,7 +23,30 @@ import AppKit
 ///
 /// 300ms is wide enough to cover the notification delay but narrow enough
 /// not to interfere with a real Cmd+Tab shortly after.
+///
+/// It deliberately does NOT cover space changes auto-follow itself caused —
+/// see `gAutoFollowTargetSpace`.
 private let kAutoFollowSuppressionWindow: TimeInterval = 0.3
+
+/// How long after following an app a second activation notification for
+/// *that same app* is treated as the echo of our own switch rather than a
+/// new user action.
+///
+/// macOS finishes activating the app after the space settles and can fire
+/// another notification for it; chasing that would hop to another of the
+/// app's windows on yet another space. The guard is scoped to the same PID
+/// and torn down the moment any other app activates, so hammering Cmd+Tab
+/// between two apps is never suppressed (issue #24).
+private let kAutoFollowEchoWindow: TimeInterval = 0.3
+
+/// How long a recorded `gAutoFollowTargetSpace` stays credible as the cause
+/// of an incoming `activeSpaceDidChangeNotification`.
+///
+/// That notification is delivered only once the transition settles, so the
+/// window has to be generous — but not unbounded, or a switch that never
+/// landed (private-API failure, the user swiping away mid-flight) would
+/// silently swallow the stamp for an unrelated space change much later.
+let kAutoFollowSelfChangeWindow: TimeInterval = 1.5
 
 // MARK: - App Activation Observer
 
@@ -44,17 +67,31 @@ final class SwoopObserver: NSObject {
         // exactly what the user asked for. Stand down.
         guard !isNativeSwitchSpeed() else { return }
 
-        // Suppress auto-follow when instant-switch just fired
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
+                        as? NSRunningApplication else { return }
+        let pid = app.processIdentifier
+
+        // Echo of the follow we just performed for this very app — ignore it
+        // (see kAutoFollowEchoWindow). Any other app activating means the
+        // user moved on, so the echo window ends there and then.
+        if pid == gLastFollowedPid {
+            if Date().timeIntervalSince(gLastFollowedTime) <= kAutoFollowEchoWindow { return }
+        } else {
+            gLastFollowedPid = -1
+        }
+
+        // Suppress auto-follow when the user just navigated spaces themselves
         // (see kAutoFollowSuppressionWindow documentation above)
         guard Date().timeIntervalSince(gLastSpaceSwitchTime) > kAutoFollowSuppressionWindow
         else { return }
 
-        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
-                        as? NSRunningApplication else { return }
+        // A Mission Control overview handles navigation itself and our
+        // gestures land back where they started — see isMissionControlActive()
+        guard !isMissionControlActive() else { return }
 
         // Find which space the app's windows are on.
         // Returns 0 if the app is already on a visible space (no switch needed).
-        let targetSpace = findSpaceForPid(app.processIdentifier)
+        let targetSpace = findSpaceForPid(pid)
         guard targetSpace != 0 else { return }
 
         // Switch to the target space and record it for statistics.
@@ -73,6 +110,14 @@ final class SwoopObserver: NSObject {
         // nothing to record. .alreadyThere cannot normally happen here
         // since findSpaceForPid only returns non-visible spaces.
         if switchToSpace(targetSpace) == .switched {
+            // Remember what we did: the PID so a repeat notification for the
+            // same app reads as an echo, and the destination space so the
+            // activeSpaceDidChange observer knows this change was ours and
+            // does not stamp gLastSpaceSwitchTime for it (issue #24).
+            gLastFollowedPid      = pid
+            gLastFollowedTime     = Date()
+            gAutoFollowTargetSpace = targetSpace
+
             gMenu?.recordSwitch()
         }
     }

@@ -217,6 +217,12 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
               keycode == binding.keycode,
               eventMods == binding.mods else { continue }
 
+        // Mission Control navigates its own carousel — see
+        // isMissionControlActive(). Checked only once a shortcut has
+        // matched: the lookup scans the window list, too heavy to run
+        // for every keystroke passing through the tap.
+        guard !isMissionControlActive() else { return passthrough }
+
         let desktops = getUserDesktops()
 
         // Layout unknown or no such desktop — pass the key through and
@@ -246,6 +252,9 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     if      let b = gBindingLeft,  keycode == b.keycode, eventMods == b.mods { direction = -1 }
     else if let b = gBindingRight, keycode == b.keycode, eventMods == b.mods { direction = +1 }
     else                                                                     { return passthrough }
+
+    // Same stand-down as above, for the left/right shortcuts
+    guard !isMissionControlActive() else { return passthrough }
 
     // Bounds check: don't switch past the first or last space
     let (spaceIDs, currentIdx) = getSpaceList()

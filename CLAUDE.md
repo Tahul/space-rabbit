@@ -32,15 +32,16 @@ Exact initialization order — getting this wrong causes subtle bugs:
 3. **Accessibility check** — `AXIsProcessTrustedWithOptions` with prompt; exits if denied
 4. `loadSpaceSwitchShortcuts()` — reads keycodes/modifiers from system prefs into `gKeyLeft`/`gKeyRight`/`gModMask`
 5. `gMenu = SwoopMenu()` — creates status item (hidden via `statusItem.isVisible` if so configured), loads persisted state from UserDefaults into globals
-6. Delayed `checkForUpdates()` — 5 seconds after launch (background network request)
+6. `checkForUpdatesAutomatically()` — owns its own 5-second delay, and applies it only when it is actually going to make a network request (a throttled launch restores the update banner from UserDefaults immediately). Must run after step 5, which creates `gMenu`, the banner's host
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
 8. **Event tap creation** — listens for `keyDown`, `keyUp`, `flagsChanged`, and `systemDefined`; these support the configurable cycle shortcut (including bare Fn) as well as the system Space bindings, then `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
-9. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
-10. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable tap
-11. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
-12. `app.run()` — enter run loop
+9. **Swipe-intercept tap** — `updateSwipeTap()` installs the Feature 3 tap if the persisted toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
+10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
+11. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
+12. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
+13. `app.run()` — enter run loop
 
-## Two core features
+## Three core features
 
 ### Feature 1: Instant space switch (`eventTapCallback` in `EventTap.swift`)
 
@@ -75,15 +76,119 @@ the saved enabled state and shortcut remain unchanged and return at faster speed
 
 Listens for `NSWorkspace.didActivateApplicationNotification`. When an app is activated:
 
-1. **Suppression check** — skip if within `kAutoFollowSuppressionWindow` (300ms) of the last space switch
+1. **Suppression checks** — two, deliberately narrow (issue #24: a blanket
+   time window made rapid Cmd+Tab fall back to the animated switch):
+   - *Echo guard* — skip if this is the **same PID** we followed within
+     `kAutoFollowEchoWindow` (300ms). Reset the moment any other app
+     activates, so alternating between two apps is never suppressed.
+   - *User-navigation guard* — skip if within `kAutoFollowSuppressionWindow`
+     (300ms) of `gLastSpaceSwitchTime`, which auto-follow's own switches
+     deliberately do not stamp (see below)
 2. `findSpaceForPid(_:)` uses `visibleWindowSpaces(for:)` to find the app's window spaces, returns 0 if already reachable (falls back to space-anchored helper windows for windowless apps — see "Window filtering criteria")
 3. `switchToSpace(_:)` computes direction + steps and posts that many gestures
 
 The app is intentionally **never activated by us** (`app.activate()` is not called): the system activation already in progress brings the app to focus, and sending a `kAEActivate` Apple Event makes some apps (e.g. Safari) exit background modes like Picture-in-Picture.
 
+### Feature 3: Instant trackpad swipe (`swipeTapCallback` in `SwipeIntercept.swift`)
+
+**Off by default** (`Defaults.trackpadSwipe`, stored under the legacy key
+`spacerabbit.threeFingerSwipe` so existing opt-ins survive the rename) — it swallows the user's
+physical gesture, a bigger behavioral change than the additive features above.
+Ported from [joshuarli/iss](https://github.com/joshuarli/iss) (same repo the macOS 27
+augmentation came from).
+
+A second CGEvent tap listens for the private gesture (29) + DockControl (30) event
+types and intercepts the *real* horizontal 3-finger (or 4-finger) trackpad swipe:
+
+1. **Began** → start tracking, swallow (the native animated switch never starts)
+2. **Changed** → first non-zero `kCGEventGestureSwipeProgress` reveals the direction;
+   fire `postSwitchGesture` once (bounds-checked via `getSpaceList()`, stands down when
+   the layout is unknown), keep swallowing
+3. **Ended** → fallback: if nothing fired yet (very quick flick), use the final
+   `kCGEventGestureSwipeVelocityX` sign. On macOS 27+ the Ended event is passed through
+   with progress/velocity zeroed (the Dock needs to see the gesture close); pre-27 it
+   is swallowed. **Cancelled** (phase 8) → reset without firing
+4. Companion gesture (29) envelopes are swallowed while a swipe is tracked
+
+**Direction sign of real trackpad events** (independent of the posting-side
+convention): right-space iff sign `> 0` on macOS ≤ 26, but `< 0` on macOS 27+, whose
+augmented path inverted the reported sign (checked first, via
+`requiresEventAugmentation()`). Pre-Tahoe (macOS 15 and earlier) was long assumed to
+match 27+ — mirroring iss's build-time `ISS_SWIPE_DIRECTION_REVERSED` — but users on
+those releases reported every swipe going the wrong way, so the rule is now the same
+for everything below 27.
+**"Natural scrolling" needs no handling** and reading
+`com.apple.swipescrolldirection` is a trap (PR #22, reverted): the window server
+already flips the reported sign when the setting is off, so the table above holds in
+both modes and any correction on top of it double-flips the result. Measured on macOS
+26 with natural scrolling OFF: a left-to-right swipe reports progress `+0.045` and must
+move right — the same rule as ON. A direction complaint is far more likely to be the
+synthetic-echo bug below than a scrolling-preference bug.
+
+**Synthetic-event marker (`kSyntheticGestureMarker`)** — Space Rabbit's own synthetic
+gestures post into the same session tap and would loop right back into this tap.
+Every posting path in `SpaceSwitching.swift` calls `markSyntheticGesture(_:)` on each
+event before posting, stamping `.eventSourceUserData`; the swipe tap checks that field
+first and waves those events straight through. On the macOS 27+ path the stamp must be
+applied **before** `augmentDockSwipeEvent` flattens and rebuilds the event.
+
+Do **not** go back to counting pending synthetic events (`gSwipePassthroughCount`, the
+joshuarli/iss technique, removed): the real gesture's own Changed samples carry the
+same event subtypes the counter keyed on, so they drained the budget before our
+synthetic events arrived. The leftover synthetic Ended was then read as a real swipe
+and fired a second switch from its `±kInstantSwitchVelocity` sign — a cascade that
+looks exactly like a direction bug.
+
+**Tap lifecycle** — unlike the keyboard tap (installed once at startup), this tap is
+created/torn down on demand by `updateSwipeTap()` so it only exists while
+`gEnabled && gTrackpadSwipeEnabled`. Called from startup, `SwoopMenu.setEnabled`,
+and both feature toggles (menu + settings). The "Normal" speed tick is gated inside
+the callback (`isNativeSwitchSpeed()` → everything passes through untouched).
+
 ### Feature interaction (suppression guard)
 
 The two features suppress each other to prevent loops. After instant-switch fires, `gLastSpaceSwitchTime` is stamped. Auto-follow checks this timestamp and skips if within 300ms. The `activeSpaceDidChangeNotification` observer in `main.swift` also stamps this time for trackpad-initiated switches (which bypass the event tap entirely).
+
+**Auto-follow's own switches are exempt from that stamp** (issue #24). The
+space-change notification lands only once the transition settles — hundreds of
+milliseconds later — so stamping it held auto-follow suppressed far past the
+300ms window and handed the user's next quick Cmd+Tab back to macOS's animated
+switch. That is why hammering Cmd+Tab animated while a gentle pace did not, and
+why Ctrl+Arrow was unaffected (Feature 1 never consults the guard). Auto-follow
+therefore records its destination in `gAutoFollowTargetSpace`; the observer
+recognizes the matching change as its own, clears the record and skips the
+stamp. The record expires after `kAutoFollowSelfChangeWindow` (1.5 s) so a
+switch that never landed cannot swallow an unrelated stamp later, and a
+multi-step follow's intermediate notifications (which don't match the
+destination) still stamp normally.
+
+### Mission Control stand-down (`isMissionControlActive()` in `SpaceSwitching.swift`)
+
+All three features stand down while a Mission Control-style overview (Mission
+Control, App Exposé, Show Desktop) is on screen, letting macOS handle the input
+natively. The overview drives space navigation itself, and a synthetic DockSwipe
+posted into it is evaluated against the overview's state rather than the
+desktop's: the screen blanks, swipes, and lands back on the space the user
+started from (issue #16).
+
+Detection is a synchronous `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` scan
+for a **Dock-owned window at `kCGWindowLayer` 18** — the display-sized overlay the
+Dock keeps up for the whole duration of the overview, and the same marker yabai
+uses (`src/mission_control.c`). `kCGWindowName` is deliberately *not* part of the
+test (yabai additionally requires it to be nil): it needs Screen Recording
+permission, which Space Rabbit never asks for, so it reads as `nil` for every
+window regardless of state.
+
+Where the check runs matters — it copies the window list, so it is only reached
+once an action is about to happen, never per event:
+
+- **Feature 1** — after a shortcut has matched (both the left/right bindings and
+  the "Switch to Desktop N" loop), not for every `keyDown`.
+- **Feature 3** — on the Began phase only. Standing down means *not tracking* the
+  gesture, so all later phases pass through via the existing `gSwipeTracking`
+  checks, one lookup per swipe instead of one per sample.
+- **Feature 2** — after the speed and suppression-window guards, before the
+  window-to-space lookups.
 
 ## Private APIs in use (`PrivateAPI.swift`)
 
@@ -182,6 +287,8 @@ Used in `visibleWindowSpaces(for:)` — the window-lookup helper behind `findSpa
 
 `visibleWindowSpaces` does a single window-list pass (kept fast — it sits on the latency-critical auto-follow path) and splits results by `kCGWindowLayer`: layer 0 → `normal` (regular app windows), any other layer → `anchored` (space-anchored helper windows).
 
+**"All Desktops" windows (issue #10):** a window `SLSCopySpacesForWindows` resolves to **more than one** space is assigned to every space — the Dock's "Options > Assign To: All Desktops" (sticky) setting, which reports every user desktop of the window's display, or a status/desktop window tagged onto all spaces (verified empirically on macOS 26; same multi-space heuristic yabai uses for stickiness). Such a window is reachable wherever the user is, and its space list is MRU-ordered — chasing `first` would yank the user back to the space the app was last hidden/minimized on. It therefore contributes no chase target and instead sets the group's `hasAllSpacesWindow` flag, which `findSpaceForPid` treats like an onscreen window (returns 0, no switch).
+
 **Helper-window fallback in `findSpaceForPid`:** when an app has zero normal windows, macOS's activation logic still navigates (with the slide animation) to any space-anchored window the app owns — Finder's desktop-icons window, or status-item windows of menu-bar apps (e.g. Things), typically anchored to the first space. `findSpaceForPid` falls back to the `anchored` group and returns its frontmost space, so auto-follow preempts the native animated switch with an instant one to the same destination. This preemption races the Dock's own animated switch — see `kAutoFollowSuppressionWindow` notes.
 
 ## Global state (`State.swift`)
@@ -190,15 +297,20 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 | Variable | Type | Purpose |
 |---|---|---|
-| `gTap` | `CFMachPort?` | The active CGEvent tap |
+| `gTap` | `CFMachPort?` | The active CGEvent tap (keyboard, Feature 1) |
+| `gSwipeTap` / `gSwipeTapSource` | `CFMachPort?` / `CFRunLoopSource?` | Swipe-intercept tap (Feature 3) — exists only while the feature is active (`updateSwipeTap()`) |
 | `gEnabled` | `Bool` | Master on/off toggle |
 | `gInstantSwitchEnabled` | `Bool` | Feature 1 toggle |
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
 | `gCycleShortcutEnabled` | `Bool` | Whether the configurable cycle shortcut is active |
 | `gCycleShortcut` | `CycleShortcut?` | Recorded cycle keycode, exact modifiers, and display label (`nil` when cleared) |
 | `gIsRecordingCycleShortcut` | `Bool` | Makes the global event tap stand down while Preferences records a replacement |
+| `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
+| `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
-| `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`) |
+| `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`). Stamped by Features 1/3 and by non-auto-follow space changes |
+| `gLastFollowedPid` / `gLastFollowedTime` | `pid_t` / `Date` | Last app auto-follow chased — the echo guard's scope (`-1` = none) |
+| `gAutoFollowTargetSpace` | `CGSSpaceID` | Destination of the outstanding auto-follow switch, so its own space-change notification is not mistaken for user navigation (`0` = none) |
 | `gSwitchCount` | `Int` | Lifetime switch counter (persisted periodically) |
 | `gSwitchCountSaved` | `Int` | Last persisted value (avoids redundant writes) |
 | `gKeyLeft` / `gKeyRight` | `Int64` | Keycodes (default: 123/124 = arrow keys) |
@@ -209,7 +321,10 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 `spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`,
 `spacerabbit.cycleShortcut.enabled`, `.keycode`, `.modifiers`, `.label`,
-`spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`.
+`spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`,
+`spacerabbit.lastUpdateCheck`, `spacerabbit.pendingUpdateVersion`,
+`spacerabbit.pendingUpdateURL` (the last three belong to the update throttle — see
+"Update flow"; none has a `g` global, they are read and written where they are used).
 
 Menu bar icon visibility has no `g` global: the live truth is `statusItem.isVisible` (`SwoopMenu.isMenuBarIconVisible`), persisted through `setMenuBarIconVisible(_:)`.
 
@@ -224,11 +339,19 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kInstantSwitchVelocity` | SpaceSwitching | `400.0` | Velocity above Dock's instant threshold |
 | `kAugmentedInstantVelocity` | SpaceSwitching | `9999.0` | Instant velocity on the macOS 27+ augmented path (sign inverted: negative = right) |
 | `kAnimatedVelocityMin/Max` | SpaceSwitching | `40.0` / `80.0` | Animated velocity band for the transition-speed slider (from InstantSpaceSwitcher's presets). `currentSwitchVelocity()` interpolates the Fast/Faster/Fastest ticks to 50/60/70, or returns `kInstantSwitchVelocity` at the "Instant" end cap. At the "Normal" tick `isNativeSwitchSpeed()` is true and **no gestures are posted at all** — the event tap passes shortcuts through and auto-follow stands down, giving macOS's native animation |
-| `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period before auto-follow kicks in |
+| `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period after a *user-driven* space switch before auto-follow kicks in |
+| `kAutoFollowEchoWindow` | AutoFollow | `0.3` (TimeInterval) | Window in which a repeat activation of the **same** app reads as the echo of our own follow |
+| `kAutoFollowSelfChangeWindow` | AutoFollow | `1.5` (TimeInterval) | How long `gAutoFollowTargetSpace` stays credible as the cause of a space-change notification |
+| `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the Mission Control marker |
+| `kGestureMotionHorizontal` | SwipeIntercept | `1` (Int64) | `kCGEventGestureSwipeMotion` value of a horizontal swipe (vertical swipes pass through) |
+| `kSyntheticGestureMarker` | SwipeIntercept | `0x53504152` ('SPAR') | Stamped into `.eventSourceUserData` on every gesture Space Rabbit posts, so the swipe tap passes its own events through |
+| `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |
 | `kFnKeycode` | State | `63` | Virtual keycode used for the recordable bare-Fn/Globe binding |
 | `kCycleShortcutModifiers` | State | Control/Cmd/Alt/Shift/Fn | Exact modifier set checked for recorded cycle shortcuts. The automatic function flag on special/F-keys is normalized; a physically held Fn is still rejected as an unrecorded extra except for F-key bindings, where it is allowed to support either macOS top-row mode. |
+| `kUpdateCheckInterval` | UpdateCheck | `3600` (TimeInterval) | Minimum gap between two *automatic* update checks; a launch inside the window reads the remembered release instead of the network |
+| `kUpdateCheckLaunchDelay` | UpdateCheck | `5` (TimeInterval) | Settle time before the automatic check hits the network — skipped entirely on the cached path |
 | `kMenuIconSize` | MenuBar | `16` (CGFloat) | Tinted SF Symbol size in menu items |
 | `kDisabledIconAlpha` | MenuBar | `0.25` (CGFloat) | Menu bar icon opacity when disabled |
 | `kEnableRowHeight` / `kEnableRowInset` | MenuBar | `36` / `14` (CGFloat) | Sizing for the header row hosting the master enable switch |
@@ -242,10 +365,27 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 ### Version checking
 
 Two entry points in `UpdateCheck.swift`:
-- **Automatic** (`checkForUpdates()`): fires 5 s after launch, silently shows the menu bar banner if a newer release exists.
-- **Manual** (`checkForUpdatesManually()`): triggered from the "Check Now…" button in the settings window's Updates pane, reports results via callbacks so the caller can show dialogs.
+- **Automatic** (`checkForUpdatesAutomatically()`): called at launch, silently shows the menu bar banner if a newer release exists. **Throttled to one network check per hour** (`kUpdateCheckInterval`, stamped into `Defaults.lastUpdateCheck` by *both* entry points) — the app is quit and relaunched freely, and that must not turn into a burst of API requests.
+- **Manual** (`checkForUpdatesManually()`): triggered from the "Check Now…" button in the settings window's Updates pane, reports results via callbacks so the caller can show dialogs. Never throttled, and it also passes `.reloadIgnoringLocalCacheData` — the GitHub API sends `Cache-Control: max-age=60`, so `URLSession`'s default policy would otherwise answer a user-requested check from the URL cache. The automatic path keeps the default policy, where the hour throttle makes the URL cache unreachable anyway.
 
 Both hit `GET /repos/Tahul/space-rabbit/releases/latest` on the GitHub API, extract the `tag_name` and the first `.dmg` asset URL, and compare against `CFBundleShortVersionString`.
+
+**Throttled launches still show the banner.** Every fetch caches its outcome:
+a newer release is remembered in `Defaults.pendingUpdateVersion` +
+`pendingUpdateURL`, and an up-to-date answer clears both. A launch that skips
+the network restores the banner from that record, so an update stays visible
+across relaunches instead of disappearing until the hour is up.
+`pendingUpdateDownloadURL()` re-compares the stored tag against the running
+version and self-clears when it is no longer newer — otherwise the record left
+behind by an update the user has since installed would raise a banner for a
+version already in place.
+
+The `kUpdateCheckLaunchDelay` (5 s) courtesy delay lives *inside*
+`checkForUpdatesAutomatically()` and wraps only the network path. The cached
+path just reads UserDefaults, so it runs synchronously — delaying it would make
+the banner appear late for no benefit. `main.swift` therefore calls
+`checkForUpdatesAutomatically()` directly rather than wrapping it in its own
+`asyncAfter`.
 
 ### Download and installation
 
@@ -272,8 +412,8 @@ Both call `startUpdate(downloadURL:)` which delegates to `UpdaterWindowControlle
 
 Toggles can be changed from two places. The sync pattern:
 
-1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
-2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
+1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`/`toggleTrackpadSwipe`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
+2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`/`toggleTrackpadSwipe`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
 3. **Settings pane appears** (`viewWillAppear`, fires on every pane swap): refreshes its switch controls from globals
 
 The cycle-shortcut row additionally uses `ShortcutRecorderButton` from
@@ -285,7 +425,10 @@ on release. Fn used with an ordinary, modifier, or media key does not record bar
 Fn-produced F-keys are normalized to the same binding as standalone F-keys. Recording
 a shortcut enables it; clearing disables it.
 
-Master enable/disable (`gEnabled`) is only togglable from the menu bar (header-row switch or right-click on the icon; both go through `setEnabled`, which keeps the switch state in sync).
+The trackpad swipe toggle additionally calls `updateSwipeTap()` from both places (its
+tap only exists while the feature is active).
+
+Master enable/disable (`gEnabled`) is only togglable from the menu bar (header-row switch or right-click on the icon; both go through `setEnabled`, which keeps the switch state in sync and calls `updateSwipeTap()`).
 
 ### The NSStatusItem right-click trick
 
@@ -310,11 +453,13 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        │    while the app is inactive, WITHOUT stealing focus (never call
        │    NSApp.activate when opening the menu — it deactivates the
        │    frontmost app). Same technique Klack uses.
-       ├─ Update-available banner (hidden by default, shown by checkForUpdates)
+       ├─ Update-available banner (hidden by default, shown by checkForUpdatesAutomatically)
        ├─ Launch-at-login warning banner (hidden when SMAppService.mainApp.status == .enabled)
        ├─ "Configure:" section header
        ├─ Instant space switch toggle (checkmark, shortcut: S)
        ├─ Auto-follow on ⌘⇥ toggle (checkmark, shortcut: F)
+       ├─ Instant trackpad swipe toggle (checkmark, shortcut: T,
+       │    icon: rectangle.and.hand.point.up.left.filled)
        ├─ "Statistics:" section header
        ├─ Switch count + time-saved display (non-interactive)
        ├─ Version label
@@ -332,8 +477,8 @@ SettingsWindowController (singleton, NSWindowDelegate)
        │    window resizes per pane
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
        │    + Launch at Login (SMAppService)
-       ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow toggles,
-       │    configurable cycle-shortcut recorder + enable switch,
+       ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow +
+       │    Instant trackpad swipe toggles, configurable cycle-shortcut recorder + enable switch,
        │    then Transition speed slider on its own (5 ticks, snapping: Normal =
        │    native macOS animation / Fast / Faster / Fastest / right end cap =
        │    "Instant", the default)
@@ -507,6 +652,28 @@ transliterated but not translated.
 Plural *categories* are intentionally not compared across languages — each
 language declares the ones its rules define.
 
+## Changelog format
+
+When asked to generate a changelog (typically between two git tags), follow these rules exactly:
+
+- **Do not wrap lines.** No 80-column padding, no manual line breaks inside an entry — one entry is one long line.
+- **Section titles are always `###` (H3).**
+- **List items always use `-`**, never `*`.
+- **Section wording is one of:** `Added`, `Fixed`, `Changed`, `Miscellaneous`, `Breaking`. Nothing else.
+- **Every entry is `**Subject**: explanation`** — the subject in bold, followed by a colon and the explanation.
+- **Always credit the author**, with the PR/issue as a short `#ID` link and the `@author` handle, in parentheses at the end of the entry.
+- **Keep it short and non-technical.** The audience is end users, not developers. One or two sentences per entry, describing what they will notice — not the internals. No mention of event taps, gesture phases, private APIs, timing windows, globals or file names. If an entry needs a paragraph to explain, it is being written for the wrong reader.
+
+Example:
+
+```markdown
+### Fixed
+
+- **Trackpad swipes**: swiping between spaces could jump two spaces at once or go the wrong way. ([#23](https://github.com/Tahul/space-rabbit/issues/23), [#22](https://github.com/Tahul/space-rabbit/pull/22), thanks @srajangarg and @valeriansaliou)
+```
+
+Source the entries from `git log <tagA>..<tagB>`, folding a fix and its own follow-up correction into a single entry rather than narrating the intermediate state. A `chore:` commit that changes user-visible strings belongs under `Changed`, not `Miscellaneous`.
+
 ## Build system
 
 Everything goes through the `Makefile`. No Xcode project.
@@ -609,6 +776,8 @@ App/
   SpaceSwitching.swift  — space queries, synthetic gesture posting, navigation
   EventTap.swift        — CGEvent tap callback (Feature 1: instant switch)
   AutoFollow.swift      — app-activation observer (Feature 2: auto-follow)
+  SwipeIntercept.swift  — gesture tap intercepting real trackpad swipes
+                          (Feature 3: instant trackpad swipe)
   MenuBar.swift         — SwoopMenu status item and dropdown menu
   Settings.swift        — preferences window (General + About tabs) — largest file
   UpdateCheck.swift     — GitHub release version checking
@@ -651,7 +820,10 @@ local.env               — git-ignored; signing credentials
 
 ## Known limitations
 
-- Trackpad swipe gestures still animate (they bypass the event tap entirely).
+- Trackpad swipe gestures animate unless the opt-in "Instant Trackpad Swipe"
+  feature is enabled (they bypass the keyboard event tap; Feature 3 intercepts
+  them with its own gesture tap).
+- Space switches inside a Mission Control overview are left to macOS (animated) — the overview cannot be driven by synthetic DockSwipes at all (see "Mission Control stand-down").
 - Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display: at the "Instant" speed setting, `switchOnOtherDisplay` warps the cursor to that display, posts the gesture, and restores the cursor after `kCursorWarpRestoreDelay` (skipping the restore if the user moved it); at animated speeds it stands down and macOS's native animated switch handles it. Direct APIs are not an option (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates. macOS 27 already did this once: it rejects bare synthetic DockSwipe events, requiring the augmented path (see "macOS 27+ gesture augmentation").
 - The macOS 27+ augmented path always posts the equivalent of an instant switch at the "Instant" slider setting; the animated velocity band (Fast/Faster/Fastest) is passed through but uncalibrated on macOS 27.

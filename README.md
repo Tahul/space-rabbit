@@ -11,6 +11,7 @@ Space Rabbit removes animations when switching macOS Spaces. Reclaim hours of yo
 - ✅ **Instant space switch** - your keyboard shortcut switches spaces with zero animation
 - ✅ **Configurable space cycling** - assign Fn/Globe, an F-key, or a global shortcut and wrap back to the first Space
 - ✅ **Auto-follow on Cmd+Tab** - switching to an app on another space takes you there instantly
+- ✅ **Instant trackpad swipe** - your trackpad swipe switches spaces with zero animation too
 - ✅ **Reads your shortcuts** - picks up your bindings from System Settings automatically
 - ✅ **Tiny native macOS app** - 2MB binary size, 12MB memory usage, zero CPU usage
 - ✅ **No system changes needed** - just classic accessibility permissions
@@ -104,7 +105,4 @@ Posts synthetic high-velocity DockSwipe gesture events. The Dock processes these
 
 This is based on the technique from [InstantSpaceSwitcher](https://github.com/jurplel/InstantSpaceSwitcher).
 
-## Known limitations
-
-- Trackpad swipe gestures still animate (they bypass the event tap)
-- May break on future macOS updates (uses undocumented CGEvent fields)
+The "Instant Trackpad Swipe" feature — intercepting real trackpad swipes and replacing them with instant switches — is ported from [iss](https://github.com/joshuarli/iss) by [@joshuarli](https://github.com/joshuarli), which also pioneered the event augmentation required on macOS 27+.

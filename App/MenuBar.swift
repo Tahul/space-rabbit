@@ -68,10 +68,11 @@ final class SwoopMenu: NSObject {
 
     // MARK: Menu Items
 
-    private let statusItem:          NSStatusItem
-    private let instantSwitchItem:   NSMenuItem
-    private let autoFollowItem:      NSMenuItem
-    private let statsItem:           NSMenuItem
+    private let statusItem:            NSStatusItem
+    private let instantSwitchItem:     NSMenuItem
+    private let autoFollowItem:        NSMenuItem
+    private let trackpadSwipeItem:     NSMenuItem
+    private let statsItem:             NSMenuItem
 
     /// Header row at the top of the menu: app name + master enable switch.
     private let enableSwitchItem:    NSMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -95,24 +96,26 @@ final class SwoopMenu: NSObject {
         // the user has toggled anything)
         let defaults = UserDefaults.standard
         defaults.register(defaults: [
-            Defaults.enabled:         true,
-            Defaults.instantSwitch:   true,
-            Defaults.autoFollow:      true,
+            Defaults.enabled:                true,
+            Defaults.instantSwitch:          true,
+            Defaults.autoFollow:             true,
+            Defaults.trackpadSwipe:          false,  // opt-in — swallows a real gesture
             Defaults.cycleShortcutEnabled:   false,
             Defaults.cycleShortcutKeycode:   kFnKeycode,
             Defaults.cycleShortcutModifiers: UInt64(0),
             Defaults.cycleShortcutLabel:     "fn",
-            Defaults.switchSpeed:     1.0,
-            Defaults.switchCount:     0,
-            Defaults.showMenuBarIcon: true,
+            Defaults.switchSpeed:            1.0,
+            Defaults.switchCount:            0,
+            Defaults.showMenuBarIcon:        true,
         ])
 
         // Load persisted state from UserDefaults into the global variables
         // that drive runtime behavior
-        gEnabled              = defaults.bool(forKey: Defaults.enabled)
-        gInstantSwitchEnabled = defaults.bool(forKey: Defaults.instantSwitch)
-        gAutoFollowEnabled    = defaults.bool(forKey: Defaults.autoFollow)
-        gCycleShortcutEnabled = defaults.bool(forKey: Defaults.cycleShortcutEnabled)
+        gEnabled                 = defaults.bool(forKey: Defaults.enabled)
+        gInstantSwitchEnabled    = defaults.bool(forKey: Defaults.instantSwitch)
+        gAutoFollowEnabled       = defaults.bool(forKey: Defaults.autoFollow)
+        gTrackpadSwipeEnabled    = defaults.bool(forKey: Defaults.trackpadSwipe)
+        gCycleShortcutEnabled    = defaults.bool(forKey: Defaults.cycleShortcutEnabled)
 
         let cycleKeycode = (defaults.object(forKey: Defaults.cycleShortcutKeycode) as? NSNumber)?
             .int64Value ?? kFnKeycode
@@ -131,9 +134,9 @@ final class SwoopMenu: NSObject {
             gCycleShortcutEnabled = false
         }
 
-        gSwitchSpeed          = defaults.double(forKey: Defaults.switchSpeed)
-        gSwitchCount          = defaults.integer(forKey: Defaults.switchCount)
-        gSwitchCountSaved     = gSwitchCount
+        gSwitchSpeed             = defaults.double(forKey: Defaults.switchSpeed)
+        gSwitchCount             = defaults.integer(forKey: Defaults.switchCount)
+        gSwitchCountSaved        = gSwitchCount
 
         // Create the status bar item (variable width to accommodate the icon)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -146,6 +149,9 @@ final class SwoopMenu: NSObject {
         autoFollowItem    = NSMenuItem(title: L("menu.instantAppSwitch"),
                                        action: #selector(toggleAutoFollow(_:)),
                                        keyEquivalent: "f")
+        trackpadSwipeItem = NSMenuItem(title: L("menu.instantTrackpadSwipe"),
+                                       action: #selector(toggleTrackpadSwipe(_:)),
+                                       keyEquivalent: "t")
         statsItem         = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
         super.init()
@@ -222,11 +228,13 @@ final class SwoopMenu: NSObject {
 
     /// Wires up targets and initial toggle states for all menu items.
     private func configureMenuItemTargets() {
-        instantSwitchItem.target  = self
-        instantSwitchItem.state   = gInstantSwitchEnabled ? .on : .off
-        autoFollowItem.target     = self
-        autoFollowItem.state      = gAutoFollowEnabled    ? .on : .off
-        statsItem.isEnabled       = false  // Non-interactive display item
+        instantSwitchItem.target    = self
+        instantSwitchItem.state     = gInstantSwitchEnabled    ? .on : .off
+        autoFollowItem.target       = self
+        autoFollowItem.state        = gAutoFollowEnabled       ? .on : .off
+        trackpadSwipeItem.target = self
+        trackpadSwipeItem.state  = gTrackpadSwipeEnabled ? .on : .off
+        statsItem.isEnabled         = false  // Non-interactive display item
     }
 
     /// Assigns SF Symbol icons to the feature toggle and stats menu items.
@@ -240,6 +248,11 @@ final class SwoopMenu: NSObject {
                              accessibilityDescription: nil) {
             img.isTemplate = true
             autoFollowItem.image = img
+        }
+        if let img = NSImage(systemSymbolName: "rectangle.and.hand.point.up.left.filled",
+                             accessibilityDescription: nil) {
+            img.isTemplate = true
+            trackpadSwipeItem.image = img
         }
         if let img = NSImage(systemSymbolName: "timer",
                              accessibilityDescription: nil) {
@@ -268,6 +281,7 @@ final class SwoopMenu: NSObject {
         statusMenu.addItem(menuHeader(L("menu.section.configure")))
         statusMenu.addItem(instantSwitchItem)
         statusMenu.addItem(autoFollowItem)
+        statusMenu.addItem(trackpadSwipeItem)
         statusMenu.addItem(.separator())
 
         // Statistics section
@@ -470,6 +484,10 @@ final class SwoopMenu: NSObject {
 
         updateMenuBarIcon()
         enableSwitch.state = gEnabled ? .on : .off
+
+        // The swipe-intercept tap (Feature 3) only runs while the master
+        // switch is on — create or tear it down to match
+        updateSwipeTap()
     }
 
     @objc private func openSettings() {
@@ -537,20 +555,31 @@ final class SwoopMenu: NSObject {
     /// Called by the settings window after it changes a feature toggle,
     /// so the dropdown menu stays consistent.
     func syncMenuItems() {
-        instantSwitchItem.state = gInstantSwitchEnabled ? .on : .off
-        autoFollowItem.state    = gAutoFollowEnabled    ? .on : .off
+        instantSwitchItem.state    = gInstantSwitchEnabled    ? .on : .off
+        autoFollowItem.state       = gAutoFollowEnabled       ? .on : .off
+        trackpadSwipeItem.state = gTrackpadSwipeEnabled ? .on : .off
     }
 
     @objc private func toggleInstantSwitch(_ sender: NSMenuItem) {
         gInstantSwitchEnabled.toggle()
         sender.state = gInstantSwitchEnabled ? .on : .off
         UserDefaults.standard.set(gInstantSwitchEnabled, forKey: Defaults.instantSwitch)
+        SettingsWindowController.shared.syncPanes()
     }
 
     @objc private func toggleAutoFollow(_ sender: NSMenuItem) {
         gAutoFollowEnabled.toggle()
         sender.state = gAutoFollowEnabled ? .on : .off
         UserDefaults.standard.set(gAutoFollowEnabled, forKey: Defaults.autoFollow)
+        SettingsWindowController.shared.syncPanes()
+    }
+
+    @objc private func toggleTrackpadSwipe(_ sender: NSMenuItem) {
+        gTrackpadSwipeEnabled.toggle()
+        sender.state = gTrackpadSwipeEnabled ? .on : .off
+        UserDefaults.standard.set(gTrackpadSwipeEnabled, forKey: Defaults.trackpadSwipe)
+        updateSwipeTap()
+        SettingsWindowController.shared.syncPanes()
     }
 
     // MARK: - Statistics

@@ -97,11 +97,14 @@ loadSpaceSwitchShortcuts()
 // (switch count, feature toggles, etc.) from UserDefaults
 gMenu = SwoopMenu()
 
-// Check for updates 5 seconds after launch, giving the app time to
-// settle before making a network request. Launch-only by design: no
-// periodic background re-check (a manual check lives in the settings
-// window's Updates pane).
-DispatchQueue.main.asyncAfter(deadline: .now() + 5) { checkForUpdates() }
+// Check for updates. Launch-only by design: no periodic background
+// re-check (a manual check lives in the settings window's Updates pane).
+// Throttled to at most one network check per hour, so a quick
+// quit-and-relaunch cycle does not re-hit the API each time — a throttled
+// launch instead restores the banner from the remembered release.
+// The function owns its own launch delay, and applies it only when it is
+// actually going to make a request.
+checkForUpdatesAutomatically()
 
 // Persist the switch count to disk every 5 minutes.
 // This batching reduces disk I/O compared to writing on every switch.
@@ -145,6 +148,12 @@ guard let runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
 CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)
 
+// Install the swipe-intercept tap (Feature 3) if the feature is enabled.
+// Must come after gMenu is created — it reads the persisted toggles.
+// Unlike the keyboard tap above, this one is torn down and re-created as
+// the feature is toggled, so a creation failure here is not fatal.
+updateSwipeTap()
+
 // MARK: - App Activation Observer (Auto-Follow)
 //
 // Listens for app-activation events (Cmd+Tab, Dock click, etc.)
@@ -162,10 +171,29 @@ NSWorkspace.shared.notificationCenter.addObserver(
 // which bypass the event tap entirely). This notification arrives before
 // the app activation notification, so the auto-follow suppression guard
 // fires correctly for trackpad-initiated switches too.
+//
+// Exception: a change auto-follow itself asked for is not the user
+// navigating. This notification lands only once the transition has settled
+// (hundreds of milliseconds later), so stamping it would hold auto-follow
+// suppressed well past kAutoFollowSuppressionWindow and let macOS animate
+// the user's next quick Cmd+Tab (issue #24).
 NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.activeSpaceDidChangeNotification,
     object: nil, queue: .main
-) { _ in gLastSpaceSwitchTime = Date() }
+) { _ in
+    // A multi-step follow reports intermediate spaces first; only the
+    // notification that actually lands on the destination counts as ours
+    // and retires the record. Anything older than the grace window is
+    // treated as a switch that never landed.
+    if gAutoFollowTargetSpace != 0,
+       Date().timeIntervalSince(gLastFollowedTime) <= kAutoFollowSelfChangeWindow,
+       getAllCurrentSpaces().contains(gAutoFollowTargetSpace) {
+        gAutoFollowTargetSpace = 0
+        return
+    }
+
+    gLastSpaceSwitchTime = Date()
+}
 
 // Reload the space-switch shortcuts whenever System Settings deactivates —
 // the only place the user can edit them. Without this, shortcut changes
@@ -195,6 +223,7 @@ NotificationCenter.default.addObserver(
     NSWorkspace.shared.notificationCenter.removeObserver(observer)
     CGEvent.tapEnable(tap: tap, enable: false)
     CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+    if let swipeTap = gSwipeTap { CGEvent.tapEnable(tap: swipeTap, enable: false) }
 }
 
 // MARK: - Signal Handling

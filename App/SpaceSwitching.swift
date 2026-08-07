@@ -37,9 +37,9 @@ private let kInstantSwitchProgress: Double = 2.0
 private let kInstantSwitchVelocity: Double = 400.0
 
 /// Instant-switch velocity used on macOS 27+, where the Dock's velocity
-/// threshold changed alongside the stricter event validation. Note the
-/// inverted sign convention on the augmented path: NEGATIVE velocity and
-/// progress move right, positive move left.
+/// threshold changed alongside the stricter event validation. The sign
+/// convention matches the legacy path: positive velocity and progress
+/// move right, negative move left (verified on build 26A5388g).
 private let kAugmentedInstantVelocity: Double = 9999.0
 
 /// Velocity range for animated (non-instant) switches, mapped from the
@@ -214,8 +214,11 @@ private func displayUUIDUnderCursor() -> String? {
 /// Used by auto-follow to determine whether an app is already visible
 /// on any display (in which case we don't need to switch).
 ///
+/// Also used by the `activeSpaceDidChangeNotification` observer in
+/// `main.swift` to confirm a space change was the one auto-follow requested.
+///
 /// - Returns: An array of space IDs, one per display that has an active space.
-private func getAllCurrentSpaces() -> [CGSSpaceID] {
+func getAllCurrentSpaces() -> [CGSSpaceID] {
     guard let mainConn    = cgsMainConnection,
           let getDisplays = cgsCopyDisplaySpaces else { return [] }
 
@@ -233,6 +236,47 @@ private func getAllCurrentSpaces() -> [CGSSpaceID] {
     }
 }
 
+// MARK: - Mission Control Detection
+
+/// Window layer of the full-screen overlay windows the Dock puts up while
+/// a Mission Control-style overview is on screen (`kCGWindowLayer` 18).
+/// Nothing else the Dock owns sits at that layer.
+private let kMissionControlWindowLayer: Int32 = 18
+
+/// Whether a Mission Control-style overview (Mission Control, App Exposé,
+/// Show Desktop) is currently on screen.
+///
+/// The overview drives space navigation itself: it consumes the system
+/// space shortcuts and trackpad swipes to slide its own carousel. A
+/// synthetic DockSwipe posted into it is evaluated against the overview's
+/// state instead of the desktop's, so the screen blanks, swipes, and lands
+/// back on the space the user started from — no switch at all (issue #16).
+/// All three features therefore stand down while it is up and let macOS
+/// handle the input natively.
+///
+/// Detection uses the same marker yabai relies on (`src/mission_control.c`):
+/// for the whole duration of the overview the Dock owns a display-sized
+/// window at layer 18 on every display. `kCGWindowName` is deliberately not
+/// part of the test — it requires Screen Recording permission, which Space
+/// Rabbit does not ask for, so it reads as `nil` for every window here.
+///
+/// - Returns: `true` while an overview is on screen.
+func isMissionControlActive() -> Bool {
+    guard let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
+            as? [[String: Any]]
+    else { return false }
+
+    for window in windowList {
+        guard (window["kCGWindowLayer"] as? NSNumber)?.int32Value == kMissionControlWindowLayer,
+              (window["kCGWindowOwnerName"] as? String) == "Dock"
+        else { continue }
+
+        return true
+    }
+
+    return false
+}
+
 // MARK: - Window-to-Space Mapping
 
 /// Space information for one group of a process's windows.
@@ -241,6 +285,12 @@ private struct WindowGroup {
     /// composited on a currently visible space — which by itself proves
     /// the app is already reachable without switching.
     var hasOnscreenWindow = false
+
+    /// `true` when at least one window in the group lives on more than one
+    /// space — the signature of an "All Desktops" Dock assignment (or a
+    /// status/desktop window tagged onto every space). Such a window is
+    /// reachable from any space, so activating it never navigates anywhere.
+    var hasAllSpacesWindow = false
 
     /// Spaces of the group's non-onscreen windows, in front-to-back order.
     var offscreenSpaces: [CGSSpaceID] = []
@@ -260,7 +310,9 @@ private struct WindowGroup {
 /// short-circuit (no space lookup needed: onscreen implies reachable);
 /// every other window is resolved to its space via the private
 /// `SLSCopySpacesForWindows` API, and windows that cannot be resolved to
-/// a valid space are skipped.
+/// a valid space are skipped. A window that resolves to MORE than one
+/// space is on every space ("All Desktops" assignment) — it only sets the
+/// group's `hasAllSpacesWindow` flag and contributes no chase target.
 ///
 /// - Parameter pid: The Unix process ID of the target application.
 /// - Returns: The process's normal and anchored window groups.
@@ -293,13 +345,23 @@ private func visibleWindowSpaces(for pid: pid_t) -> (normal: WindowGroup, anchor
         guard let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value
         else { continue }
 
-        // Ask the private API which space this window lives on
+        // Ask the private API which space(s) this window lives on
         let windowIDArray = [NSNumber(value: windowID)] as CFArray
         guard let spaces = spacesFor(cid, kSLSSpaceTypeAll, windowIDArray)?
-                .takeRetainedValue() as? [NSNumber],
-              let spaceID = spaces.first?.uint64Value,
-              spaceID != 0
+                .takeRetainedValue() as? [NSNumber]
         else { continue }
+
+        // A window on more than one space is assigned to "All Desktops"
+        // (Dock icon > Options), or is a status/desktop window tagged onto
+        // every space. It is reachable wherever the user is — chasing its
+        // first listed (last-used) space would yank them away (issue #10).
+        if spaces.count > 1 {
+            if isNormal { normal.hasAllSpacesWindow   = true }
+            else        { anchored.hasAllSpacesWindow = true }
+            continue
+        }
+
+        guard let spaceID = spaces.first?.uint64Value, spaceID != 0 else { continue }
 
         if isNormal { normal.offscreenSpaces.append(spaceID)   }
         else        { anchored.offscreenSpaces.append(spaceID) }
@@ -316,6 +378,10 @@ private func visibleWindowSpaces(for pid: pid_t) -> (normal: WindowGroup, anchor
 /// whether any of them are already on a currently-visible display. If so, no
 /// switch is needed and this returns 0. Otherwise, it returns the space of the
 /// frontmost off-screen window.
+///
+/// A hidden or minimized window assigned to "All Desktops" also yields 0:
+/// it reappears on whatever space the user is on, so following its last-used
+/// space would drag the user backwards (issue #10).
 ///
 /// When the process has no normal windows at all, falls back to its
 /// space-anchored helper windows: macOS's own activation logic still
@@ -339,6 +405,11 @@ func findSpaceForPid(_ pid: pid_t) -> CGSSpaceID {
     func destination(for group: WindowGroup) -> CGSSpaceID? {
         // An onscreen window means the app is visible right now
         if group.hasOnscreenWindow { return 0 }
+
+        // A window on every space ("All Desktops") appears right where the
+        // user is the moment the app unhides — native activation never
+        // navigates for it, so neither do we (issue #10).
+        if group.hasAllSpacesWindow { return 0 }
 
         // A non-onscreen window whose space is currently visible is
         // minimized or hidden: native activation doesn't navigate anywhere
@@ -541,8 +612,11 @@ private func displayID(forIdentifier identifier: String) -> CGDirectDisplayID? {
 //   3. Post a full Began+Changed+Ended phase sequence (the pre-27 path
 //      gets away with Began+Ended only).
 //
-// The sign convention also inverted on this path: negative progress and
-// velocity move RIGHT, positive move LEFT.
+// The sign convention matches the legacy path: positive progress and
+// velocity move RIGHT, negative move LEFT. (Some earlier macOS 27 betas
+// reportedly accepted inverted signs; build 26A5388g wants the normal
+// orientation — inverted signs there swipe toward the wrong edge and
+// rubber-band back.)
 
 /// Whether this macOS release requires the augmented gesture path
 /// (macOS 27 and later). Evaluated once on first use.
@@ -672,8 +746,8 @@ private func augmentDockSwipeEvent(_ event: CGEvent) -> CGEvent? {
 
 /// Creates one phase of the macOS 27 dock swipe, with the extra fields
 /// the 27 Dock validates (phase mirror, flavor, timestamp, non-zero
-/// position). Progress/velocity signs are INVERTED relative to the
-/// legacy path: negative moves right, positive moves left.
+/// position). Progress/velocity signs follow the legacy convention:
+/// positive moves right, negative moves left.
 ///
 /// - Parameters:
 ///   - phase: `kCGSGesturePhaseBegan`, `...Changed`, or `...Ended`.
@@ -687,7 +761,7 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
     ev.setIntegerValueField(kCGSEventTypeField,          value: kCGSEventDockControl)
     ev.setIntegerValueField(kCGEventGestureHIDType,      value: kIOHIDEventTypeDockSwipe)
     ev.setIntegerValueField(kCGEventGesturePhase,        value: phase)
-    ev.setDoubleValueField(kCGEventGestureSwipeProgress, value: isRight ? -1.0 : 1.0)
+    ev.setDoubleValueField(kCGEventGestureSwipeProgress, value: isRight ? 1.0 : -1.0)
     ev.setIntegerValueField(kCGEventGestureSwipeMotion,  value: 1)
     ev.setIntegerValueField(kCGEventGesturePhase2,       value: phase)
     ev.setDoubleValueField(kCGEventGestureFlavor,        value: Double(kIOHIDGestureFlavorDockPrimary))
@@ -696,7 +770,7 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
 
     if phase == kCGSGesturePhaseEnded {
         ev.setDoubleValueField(kCGEventGestureSwipeVelocityX,
-                               value: isRight ? -velocity : velocity)
+                               value: isRight ? velocity : -velocity)
     }
     return ev
 }
@@ -724,13 +798,20 @@ private func postAugmentedSwitchGesture(isRight: Bool, velocity: Double) -> Bool
 
     for phase in phases {
         guard let dockEvent = makeAugmentedDockEvent(phase: phase, isRight: isRight,
-                                                     velocity: magnitude),
-              let augmented    = augmentDockSwipeEvent(dockEvent),
+                                                     velocity: magnitude)
+        else { return false }
+
+        // Mark before augmenting: augmentDockSwipeEvent flattens and rebuilds
+        // the event, so the stamp has to be part of what gets flattened.
+        markSyntheticGesture(dockEvent)
+
+        guard let augmented    = augmentDockSwipeEvent(dockEvent),
               let gestureEvent = CGEvent(source: nil)
         else { return false }
 
         // The companion gesture envelope needs no augmentation
         gestureEvent.setIntegerValueField(kCGSEventTypeField, value: kCGSEventGesture)
+        markSyntheticGesture(gestureEvent)
         events.append((augmented, gestureEvent))
     }
 
@@ -796,9 +877,12 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
         dockEvent.setDoubleValueField(kCGEventGestureSwipeVelocityY, value: 0)
     }
 
-    // Post both events into the session event tap where the Dock can see them.
-    // The dock control event must be posted first (it carries the payload),
-    // followed by the gesture envelope.
+    // Post both events into the session event tap where the Dock can see
+    // them. The dock control event must be posted first (it carries the
+    // payload), followed by the gesture envelope. The swipe-intercept tap
+    // (Feature 3) sees these too — stamp them so it passes them through.
+    markSyntheticGesture(dockEvent)
+    markSyntheticGesture(gestureEvent)
     dockEvent.post(tap: .cgSessionEventTap)
     gestureEvent.post(tap: .cgSessionEventTap)
     return true

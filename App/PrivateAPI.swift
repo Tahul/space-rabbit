@@ -128,6 +128,11 @@ let kCGSGesturePhaseChanged:  Int64 = 2
 /// Gesture phase: the swipe has ended (velocity and progress are evaluated).
 let kCGSGesturePhaseEnded:    Int64 = 4
 
+/// Gesture phase: the swipe was cancelled by the system (e.g. more fingers
+/// landed, or the gesture was reinterpreted). Only ever observed by the
+/// swipe-intercept tap — synthetic gestures never post this phase.
+let kCGSGesturePhaseCancelled: Int64 = 8
+
 // MARK: - IOHID Payload Constants (macOS 27 Augmented Gestures)
 //
 // macOS 27 validates synthetic dock swipes against a serialized IOHID

@@ -35,6 +35,10 @@
 "menu.instantSpaceSwitch" = "Мгновенное переключение столов ⌃↔";
 "menu.instantAppSwitch" = "Мгновенное переключение приложений ⌘⇥";
 
+/* Feature 3 toggle: replaces the animated trackpad swipe (3 or 4 fingers).
+   No trailing glyph — the gesture it replaces has no keyboard shortcut. */
+"menu.instantTrackpadSwipe" = "Мгновенное смахивание на трекпаде";
+
 /* Small grey section headings */
 "menu.section.configure" = "Настройка:";
 "menu.section.statistics" = "Статистика:";
@@ -86,6 +90,7 @@
 
 "settings.features.instantSpaceSwitch" = "Мгновенное переключение столов";
 "settings.features.instantAppSwitch" = "Мгновенное переключение приложений";
+"settings.features.instantTrackpadSwipe" = "Мгновенное смахивание на трекпаде";
 "settings.features.cycleSpaces" = "Переключать столы";
 "settings.features.cycleSpaces.normalWarning" = "Функция «Переключать столы» недоступна, когда скорость перехода установлена на «Обычная».";
 "settings.features.shortcut.recording" = "Нажмите сочетание…";

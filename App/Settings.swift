@@ -123,6 +123,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Refreshes the open window's panes from the global state.
+    ///
+    /// Called when a setting is changed outside the settings window (the menu
+    /// bar dropdown), so a visible pane updates live instead of waiting for
+    /// the next pane swap. No-op when the window was never created.
+    func syncPanes() {
+        rootController?.syncPanes()
+    }
+
     /// Constructs the preferences window with its sidebar + pane layout.
     private func makeWindow() -> NSWindow {
         let root = SettingsRootViewController()
@@ -192,6 +201,16 @@ final class SettingsRootViewController: NSSplitViewController {
         super.viewDidAppear()
         // The window may not exist yet during viewDidLoad; size it now
         resizeToFitCurrentPane(animate: false)
+    }
+
+    /// Refreshes every instantiated pane from the global state.
+    ///
+    /// All cached panes are refreshed, not just the visible one: an offscreen
+    /// pane's `viewWillAppear` no longer re-reads the globals for it.
+    func syncPanes() {
+        for controller in paneControllers.values {
+            (controller as? SettingsPaneViewController)?.syncFromGlobals()
+        }
     }
 
     /// Selects the given pane in the sidebar and shows it.
@@ -646,6 +665,17 @@ class SettingsPaneViewController: NSViewController {
     /// stretched to the pane's full content width.
     func buildContent() -> [NSView] { [] }
 
+    /// Subclasses override to refresh their controls from the global state.
+    ///
+    /// Called when the pane is about to appear and whenever the same setting
+    /// is changed elsewhere (the menu bar dropdown) while the pane is visible.
+    func syncFromGlobals() {}
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        syncFromGlobals()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
 
@@ -826,9 +856,12 @@ final class AutoStartPaneController: SettingsPaneViewController {
         updateLaunchAtLoginUI()
     }
 
+    override func syncFromGlobals() {
+        updateLaunchAtLoginUI()
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
-        updateLaunchAtLoginUI()
 
         // If the user arrived here from the menu bar warning banner,
         // flash the banner to draw attention to the launch-at-login setting
@@ -947,6 +980,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
 
     private var instantSwitchControl: NSSwitch!
     private var autoFollowControl:    NSSwitch!
+    private var trackpadSwipeControl: NSSwitch!
     private var cycleShortcutControl: NSSwitch!
     private var shortcutRecorder:     ShortcutRecorderButton!
     private var cycleShortcutRow:     SettingsRowView!
@@ -957,6 +991,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
     override func buildContent() -> [NSView] {
         instantSwitchControl = makeSwitch(gInstantSwitchEnabled, #selector(toggleInstantSwitch))
         autoFollowControl    = makeSwitch(gAutoFollowEnabled,    #selector(toggleAutoFollow))
+        trackpadSwipeControl = makeSwitch(gTrackpadSwipeEnabled, #selector(toggleTrackpadSwipe))
         cycleShortcutControl = makeSwitch(
             gCycleShortcutEnabled,
             #selector(toggleCycleShortcut)
@@ -996,6 +1031,9 @@ final class FeaturesPaneController: SettingsPaneViewController {
             settingsRow(label: L("settings.features.instantAppSwitch"),
                         control: autoFollowControl),
             rowDivider(),
+            settingsRow(label: L("settings.features.instantTrackpadSwipe"),
+                        control: trackpadSwipeControl),
+            rowDivider(),
             cycleShortcutRow,
         ])
         let speedGroup = groupBox([
@@ -1006,16 +1044,15 @@ final class FeaturesPaneController: SettingsPaneViewController {
         return [togglesGroup, speedGroup]
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
-
+    override func syncFromGlobals() {
         // Refresh all toggle states — they may have been changed via the
-        // menu bar while this pane was not visible
-        instantSwitchControl.state = gInstantSwitchEnabled ? .on : .off
-        autoFollowControl.state    = gAutoFollowEnabled    ? .on : .off
-        cycleShortcutControl.state = gCycleShortcutEnabled ? .on : .off
+        // menu bar, whether or not this pane was visible at the time
+        instantSwitchControl.state    = gInstantSwitchEnabled    ? .on : .off
+        autoFollowControl.state       = gAutoFollowEnabled       ? .on : .off
+        trackpadSwipeControl.state    = gTrackpadSwipeEnabled    ? .on : .off
+        cycleShortcutControl.state    = gCycleShortcutEnabled    ? .on : .off
         shortcutRecorder.setShortcut(gCycleShortcut)
-        speedSlider.doubleValue    = gSwitchSpeed
+        speedSlider.doubleValue       = gSwitchSpeed
         updateSpeedDisplay()
         updateCycleShortcutAvailability()
     }
@@ -1198,6 +1235,13 @@ final class FeaturesPaneController: SettingsPaneViewController {
         persistCycleShortcut()
     }
 
+    @objc private func toggleTrackpadSwipe() {
+        gTrackpadSwipeEnabled = trackpadSwipeControl.state == .on
+        UserDefaults.standard.set(gTrackpadSwipeEnabled, forKey: Defaults.trackpadSwipe)
+        updateSwipeTap()
+        gMenu?.syncMenuItems()
+    }
+
     @objc private func speedChanged() {
         gSwitchSpeed = speedSlider.doubleValue
         UserDefaults.standard.set(gSwitchSpeed, forKey: Defaults.switchSpeed)
@@ -1310,8 +1354,7 @@ final class AdvancedPaneController: SettingsPaneViewController {
         return [dockGroup, menuBarGroup]
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
+    override func syncFromGlobals() {
         instantDockHideControl.state = isDockInstantHideEnabled() ? .on : .off
         let menuBarVisible = gMenu?.isMenuBarIconVisible
             ?? UserDefaults.standard.bool(forKey: Defaults.showMenuBarIcon)

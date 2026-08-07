@@ -35,6 +35,10 @@
 "menu.instantSpaceSwitch" = "Instant Space Switch ⌃↔";
 "menu.instantAppSwitch" = "Instant App Switch ⌘⇥";
 
+/* Feature 3 toggle: replaces the animated trackpad swipe (3 or 4 fingers).
+   No trailing glyph — the gesture it replaces has no keyboard shortcut. */
+"menu.instantTrackpadSwipe" = "Instant Trackpad Swipe";
+
 /* Small grey section headings */
 "menu.section.configure" = "Configure:";
 "menu.section.statistics" = "Statistics:";
@@ -83,6 +87,7 @@
 
 "settings.features.instantSpaceSwitch" = "Instant Space switch";
 "settings.features.instantAppSwitch" = "Instant App switch";
+"settings.features.instantTrackpadSwipe" = "Instant Trackpad swipe";
 "settings.features.cycleSpaces" = "Cycle Spaces";
 "settings.features.cycleSpaces.normalWarning" = "Unavailable when the transition speed is set to Normal";
 "settings.features.shortcut.recording" = "Press shortcut…";
