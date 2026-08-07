@@ -29,7 +29,7 @@ Alternatively, you can also [download Space Rabbit from our website](https://spa
 
 👉 **Grant Accessibility access when prompted** (System Settings → Privacy & Security → Accessibility).
 
-## Setup
+## Configure
 
 For the best experience, also enable **Instant Dock hide** in Space Rabbit's Preferences.
 
@@ -55,8 +55,7 @@ Requires Xcode Command Line Tools (`xcode-select --install`). No third-party dep
 
 ```bash
 # Clone the repo
-git clone https://github.com/Tahul/space-rabbit.git
-cd space-rabbit
+git clone https://github.com/Tahul/space-rabbit.git && cd space-rabbit
 
 # Build Space Rabbit.app in the project root
 make app
@@ -102,10 +101,8 @@ This app supports localization. The base language is English (`en`). It is trans
 
 If your spoken language is missing, you can add it by asking your AI coding agent to auto-translate from English. To check it, build the app for yourself and manually check all localized strings. Then, you may submit a Pull Request.
 
-## How it works
+## Credits
 
-Posts synthetic high-velocity DockSwipe gesture events. The Dock processes these as a completed trackpad swipe and switches instantly.
+Space Rabbit relies on a hack, that posts synthetic high-velocity DockSwipe gesture events. This is based on a technique from [InstantSpaceSwitcher](https://github.com/jurplel/InstantSpaceSwitcher).
 
-This is based on the technique from [InstantSpaceSwitcher](https://github.com/jurplel/InstantSpaceSwitcher).
-
-The "Instant Trackpad Swipe" feature — intercepting real trackpad swipes and replacing them with instant switches — is ported from [iss](https://github.com/joshuarli/iss) by [@joshuarli](https://github.com/joshuarli), which also pioneered the event augmentation required on macOS 27+.
+The "Instant Trackpad Swipe" feature — intercepting real trackpad swipes and replacing them with instant switches — is ported from [iss](https://github.com/joshuarli/iss) by [@joshuarli](https://github.com/joshuarli).
