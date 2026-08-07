@@ -31,7 +31,9 @@ Alternatively, you can also [download Space Rabbit from our website](https://spa
 
 ## Setup
 
-For the best experience, also enable **Instant Dock hide** in Space Rabbit's Preferences. This makes the Dock hide animation instant, eliminating a residual flash when switching spaces. It is not enabled by default because it modifies a global macOS setting — but it has no effect when Space Rabbit is disabled.
+For the best experience, also enable **Instant Dock hide** in Space Rabbit's Preferences.
+
+This makes the Dock hide animation instant, eliminating a residual transition of the Dock when switching spaces. It is not enabled by default because it modifies a global macOS setting — but it has no effect when Space Rabbit is disabled.
 
 ![instant-dock](https://github.com/user-attachments/assets/a8b18b0c-aebb-42fe-a52d-fa5a0d346907)
 
