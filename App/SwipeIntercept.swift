@@ -120,7 +120,7 @@ func resetSwipeIntercept() {
     gSwipeFired                  = false
     gMissionControlSwipeTracking = false
     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
-    gPendingMissionControlStartedInOverview = nil
+    gPendingMissionControlOverviewState = nil
 }
 
 /// Reinjects a held physical vertical-gesture prefix immediately after this
@@ -133,14 +133,14 @@ private func replayPendingMissionControlEvents(proxy: CGEventTapProxy) {
         pendingEvent.tapPostEvent(proxy)
     }
     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
-    gPendingMissionControlStartedInOverview = nil
+    gPendingMissionControlOverviewState = nil
 }
 
 /// Rechecks whether the shared tap is still needed after a deferred Mission
 /// Control gesture finishes.
 private func finishMissionControlInterception() {
     gMissionControlSwipeTracking = false
-    gPendingMissionControlStartedInOverview = nil
+    gPendingMissionControlOverviewState = nil
     if !gEnabled || (!gTrackpadSwipeEnabled
         && (!gInstantMissionControlEnabled || isNativeSwitchSpeed())) {
         DispatchQueue.main.async { updateSwipeTap() }
@@ -157,12 +157,14 @@ private func finishMissionControlInterception() {
 /// separate from `postMissionControlTransition`'s signed output.
 private func pendingMissionControlDirection(forPhysicalSign sign: Double) -> Int? {
     guard sign != 0,
-          let startedInOverview = gPendingMissionControlStartedInOverview
+          let overviewState = gPendingMissionControlOverviewState
     else { return nil }
 
     let direction = sign < 0 ? 1 : -1
-    let isDismissal = direction < 0
-    return startedInOverview == isDismissal ? direction : nil
+    if direction > 0 {
+        return overviewState == .desktop ? direction : nil
+    }
+    return overviewState == .missionControl ? direction : nil
 }
 
 /// Removes every ordinary progress/velocity component from a physical Ended
@@ -179,16 +181,16 @@ private func clearGestureMotion(_ event: CGEvent) {
 
 /// Stamped into `.eventSourceUserData` on every gesture event Space Rabbit
 /// posts, so the swipe tap can recognise its own events on the way back in.
-/// The field is carried by the event record and survives the round trip
-/// through the session tap (including the macOS 27+ flatten/rebuild in
-/// `augmentDockSwipeEvent`, which is applied after the stamp).
+/// The field survives the round trip through the session tap, but not
+/// `CGEventCreateFromData`; augmented events are therefore stamped after their
+/// field-4205 flatten/rebuild.
 private let kSyntheticGestureMarker: Int64 = 0x5350_4152  // 'SPAR'
 
 /// Marks an event as posted by Space Rabbit, so the swipe-intercept tap
 /// passes it through instead of re-intercepting it (which would loop:
 /// intercept → post → intercept → …).
 ///
-/// Called by the gesture posting code in SpaceSwitching.swift on every
+/// Called by the gesture posting code in SpaceSwitching.swift on every final
 /// event before it goes out — unconditionally, whether or not the tap is
 /// currently installed, so a tap installed mid-sequence still recognises
 /// events already in flight.
@@ -255,8 +257,9 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                 finishMissionControlInterception()
             }
             if phase == kCGSGesturePhaseEnded, requiresEventAugmentation() {
-                clearGestureMotion(event)
-                return passthrough
+                guard let cleanup = makeMissionControlCleanupEvent(from: event)
+                else { return nil }
+                return Unmanaged.passRetained(cleanup)
             }
             return nil
         }
@@ -310,11 +313,12 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                 replayPendingMissionControlEvents(proxy: proxy)
             }
 
-            guard let startedInOverview = missionControlOverviewState(),
+            guard let overviewState = currentDockOverviewState(),
+                  overviewState == .desktop || overviewState == .missionControl,
                   let beganCopy = event.copy() else { return passthrough }
 
             gPendingMissionControlEvents = [beganCopy]
-            gPendingMissionControlStartedInOverview = startedInOverview
+            gPendingMissionControlOverviewState = overviewState
             return nil
         }
 
@@ -326,7 +330,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                    postMissionControlTransition(proxy: proxy,
                                                 direction: direction) {
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
-                    gPendingMissionControlStartedInOverview = nil
+                    gPendingMissionControlOverviewState = nil
                     gMissionControlSwipeTracking = true
                     return nil
                 }
@@ -345,8 +349,9 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
                     finishMissionControlInterception()
                     if requiresEventAugmentation() {
-                        clearGestureMotion(event)
-                        return passthrough
+                        guard let cleanup = makeMissionControlCleanupEvent(from: event)
+                        else { return nil }
+                        return Unmanaged.passRetained(cleanup)
                     }
                     return nil
                 }

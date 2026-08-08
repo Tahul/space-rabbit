@@ -120,10 +120,9 @@ var gMissionControlSwipeTracking: Bool = false
 /// when Space Rabbit does not claim the gesture.
 var gPendingMissionControlEvents: [CGEvent] = []
 
-/// Overview state captured when the pending vertical Began arrived. `false`
-/// permits upward entry; `true` permits downward dismissal. `nil` means no
-/// vertical prefix is pending or the overview state could not be read safely.
-var gPendingMissionControlStartedInOverview: Bool?
+/// Exact overview state captured with the pending vertical Began. The live
+/// state may already be transitioning by the time Changed reveals direction.
+var gPendingMissionControlOverviewState: DockOverviewState?
 
 // MARK: - Statistics
 
