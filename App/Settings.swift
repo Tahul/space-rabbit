@@ -1415,11 +1415,16 @@ enum AboutAppIcon {
                                          bitsPerSample: 8, samplesPerPixel: 4,
                                          hasAlpha: true, isPlanar: false,
                                          colorSpaceName: .deviceRGB,
-                                         bytesPerRow: 0, bitsPerPixel: 0),
-              let context = NSGraphicsContext(bitmapImageRep: rep)
+                                         bytesPerRow: 0, bitsPerPixel: 0)
         else { return nil }
 
+        // Must be set BEFORE the context is created: it defines the rep's point
+        // size, and hence the coordinate space drawing happens in. Left at its
+        // default the space is one point per pixel, and the icon lands in a
+        // corner of the bitmap at `1 / scale` of its intended size.
         rep.size = NSSize(width: size, height: size)
+
+        guard let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
 
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
