@@ -6,7 +6,7 @@
  * the left selects one of five panes shown on the right:
  *
  *   Auto-Start — Launch at Login toggle (+ warning banner)
- *   Features   — Instant space switch, Auto-follow, Transition speed
+ *   Features   — Instant space switch, Auto-follow, gestures, Transition speed
  *   Advanced   — Dock instant-hide, menu bar icon visibility
  *   Updates    — Manual update check + manual-update notice
  *   About      — App icon, version, authors
@@ -844,7 +844,7 @@ final class AutoStartPaneController: SettingsPaneViewController {
 
 // MARK: - Features Pane
 
-/// The "Features" pane: instant space switch, auto-follow, transition speed.
+/// The "Features" pane: instant switching features and transition speed.
 final class FeaturesPaneController: SettingsPaneViewController {
 
     override var paneTitle: String { SettingsPane.features.title }
@@ -852,6 +852,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
     private var instantSwitchControl:    NSSwitch!
     private var autoFollowControl:       NSSwitch!
     private var trackpadSwipeControl:    NSSwitch!
+    private var missionControlControl:   NSSwitch!
     private var speedSlider:             NSSlider!
     private var speedValueLabel:         NSTextField!
     private var speedBoltIcon:           NSImageView!
@@ -860,6 +861,8 @@ final class FeaturesPaneController: SettingsPaneViewController {
         instantSwitchControl    = makeSwitch(gInstantSwitchEnabled,    #selector(toggleInstantSwitch))
         autoFollowControl       = makeSwitch(gAutoFollowEnabled,       #selector(toggleAutoFollow))
         trackpadSwipeControl    = makeSwitch(gTrackpadSwipeEnabled,    #selector(toggleTrackpadSwipe))
+        missionControlControl = makeSwitch(gInstantMissionControlEnabled,
+                                           #selector(toggleInstantMissionControl))
 
         let togglesGroup = groupBox([
             settingsRow(label: L("settings.features.instantSpaceSwitch"),
@@ -870,6 +873,9 @@ final class FeaturesPaneController: SettingsPaneViewController {
             rowDivider(),
             settingsRow(label: L("settings.features.instantTrackpadSwipe"),
                         control: trackpadSwipeControl),
+            rowDivider(),
+            settingsRow(label: L("settings.features.instantMissionControl"),
+                        control: missionControlControl),
         ])
         let speedGroup = groupBox([
             settingsRow(label: L("settings.features.transitionSpeed"),
@@ -884,6 +890,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
         instantSwitchControl.state    = gInstantSwitchEnabled    ? .on : .off
         autoFollowControl.state       = gAutoFollowEnabled       ? .on : .off
         trackpadSwipeControl.state    = gTrackpadSwipeEnabled    ? .on : .off
+        missionControlControl.state   = gInstantMissionControlEnabled ? .on : .off
         speedSlider.doubleValue       = gSwitchSpeed
         updateSpeedDisplay()
     }
@@ -1026,6 +1033,14 @@ final class FeaturesPaneController: SettingsPaneViewController {
     @objc private func toggleTrackpadSwipe() {
         gTrackpadSwipeEnabled = trackpadSwipeControl.state == .on
         UserDefaults.standard.set(gTrackpadSwipeEnabled, forKey: Defaults.trackpadSwipe)
+        updateSwipeTap()
+        gMenu?.syncMenuItems()
+    }
+
+    @objc private func toggleInstantMissionControl() {
+        gInstantMissionControlEnabled = missionControlControl.state == .on
+        UserDefaults.standard.set(gInstantMissionControlEnabled,
+                                  forKey: Defaults.instantMissionControl)
         updateSwipeTap()
         gMenu?.syncMenuItems()
     }

@@ -36,6 +36,16 @@ private let kInstantSwitchProgress: Double = 2.0
 /// Positive = right, negative = left.
 private let kInstantSwitchVelocity: Double = 400.0
 
+/// Smallest progress value that survives the signed 16.16 IOHID payload
+/// used by vertical DockSwipe gestures.
+private let kMissionControlEpsilon: Double = 1.0 / 65536.0
+
+/// DockSwipe motion value for the vertical Mission Control/App Exposé axis.
+private let kGestureMotionVertical: Int64 = 2
+
+/// IOHID swipe-mask bit identifying upward Mission Control entry.
+private let kIOHIDSwipeUp: Int64 = 1
+
 /// Instant-switch velocity used on macOS 27+, where the Dock's velocity
 /// threshold changed alongside the stricter event validation. Note the
 /// inverted sign convention on the augmented path: NEGATIVE velocity and
@@ -243,16 +253,16 @@ func getAllCurrentSpaces() -> [CGSSpaceID] {
 /// Nothing else the Dock owns sits at that layer.
 private let kMissionControlWindowLayer: Int32 = 18
 
-/// Whether a Mission Control-style overview (Mission Control, App Exposé,
-/// Show Desktop) is currently on screen.
+/// Reads whether a Mission Control-style overview (Mission Control, App
+/// Exposé, Show Desktop) is currently on screen.
 ///
 /// The overview drives space navigation itself: it consumes the system
 /// space shortcuts and trackpad swipes to slide its own carousel. A
 /// synthetic DockSwipe posted into it is evaluated against the overview's
 /// state instead of the desktop's, so the screen blanks, swipes, and lands
 /// back on the space the user started from — no switch at all (issue #16).
-/// All three features therefore stand down while it is up and let macOS
-/// handle the input natively.
+/// The existing Space-switch features therefore stand down while it is up
+/// and let macOS handle the input natively.
 ///
 /// Detection uses the same marker yabai relies on (`src/mission_control.c`):
 /// for the whole duration of the overview the Dock owns a display-sized
@@ -260,11 +270,11 @@ private let kMissionControlWindowLayer: Int32 = 18
 /// part of the test — it requires Screen Recording permission, which Space
 /// Rabbit does not ask for, so it reads as `nil` for every window here.
 ///
-/// - Returns: `true` while an overview is on screen.
-func isMissionControlActive() -> Bool {
+/// - Returns: The overview state, or `nil` when the window list is unavailable.
+private func missionControlOverviewActive() -> Bool? {
     guard let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
             as? [[String: Any]]
-    else { return false }
+    else { return nil }
 
     for window in windowList {
         guard (window["kCGWindowLayer"] as? NSNumber)?.int32Value == kMissionControlWindowLayer,
@@ -275,6 +285,28 @@ func isMissionControlActive() -> Bool {
     }
 
     return false
+}
+
+/// Whether a Mission Control-style overview is currently on screen.
+///
+/// Existing Space-switch paths preserve their native fallback behavior when
+/// the window list cannot be read, treating an unavailable marker as inactive.
+///
+/// - Returns: `true` while an overview is on screen.
+func isMissionControlActive() -> Bool {
+    missionControlOverviewActive() ?? false
+}
+
+/// Whether Instant Mission Control can safely claim a new upward gesture.
+///
+/// Unlike the established Space-switch stand-down check, an unavailable
+/// window list is not treated as the desktop: this feature is about to swallow
+/// physical input, so uncertain state must remain native.
+///
+/// - Returns: `true` only when the overview state was read successfully and
+///            no Mission Control-style overview is active.
+func canInterceptMissionControlEntry() -> Bool {
+    missionControlOverviewActive() == false
 }
 
 // MARK: - Window-to-Space Mapping
@@ -639,6 +671,15 @@ func requiresEventAugmentation() -> Bool { gAugmentationRequired }
 private let gAugmentationRequired: Bool =
     ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
 
+/// Whether this release uses a vertical DockSwipe schema known to the Instant
+/// Mission Control interceptor. Unknown future private schemas stay native.
+///
+/// - Returns: `true` for the app's supported macOS 15 through macOS 27 range.
+func supportsInstantMissionControlInterception() -> Bool {
+    let majorVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    return (15...27).contains(majorVersion)
+}
+
 /// Packed byte sizes of the IOHID structures serialized into the payload.
 /// The layouts are `#pragma pack(1)` C structs — serialized field-by-field
 /// below because Swift structs make no layout guarantees.
@@ -756,6 +797,101 @@ private func augmentDockSwipeEvent(_ event: CGEvent) -> CGEvent? {
     bytes.append(payload)
 
     return CGEvent(withDataAllocator: kCFAllocatorDefault, data: bytes as CFData)
+}
+
+// MARK: - Instant Mission Control Gesture
+
+/// Creates one phase of an immediate upward vertical DockSwipe.
+///
+/// The sequence follows the segmented vertical gesture state used by the
+/// Dock: Began starts at the smallest representable non-zero progress,
+/// Changed jumps to Mission Control's `+1.0` boundary, and Ended closes the
+/// transition with epsilon velocity. macOS 27+ also receives the mirrored
+/// fields that feed its validated IOHID payload.
+///
+/// - Parameters:
+///   - phase: Began, Changed, or Ended.
+///   - augmented: Whether to populate the macOS 27+ fields.
+/// - Returns: The dock-control event, or `nil` if it cannot be allocated.
+private func makeMissionControlDockEvent(phase: Int64,
+                                         augmented: Bool) -> CGEvent? {
+    guard let event = CGEvent(source: nil) else { return nil }
+
+    let progress = phase == kCGSGesturePhaseBegan
+        ? kMissionControlEpsilon : 1.0
+
+    event.setIntegerValueField(kCGSEventTypeField, value: kCGSEventDockControl)
+    event.setIntegerValueField(kCGEventGestureHIDType, value: kIOHIDEventTypeDockSwipe)
+    event.setIntegerValueField(kCGEventGesturePhase, value: phase)
+    event.setIntegerValueField(kCGEventGestureSwipeMotion, value: kGestureMotionVertical)
+    event.setIntegerValueField(kCGEventGestureSwipeMask, value: kIOHIDSwipeUp)
+    event.setDoubleValueField(kCGEventGestureSwipeProgress, value: progress)
+
+    if phase == kCGSGesturePhaseEnded {
+        event.setDoubleValueField(kCGEventGestureSwipeVelocityX,
+                                  value: kMissionControlEpsilon)
+    }
+
+    if augmented {
+        event.setIntegerValueField(kCGEventGesturePhase2, value: phase)
+        event.setDoubleValueField(kCGEventGestureFlavor,
+                                  value: Double(kIOHIDGestureFlavorDockPrimary))
+        event.setDoubleValueField(kCGEventGestureTimestamp,
+                                  value: Double(mach_absolute_time()))
+        event.setDoubleValueField(kCGEventGesturePositionY, value: 0.1)
+    } else {
+        // Legacy Dock uses the signed Float bits in field 135 for vertical
+        // direction and rejects a gesture whose auxiliary delta is zero.
+        let upwardFlag = Float.leastNonzeroMagnitude
+        event.setIntegerValueField(
+            kCGEventScrollGestureFlagBits,
+            value: Int64(UInt64(upwardFlag.bitPattern))
+        )
+        event.setDoubleValueField(kCGEventGestureScrollY, value: 0)
+        event.setDoubleValueField(kCGEventGestureZoomDeltaX,
+                                  value: Double(Float.leastNonzeroMagnitude))
+    }
+
+    return event
+}
+
+/// Posts a complete zero-duration upward gesture that opens Mission Control.
+///
+/// Every phase is allocated and, on macOS 27+, augmented before the first is
+/// posted. A failure therefore posts no partial synthetic stream, allowing the
+/// interceptor to replay the held physical prefix and leave macOS native.
+/// Events are injected through the current tap proxy so they land immediately
+/// after the intercepted physical event and do not loop through this tap.
+///
+/// - Parameter proxy: The active swipe-intercept tap proxy.
+/// - Returns: `true` after the full Began/Changed/Ended sequence was posted;
+///            otherwise `false` without posting any of it.
+func postInstantMissionControlGesture(proxy: CGEventTapProxy) -> Bool {
+    let needsAugmentation = requiresEventAugmentation()
+    let phases = [kCGSGesturePhaseBegan, kCGSGesturePhaseChanged,
+                  kCGSGesturePhaseEnded]
+    var events = [CGEvent]()
+
+    for phase in phases {
+        guard let rawEvent = makeMissionControlDockEvent(
+            phase: phase,
+            augmented: needsAugmentation
+        ) else { return false }
+
+        markSyntheticGesture(rawEvent)
+
+        if needsAugmentation {
+            guard let augmentedEvent = augmentDockSwipeEvent(rawEvent) else { return false }
+            events.append(augmentedEvent)
+        } else {
+            events.append(rawEvent)
+        }
+    }
+
+    for event in events {
+        event.tapPostEvent(proxy)
+    }
+    return true
 }
 
 /// Creates one phase of the macOS 27 dock swipe, with the extra fields

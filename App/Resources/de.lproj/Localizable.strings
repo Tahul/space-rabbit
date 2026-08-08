@@ -35,6 +35,7 @@
 /* Feature 3 toggle: replaces the animated trackpad swipe (3 or 4 fingers).
    No trailing glyph — the gesture it replaces has no keyboard shortcut. */
 "menu.instantTrackpadSwipe" = "Sofortiges Trackpad-Streichen";
+"menu.instantMissionControl" = "Mission Control sofort öffnen";
 
 /* Small grey section headings */
 "menu.section.configure" = "Konfigurieren:";
@@ -86,6 +87,7 @@
 "settings.features.instantSpaceSwitch" = "Sofortiger Space-Wechsel";
 "settings.features.instantAppSwitch" = "Sofortiger App-Wechsel";
 "settings.features.instantTrackpadSwipe" = "Sofortiges Trackpad-Streichen";
+"settings.features.instantMissionControl" = "Mission Control sofort öffnen";
 "settings.features.transitionSpeed" = "Übergangsgeschwindigkeit";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

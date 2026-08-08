@@ -19,10 +19,9 @@ import Foundation
 /// and re-enabled automatically if macOS disables it.
 var gTap: CFMachPort?
 
-/// The swipe-intercept CGEvent tap (Feature 3). Unlike `gTap`, this one is
-/// created and torn down on demand: it only exists while both the master
-/// switch and the trackpad-swipe feature are enabled (see `updateSwipeTap()`
-/// in SwipeIntercept.swift).
+/// The gesture-intercept CGEvent tap. Unlike `gTap`, this one is created and
+/// torn down on demand: it only exists while the master switch and at least
+/// one gesture-interception feature are enabled (see `updateSwipeTap()`).
 var gSwipeTap: CFMachPort?
 
 /// Run loop source backing `gSwipeTap`, kept so the source can be removed
@@ -49,6 +48,12 @@ var gAutoFollowEnabled: Bool = true
 /// user's physical gesture, which is a bigger behavioral change than the
 /// purely additive features above. Only effective when `gEnabled` is `true`.
 var gTrackpadSwipeEnabled: Bool = false
+
+/// Optional Mission Control entry interception. Replaces the upward physical
+/// gesture with a completed vertical DockSwipe so the overview opens without
+/// its initial slide. Off by default because it swallows a physical gesture
+/// and relies on private event fields. Independent from Feature 3.
+var gInstantMissionControlEnabled: Bool = false
 
 /// Space-switch transition speed as a slider tick position (0.0–1.0 in
 /// steps of 0.25). 1.0 (the end cap) means instant — no animation at all.
@@ -89,9 +94,10 @@ var gAutoFollowTargetSpace: CGSSpaceID = 0
 
 // MARK: - Swipe Intercept State
 //
-// Tracking state for the swipe-intercept tap (Feature 3). One physical
-// swipe produces a Began → Changed… → Ended/Cancelled event sequence;
-// these flags carry the decision "we own this gesture" across it.
+// Tracking state for the shared gesture-intercept tap. One physical swipe
+// produces a Began → Changed… → Ended/Cancelled event sequence; these
+// values carry an unresolved prefix or the decision "we own this gesture"
+// across it.
 // Reset together via resetSwipeIntercept() in SwipeIntercept.swift.
 
 /// Whether a real trackpad dock swipe is currently being intercepted
@@ -101,6 +107,15 @@ var gSwipeTracking: Bool = false
 /// Whether the intercepted swipe already fired its instant switch
 /// (fires once per gesture, on the first Changed with non-zero progress).
 var gSwipeFired: Bool = false
+
+/// Whether an upward Mission Control swipe has been replaced and the rest of
+/// its physical event sequence must be swallowed.
+var gMissionControlSwipeTracking: Bool = false
+
+/// A vertical gesture prefix held until the first non-zero progress sample
+/// identifies Mission Control (up) versus App Exposé (down). Copied events
+/// are replayed through the tap proxy when Space Rabbit does not claim it.
+var gPendingMissionControlEvents: [CGEvent] = []
 
 // MARK: - Statistics
 
@@ -156,6 +171,7 @@ enum Defaults {
     /// purpose — the feature was renamed to "Instant Trackpad Swipe", and
     /// renaming the key would silently reset the opt-in for existing users.
     static let trackpadSwipe    = "spacerabbit.threeFingerSwipe"
+    static let instantMissionControl = "spacerabbit.instantMissionControl"
     static let switchSpeed      = "spacerabbit.switchSpeed"
     static let switchCount      = "spacerabbit.switchCount"
     /// When `false`, the rabbit icon is removed from the menu bar.

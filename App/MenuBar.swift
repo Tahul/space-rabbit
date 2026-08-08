@@ -5,7 +5,7 @@
  * The menu provides:
  *   - Header row with the app name and a native switch for the master
  *     on/off toggle (also available via right-click on the icon)
- *   - Feature toggles (instant switch, auto-follow)
+ *   - Feature toggles (instant switch, auto-follow, trackpad gestures)
  *   - Usage statistics (switch count + estimated time saved)
  *   - Access to the settings window
  *   - Update availability banner
@@ -72,6 +72,7 @@ final class SwoopMenu: NSObject {
     private let instantSwitchItem:     NSMenuItem
     private let autoFollowItem:        NSMenuItem
     private let trackpadSwipeItem:     NSMenuItem
+    private let missionControlItem:    NSMenuItem
     private let statsItem:             NSMenuItem
 
     /// Header row at the top of the menu: app name + master enable switch.
@@ -100,6 +101,7 @@ final class SwoopMenu: NSObject {
             Defaults.instantSwitch:    true,
             Defaults.autoFollow:       true,
             Defaults.trackpadSwipe:    false,  // opt-in — swallows a real gesture
+            Defaults.instantMissionControl: false, // opt-in — swallows a real gesture
             Defaults.switchSpeed:      1.0,
             Defaults.switchCount:      0,
             Defaults.showMenuBarIcon:  true,
@@ -111,6 +113,7 @@ final class SwoopMenu: NSObject {
         gInstantSwitchEnabled    = defaults.bool(forKey: Defaults.instantSwitch)
         gAutoFollowEnabled       = defaults.bool(forKey: Defaults.autoFollow)
         gTrackpadSwipeEnabled    = defaults.bool(forKey: Defaults.trackpadSwipe)
+        gInstantMissionControlEnabled = defaults.bool(forKey: Defaults.instantMissionControl)
         gSwitchSpeed             = defaults.double(forKey: Defaults.switchSpeed)
         gSwitchCount             = defaults.integer(forKey: Defaults.switchCount)
         gSwitchCountSaved        = gSwitchCount
@@ -129,6 +132,9 @@ final class SwoopMenu: NSObject {
         trackpadSwipeItem = NSMenuItem(title: L("menu.instantTrackpadSwipe"),
                                        action: #selector(toggleTrackpadSwipe(_:)),
                                        keyEquivalent: "t")
+        missionControlItem = NSMenuItem(title: L("menu.instantMissionControl"),
+                                        action: #selector(toggleInstantMissionControl(_:)),
+                                        keyEquivalent: "m")
         statsItem         = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
         super.init()
@@ -211,6 +217,8 @@ final class SwoopMenu: NSObject {
         autoFollowItem.state        = gAutoFollowEnabled       ? .on : .off
         trackpadSwipeItem.target = self
         trackpadSwipeItem.state  = gTrackpadSwipeEnabled ? .on : .off
+        missionControlItem.target = self
+        missionControlItem.state  = gInstantMissionControlEnabled ? .on : .off
         statsItem.isEnabled         = false  // Non-interactive display item
     }
 
@@ -230,6 +238,11 @@ final class SwoopMenu: NSObject {
                              accessibilityDescription: nil) {
             img.isTemplate = true
             trackpadSwipeItem.image = img
+        }
+        if let img = NSImage(systemSymbolName: "rectangle.3.group",
+                             accessibilityDescription: nil) {
+            img.isTemplate = true
+            missionControlItem.image = img
         }
         if let img = NSImage(systemSymbolName: "timer",
                              accessibilityDescription: nil) {
@@ -259,6 +272,7 @@ final class SwoopMenu: NSObject {
         statusMenu.addItem(instantSwitchItem)
         statusMenu.addItem(autoFollowItem)
         statusMenu.addItem(trackpadSwipeItem)
+        statusMenu.addItem(missionControlItem)
         statusMenu.addItem(.separator())
 
         // Statistics section
@@ -535,6 +549,7 @@ final class SwoopMenu: NSObject {
         instantSwitchItem.state    = gInstantSwitchEnabled    ? .on : .off
         autoFollowItem.state       = gAutoFollowEnabled       ? .on : .off
         trackpadSwipeItem.state = gTrackpadSwipeEnabled ? .on : .off
+        missionControlItem.state = gInstantMissionControlEnabled ? .on : .off
     }
 
     @objc private func toggleInstantSwitch(_ sender: NSMenuItem) {
@@ -555,6 +570,15 @@ final class SwoopMenu: NSObject {
         gTrackpadSwipeEnabled.toggle()
         sender.state = gTrackpadSwipeEnabled ? .on : .off
         UserDefaults.standard.set(gTrackpadSwipeEnabled, forKey: Defaults.trackpadSwipe)
+        updateSwipeTap()
+        SettingsWindowController.shared.syncPanes()
+    }
+
+    @objc private func toggleInstantMissionControl(_ sender: NSMenuItem) {
+        gInstantMissionControlEnabled.toggle()
+        sender.state = gInstantMissionControlEnabled ? .on : .off
+        UserDefaults.standard.set(gInstantMissionControlEnabled,
+                                  forKey: Defaults.instantMissionControl)
         updateSwipeTap()
         SettingsWindowController.shared.syncPanes()
     }

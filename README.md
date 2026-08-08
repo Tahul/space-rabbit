@@ -11,6 +11,7 @@ Space Rabbit removes animations when switching macOS Spaces. Reclaim hours of yo
 - ✅ **Instant space switch** - your keyboard shortcut switches spaces with zero animation
 - ✅ **Auto-follow on Cmd+Tab** - switching to an app on another space takes you there instantly
 - ✅ **Instant trackpad swipe** - your trackpad swipe switches spaces with zero animation too
+- ✅ **Instant Mission Control** - optionally open Mission Control with no initial slide
 - ✅ **Reads your shortcuts** - picks up your bindings from System Settings automatically
 - ✅ **Tiny native macOS app** - 2MB binary size, 12MB memory usage, zero CPU usage
 - ✅ **No system changes needed** - just classic accessibility permissions
@@ -112,3 +113,5 @@ If your spoken language is missing, you can add it by asking your AI coding agen
 Space Rabbit relies on a hack, that posts synthetic high-velocity DockSwipe gesture events. This is based on a technique from [InstantSpaceSwitcher](https://github.com/jurplel/InstantSpaceSwitcher).
 
 The "Instant Trackpad Swipe" feature — intercepting real trackpad swipes and replacing them with instant switches — is ported from [iss](https://github.com/joshuarli/iss) by [@joshuarli](https://github.com/joshuarli).
+
+The vertical DockSwipe state machine used by "Instant Mission Control" is based on [FasterSwiper](https://github.com/mgbowen/FasterSwiper) by [@mgbowen](https://github.com/mgbowen).
