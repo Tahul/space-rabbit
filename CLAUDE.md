@@ -696,7 +696,8 @@ When asked to generate a changelog (typically between two git tags), follow thes
 - **List items always use `-`**, never `*`.
 - **Section wording is one of:** `Added`, `Fixed`, `Changed`, `Miscellaneous`, `Breaking`. Nothing else.
 - **Every entry is `**Subject**: explanation`** — the subject in bold, followed by a colon and the explanation.
-- **Always credit the author**, with the PR/issue as a short `#ID` link and the `@author` handle, in parentheses at the end of the entry.
+- **Always link the PR/issue** as a short `#ID` link in parentheses at the end of the entry.
+- **Credit community contributors only** — append `thanks @handle` for outside contributors and issue reporters. The project's own authors (@tahul, @valeriansaliou) are never thanked for their own work; if an entry involves only them, the parentheses hold just the `#ID` link(s).
 - **Keep it short and non-technical.** The audience is end users, not developers. One or two sentences per entry, describing what they will notice — not the internals. No mention of event taps, gesture phases, private APIs, timing windows, globals or file names. If an entry needs a paragraph to explain, it is being written for the wrong reader.
 
 Example:
@@ -704,7 +705,8 @@ Example:
 ```markdown
 ### Fixed
 
-- **Trackpad swipes**: swiping between spaces could jump two spaces at once or go the wrong way. ([#23](https://github.com/Tahul/space-rabbit/issues/23), [#22](https://github.com/Tahul/space-rabbit/pull/22), thanks @srajangarg and @valeriansaliou)
+- **Trackpad swipes**: swiping between spaces could jump two spaces at once or go the wrong way. ([#23](https://github.com/Tahul/space-rabbit/issues/23), [#22](https://github.com/Tahul/space-rabbit/pull/22), thanks @srajangarg)
+- **Menu bar icon**: the icon no longer reappears after a restart when it was hidden. ([#31](https://github.com/Tahul/space-rabbit/issues/31))
 ```
 
 Source the entries from `git log <tagA>..<tagB>`, folding a fix and its own follow-up correction into a single entry rather than narrating the intermediate state. A `chore:` commit that changes user-visible strings belongs under `Changed`, not `Miscellaneous`.
