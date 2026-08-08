@@ -1049,6 +1049,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
         gSwitchSpeed = speedSlider.doubleValue
         UserDefaults.standard.set(gSwitchSpeed, forKey: Defaults.switchSpeed)
         updateSpeedDisplay()
+        updateSwipeTap()
     }
 }
 

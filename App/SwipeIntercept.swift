@@ -1,8 +1,8 @@
 /*
  * SwipeIntercept.swift — Instant trackpad gesture interception
  *
- * Removes the slide animation from real horizontal Space swipes and the
- * upward Mission Control entry gesture.
+ * Controls the transition speed of real horizontal Space swipes and both
+ * Mission Control entry and dismissal gestures.
  *
  * macOS turns a horizontal 3-finger (or 4-finger, per the trackpad
  * setting) swipe into private DockSwipe events — the same event family
@@ -19,9 +19,10 @@
  *   4. Cancelled — reset without firing
  *
  * Horizontal direction follows the existing flow. A vertical Began does not
- * reliably reveal whether the gesture is going up to Mission Control or down
- * to App Exposé, so it is copied and held until Changed supplies progress.
- * Downward, cancelled, unsupported, and failed replacements replay that held
+ * carry direction, so it is copied and held until Changed supplies progress.
+ * The overview state captured at Began disambiguates desktop→up (Mission
+ * Control entry) from overview→down (dismissal). App Exposé entry, opposite
+ * directions, cancellations, unsupported paths, and failures replay the held
  * prefix before passing the current event through to native macOS.
  *
  * Because Space Rabbit's own synthetic gestures are posted into the same
@@ -63,6 +64,7 @@ private let kGestureMotionVertical: Int64 = 2
 /// call redundantly — it no-ops when the tap already matches the state.
 func updateSwipeTap() {
     let missionControlEnabled = gInstantMissionControlEnabled
+        && !isNativeSwitchSpeed()
         && supportsInstantMissionControlInterception()
     let shouldRun = gEnabled
         && (gTrackpadSwipeEnabled || missionControlEnabled)
@@ -118,6 +120,7 @@ func resetSwipeIntercept() {
     gSwipeFired                  = false
     gMissionControlSwipeTracking = false
     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
+    gPendingMissionControlStartedInOverview = nil
 }
 
 /// Reinjects a held physical vertical-gesture prefix immediately after this
@@ -130,15 +133,36 @@ private func replayPendingMissionControlEvents(proxy: CGEventTapProxy) {
         pendingEvent.tapPostEvent(proxy)
     }
     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
+    gPendingMissionControlStartedInOverview = nil
 }
 
 /// Rechecks whether the shared tap is still needed after a deferred Mission
 /// Control gesture finishes.
 private func finishMissionControlInterception() {
     gMissionControlSwipeTracking = false
-    if !gEnabled || (!gTrackpadSwipeEnabled && !gInstantMissionControlEnabled) {
+    gPendingMissionControlStartedInOverview = nil
+    if !gEnabled || (!gTrackpadSwipeEnabled
+        && (!gInstantMissionControlEnabled || isNativeSwitchSpeed())) {
         DispatchQueue.main.async { updateSwipeTap() }
     }
+}
+
+/// Resolves a non-zero physical vertical sign against the overview state that
+/// was captured at Began. Only desktop→up and overview→down are owned; App
+/// Exposé entry and any opposite-direction gesture remain native.
+///
+/// Physical vertical DockSwipes use screen-coordinate signs on macOS 26:
+/// finger-up is negative and finger-down is positive. Synthetic Mission
+/// Control posting uses the opposite convention, so this conversion must stay
+/// separate from `postMissionControlTransition`'s signed output.
+private func pendingMissionControlDirection(forPhysicalSign sign: Double) -> Int? {
+    guard sign != 0,
+          let startedInOverview = gPendingMissionControlStartedInOverview
+    else { return nil }
+
+    let direction = sign < 0 ? 1 : -1
+    let isDismissal = direction < 0
+    return startedInOverview == isDismissal ? direction : nil
 }
 
 /// Removes every ordinary progress/velocity component from a physical Ended
@@ -188,7 +212,7 @@ private func isSyntheticGesture(_ event: CGEvent) -> Bool {
 // the CGEvent API requires a plain function pointer.
 
 /// CGEvent tap callback that replaces supported horizontal Space swipes and
-/// upward Mission Control entry gestures with immediate DockSwipes.
+/// Mission Control entry/dismissal gestures with controlled DockSwipes.
 ///
 /// - Parameters:
 ///   - proxy: The event tap proxy used for native replay and vertical
@@ -251,7 +275,8 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 
     // If the option changed while Began was held, restore the prefix and let
     // the current event continue natively before the deferred tap teardown.
-    if !gInstantMissionControlEnabled, !gPendingMissionControlEvents.isEmpty {
+    if (!gInstantMissionControlEnabled || isNativeSwitchSpeed()),
+       !gPendingMissionControlEvents.isEmpty {
         replayPendingMissionControlEvents(proxy: proxy)
         finishMissionControlInterception()
     }
@@ -269,10 +294,11 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     }
 
     // Vertical Began is directionless on supported macOS releases. Hold it
-    // only from a positively identified desktop, before Dock can animate;
-    // App Exposé, Show Desktop, Mission Control, and state-read failures pass
-    // through untouched. Changed progress > 0 means upward Mission Control.
+    // only after positively identifying desktop versus overview state, before
+    // Dock can animate. Changed resolves desktop→up as entry and overview→down
+    // as dismissal; App Exposé entry and opposite directions remain native.
     if gInstantMissionControlEnabled,
+       !isNativeSwitchSpeed(),
        supportsInstantMissionControlInterception(),
        subtype == kCGSEventDockControl,
        event.getIntegerValueField(kCGEventGestureHIDType) == kIOHIDEventTypeDockSwipe,
@@ -284,19 +310,24 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                 replayPendingMissionControlEvents(proxy: proxy)
             }
 
-            guard canInterceptMissionControlEntry(),
+            guard let startedInOverview = missionControlOverviewState(),
                   let beganCopy = event.copy() else { return passthrough }
 
             gPendingMissionControlEvents = [beganCopy]
+            gPendingMissionControlStartedInOverview = startedInOverview
             return nil
         }
 
         if !gPendingMissionControlEvents.isEmpty {
             let progress = event.getDoubleValueField(kCGEventGestureSwipeProgress)
 
-            if phase == kCGSGesturePhaseChanged, progress > 0 {
-                if postInstantMissionControlGesture(proxy: proxy) {
+            if phase == kCGSGesturePhaseChanged, progress != 0 {
+                if let direction = pendingMissionControlDirection(forPhysicalSign: progress),
+                   postMissionControlTransition(proxy: proxy,
+                                                direction: direction,
+                                                velocity: currentSwitchVelocity()) {
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
+                    gPendingMissionControlStartedInOverview = nil
                     gMissionControlSwipeTracking = true
                     return nil
                 }
@@ -305,17 +336,14 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                 return passthrough
             }
 
-            if phase == kCGSGesturePhaseChanged, progress < 0 {
-                replayPendingMissionControlEvents(proxy: proxy)
-                return passthrough
-            }
-
             if phase == kCGSGesturePhaseEnded {
                 let velocity = event.getDoubleValueField(kCGEventGestureSwipeVelocityX)
-                let direction = progress != 0 ? progress : velocity
+                let sign = progress != 0 ? progress : velocity
 
-                if direction > 0,
-                   postInstantMissionControlGesture(proxy: proxy) {
+                if let direction = pendingMissionControlDirection(forPhysicalSign: sign),
+                   postMissionControlTransition(proxy: proxy,
+                                                direction: direction,
+                                                velocity: currentSwitchVelocity()) {
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
                     finishMissionControlInterception()
                     if requiresEventAugmentation() {

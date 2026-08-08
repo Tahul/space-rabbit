@@ -49,10 +49,10 @@ var gAutoFollowEnabled: Bool = true
 /// purely additive features above. Only effective when `gEnabled` is `true`.
 var gTrackpadSwipeEnabled: Bool = false
 
-/// Optional Mission Control entry interception. Replaces the upward physical
-/// gesture with a completed vertical DockSwipe so the overview opens without
-/// its initial slide. Off by default because it swallows a physical gesture
-/// and relies on private event fields. Independent from Feature 3.
+/// Optional Mission Control transition interception. Replaces upward entry and
+/// downward dismissal with completed vertical DockSwipes governed by the shared
+/// transition-speed control. Off by default because it swallows physical
+/// gestures and relies on private event fields. Independent from Feature 3.
 var gInstantMissionControlEnabled: Bool = false
 
 /// Space-switch transition speed as a slider tick position (0.0–1.0 in
@@ -108,14 +108,19 @@ var gSwipeTracking: Bool = false
 /// (fires once per gesture, on the first Changed with non-zero progress).
 var gSwipeFired: Bool = false
 
-/// Whether an upward Mission Control swipe has been replaced and the rest of
-/// its physical event sequence must be swallowed.
+/// Whether a Mission Control entry/dismissal swipe has been replaced and the
+/// rest of its physical event sequence must be swallowed.
 var gMissionControlSwipeTracking: Bool = false
 
 /// A vertical gesture prefix held until the first non-zero progress sample
-/// identifies Mission Control (up) versus App Exposé (down). Copied events
-/// are replayed through the tap proxy when Space Rabbit does not claim it.
+/// identifies the direction. Copied events are replayed through the tap proxy
+/// when Space Rabbit does not claim the gesture.
 var gPendingMissionControlEvents: [CGEvent] = []
+
+/// Overview state captured when the pending vertical Began arrived. `false`
+/// permits upward entry; `true` permits downward dismissal. `nil` means no
+/// vertical prefix is pending or the overview state could not be read safely.
+var gPendingMissionControlStartedInOverview: Bool?
 
 // MARK: - Statistics
 
