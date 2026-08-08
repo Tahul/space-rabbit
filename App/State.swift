@@ -55,8 +55,10 @@ var gTrackpadSwipeEnabled: Bool = false
 /// gestures and relies on private event fields. Independent from Feature 3.
 var gInstantMissionControlEnabled: Bool = false
 
-/// Space-switch transition speed as a slider tick position (0.0–1.0 in
-/// steps of 0.25). 1.0 (the end cap) means instant — no animation at all.
+/// Global transition speed as a slider tick position (0.0–1.0 in steps of
+/// 0.25), shared by keyboard Space switches, app auto-follow, physical Space
+/// swipes, and Mission Control entry/dismissal. 1.0 (the end cap) means
+/// instant — no animation at all.
 /// 0.0 ("Normal") means macOS's native animation: Space Rabbit posts no
 /// gestures and lets the OS switch on its own (see `isNativeSwitchSpeed()`).
 /// The ticks in between post gestures at increasing animated velocities

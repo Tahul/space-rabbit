@@ -48,8 +48,10 @@ Exact initialization order — getting this wrong causes subtle bugs:
 A `CGEvent` tap at `.cgSessionEventTap` / `.headInsertEventTap` listens for `keyDown` events. When the user's configured modifier+arrow shortcut is detected:
 
 1. The original key event is **swallowed** (callback returns `nil`).
-2. `postSwitchGesture(direction:)` posts a Began+Ended gesture pair with high velocity.
-3. The Dock handles the gesture and switches the space with no animation.
+2. `postSwitchGesture(direction:)` posts a Began+Ended gesture pair using the
+   global transition velocity.
+3. The Dock handles the gesture at the selected speed (with no animation at
+   the Instant tick).
 
 The tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to stay alive.
 
@@ -132,6 +134,16 @@ and either opt-in gesture feature is enabled. Called from startup,
 `SwoopMenu.setEnabled`, both gesture toggles (menu + settings), and the speed
 slider. The "Normal" speed tick gates both horizontal Space swipes and Mission
 Control transitions.
+
+**Global speed contract** — `gSwitchSpeed` is the sole speed preference for
+keyboard Space shortcuts, Cmd+Tab auto-follow, physical Space swipes, and Mission
+Control entry/dismissal. Every synthetic transition resolves through
+`currentSwitchVelocity()`. Multi-Space jumps reuse that exact velocity for every
+step; they must never multiply it by distance because doing so can silently turn
+an animated tick into Instant. At Normal, each path stands down and leaves the
+transition native. The only safety exception is a cross-display target at a
+non-Instant tick: synthetic DockSwipes carry no display identity, so that path
+declines and lets macOS perform its native transition.
 
 ### Optional Instant Mission Control (`SwipeIntercept.swift`)
 

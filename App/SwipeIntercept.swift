@@ -324,8 +324,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
             if phase == kCGSGesturePhaseChanged, progress != 0 {
                 if let direction = pendingMissionControlDirection(forPhysicalSign: progress),
                    postMissionControlTransition(proxy: proxy,
-                                                direction: direction,
-                                                velocity: currentSwitchVelocity()) {
+                                                direction: direction) {
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
                     gPendingMissionControlStartedInOverview = nil
                     gMissionControlSwipeTracking = true
@@ -342,8 +341,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 
                 if let direction = pendingMissionControlDirection(forPhysicalSign: sign),
                    postMissionControlTransition(proxy: proxy,
-                                                direction: direction,
-                                                velocity: currentSwitchVelocity()) {
+                                                direction: direction) {
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
                     finishMissionControlInterception()
                     if requiresEventAugmentation() {
@@ -376,8 +374,9 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         }
     }
 
-    // Horizontal feature gates. Mission Control interception is independent
-    // from this toggle and from the Space transition-speed slider.
+    // Horizontal feature gates. Mission Control is independent from the
+    // trackpad-Space toggle and was already handled above with the shared
+    // transition-speed slider.
     guard gTrackpadSwipeEnabled, !isNativeSwitchSpeed() else {
         gSwipeTracking = false
         gSwipeFired    = false

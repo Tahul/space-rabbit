@@ -864,14 +864,14 @@ private func makeMissionControlDockEvent(phase: Int64,
 /// - Parameters:
 ///   - proxy: The active swipe-intercept tap proxy.
 ///   - direction: `+1` to enter Mission Control, `-1` to dismiss it.
-///   - velocity: Positive velocity magnitude from the transition-speed control.
 /// - Returns: `true` after the full Began/Changed/Ended sequence was posted;
 ///            otherwise `false` without posting any of it.
 func postMissionControlTransition(proxy: CGEventTapProxy,
-                                  direction: Int,
-                                  velocity: Double) -> Bool {
-    guard direction == -1 || direction == 1, velocity > 0 else { return false }
+                                  direction: Int) -> Bool {
+    guard direction == -1 || direction == 1,
+          !isNativeSwitchSpeed() else { return false }
 
+    let velocity = currentSwitchVelocity()
     let needsAugmentation = requiresEventAugmentation()
     let phases = [kCGSGesturePhaseBegan, kCGSGesturePhaseChanged,
                   kCGSGesturePhaseEnded]
@@ -1057,6 +1057,10 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
 /// - Returns: `true` if both gesture phases were posted successfully.
 func postSwitchGesture(direction: Int,
                        velocity: Double = currentSwitchVelocity()) -> Bool {
+    guard (direction == -1 || direction == 1),
+          !isNativeSwitchSpeed(),
+          velocity > 0 else { return false }
+
     let isRight              = direction > 0
 
     if requiresEventAugmentation() {
@@ -1088,16 +1092,16 @@ func postSwitchGesture(direction: Int,
 
 /// Posts N consecutive space-switch gestures in the given direction.
 ///
-/// Used by auto-follow when the target space is more than one step away.
-/// Velocity is scaled by `steps` so the Dock snaps straight to the target
-/// rather than animating between intermediate spaces on long jumps.
+/// Used by direct Desktop shortcuts and auto-follow when the target is more
+/// than one step away. Every step uses the exact global transition velocity;
+/// distance must not silently turn Fast/Faster/Fastest into Instant.
 /// Stops early if any gesture fails (e.g. CGEvent allocation failure).
 ///
 /// - Parameters:
 ///   - direction: `-1` for left, `+1` for right.
 ///   - steps: How many spaces to traverse.
 private func switchNSpaces(direction: Int, steps: Int) {
-    let velocity = currentSwitchVelocity() * Double(steps)
+    let velocity = currentSwitchVelocity()
     for i in 0..<steps where !postSwitchGesture(direction: direction, velocity: velocity) {
         fputs("Space Rabbit: gesture failed at step \(i + 1)/\(steps)\n", stderr)
         break
