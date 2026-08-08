@@ -258,6 +258,10 @@ func getAllCurrentSpaces() -> [CGSSpaceID] {
 /// Nothing else the Dock owns sits at that layer.
 private let kMissionControlWindowLayer: Int32 = 18
 
+/// Private `CGSSpaceMask` selecting current OS-managed spaces:
+/// `CGSSpaceIncludesCurrent | CGSSpaceIncludesOS`.
+private let kCurrentOSSpacesMask: Int32 = (1 << 0) | (1 << 3)
+
 /// Reads whether a Mission Control-style overview (Mission Control, App
 /// Exposé, Show Desktop) is currently on screen.
 ///
@@ -276,7 +280,7 @@ private let kMissionControlWindowLayer: Int32 = 18
 /// Rabbit does not ask for, so it reads as `nil` for every window here.
 ///
 /// - Returns: The overview state, or `nil` when the window list is unavailable.
-func missionControlOverviewState() -> Bool? {
+private func missionControlOverviewActive() -> Bool? {
     guard let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
             as? [[String: Any]]
     else { return nil }
@@ -299,7 +303,72 @@ func missionControlOverviewState() -> Bool? {
 ///
 /// - Returns: `true` while an overview is on screen.
 func isMissionControlActive() -> Bool {
-    missionControlOverviewState() ?? false
+    missionControlOverviewActive() ?? false
+}
+
+/// Exact Dock-managed overview state used by vertical gesture interception.
+enum DockOverviewState: Equatable {
+    case desktop
+    case missionControl
+    case appExpose
+}
+
+/// Reads the named OS-managed spaces exposed by WindowServer.
+///
+/// The layer-18 marker above deliberately groups every overview together for
+/// horizontal stand-down. Instant Mission Control needs a narrower answer so
+/// it can dismiss Mission Control without hijacking App Exposé or Show Desktop.
+private func namedDockOverviewState() -> DockOverviewState? {
+    guard let mainConnection = cgsMainConnection,
+          let copySpaces = slsCopySpaces,
+          let copyName = slsSpaceCopyName else { return nil }
+
+    let cid = mainConnection()
+    guard cid != 0,
+          let spaces = copySpaces(cid, kCurrentOSSpacesMask)?
+              .takeRetainedValue() as? [NSNumber] else { return nil }
+
+    var missionControlVisible = false
+    var appExposeVisible = false
+
+    for space in spaces where space.uint64Value != 0 {
+        guard let nameRef = copyName(cid, space.uint64Value)?.takeRetainedValue()
+        else { continue }
+
+        let name = nameRef as String
+        if name == "mission-control" {
+            missionControlVisible = true
+        } else if name == "show-front" {
+            appExposeVisible = true
+        }
+    }
+
+    guard !missionControlVisible || !appExposeVisible else { return nil }
+    if missionControlVisible { return .missionControl }
+    if appExposeVisible { return .appExpose }
+    return .desktop
+}
+
+/// Returns a fail-closed overview state for a new vertical gesture.
+///
+/// An absent layer marker positively identifies the desktop without requiring
+/// the extra SLS symbols. When an overview is visible, its named OS space must
+/// identify Mission Control or App Exposé; Show Desktop and conflicting state
+/// remain native.
+func currentDockOverviewState() -> DockOverviewState? {
+    guard let layerActive = missionControlOverviewActive() else { return nil }
+    if !layerActive { return .desktop }
+
+    guard let namedState = namedDockOverviewState() else { return nil }
+
+    switch namedState {
+    case .missionControl:
+        return .missionControl
+    case .appExpose:
+        return .appExpose
+    case .desktop:
+        return nil
+    }
 }
 
 // MARK: - Window-to-Space Mapping
@@ -759,21 +828,21 @@ private func generateIOHIDPayload(from event: CGEvent) -> Data {
     return payload
 }
 
-/// Rebuilds `event` with the raw IOHID payload (field 4205) appended —
-/// the augmentation macOS 27 requires before accepting a synthetic swipe.
+/// Rebuilds `event` with a current IOHID payload in field 4205.
 ///
 /// The payload field cannot be set through `setIntegerValueField`, so the
-/// event is flattened with `CGEventCreateData`, a raw field record is
-/// appended to the serialized bytes — a big-endian u16 payload length,
-/// a big-endian u16 field ID (4205), then the packed payload — and a new
-/// event is inflated from the result with `CGEventCreateFromData`.
+/// event is flattened with `CGEventCreateData`, any existing field-4205 record
+/// is replaced, and a new event is inflated with `CGEventCreateFromData`.
+/// Horizontal swipes need this on macOS 27+. FasterSwiper's working vertical
+/// path uses it on macOS 26 and 27, so every synthetic Mission Control phase
+/// is rebuilt this way on the releases this feature supports.
 ///
 /// - Parameter event: The fully-populated dock control event.
 /// - Returns: A new event carrying the payload, or `nil` on failure
 ///            (including an unrecognized serialization format).
 private func augmentDockSwipeEvent(_ event: CGEvent) -> CGEvent? {
     guard let cfData = event.data else { return nil }
-    var bytes = cfData as Data
+    let bytes = cfData as Data
 
     // Sanity-check the serialization header (version 2) — if Apple changes
     // the format, bail out rather than corrupt the event.
@@ -781,15 +850,56 @@ private func augmentDockSwipeEvent(_ event: CGEvent) -> CGEvent? {
           bytes[0] == 0, bytes[1] == 0, bytes[2] == 0, bytes[3] == 2
     else { return nil }
 
-    let payload = generateIOHIDPayload(from: event)
+    guard let augmented = replacingBinaryField(
+        kCGEventIOHIDPayloadField,
+        in: bytes,
+        with: generateIOHIDPayload(from: event)
+    ) else { return nil }
 
-    bytes.append(UInt8(payload.count >> 8))                   // payload length (BE)
-    bytes.append(UInt8(payload.count & 0xFF))
-    bytes.append(UInt8(kCGEventIOHIDPayloadField >> 8))       // field ID 4205 (BE)
-    bytes.append(UInt8(kCGEventIOHIDPayloadField & 0xFF))
-    bytes.append(payload)
+    return CGEvent(withDataAllocator: kCFAllocatorDefault, data: augmented as CFData)
+}
 
-    return CGEvent(withDataAllocator: kCFAllocatorDefault, data: bytes as CFData)
+/// Replaces one binary field in CGEvent's version-2 serialization while
+/// preserving all other records byte-for-byte.
+private func replacingBinaryField(_ fieldID: UInt16, in bytes: Data,
+                                  with payload: Data) -> Data? {
+    guard bytes.count >= 4, payload.count <= Int(UInt16.max) else { return nil }
+
+    var result = Data(bytes.prefix(4))
+    var offset = 4
+
+    while offset < bytes.count {
+        guard offset + 4 <= bytes.count else { return nil }
+
+        let elementSize = (UInt16(bytes[offset]) << 8) | UInt16(bytes[offset + 1])
+        let tagAndField = (UInt16(bytes[offset + 2]) << 8) | UInt16(bytes[offset + 3])
+        let tag = tagAndField >> 14
+        let currentFieldID = tagAndField & 0x3FFF
+
+        let valueSize: Int
+        switch tag {
+        case 0 where elementSize == 1: valueSize = 8
+        case 0 where elementSize > 1: valueSize = Int(elementSize)
+        case 1 where elementSize == 1: valueSize = 4
+        case 3 where elementSize == 1: valueSize = 4
+        case 3 where elementSize == 2: valueSize = 8
+        default: return nil
+        }
+
+        let recordEnd = offset + 4 + valueSize
+        guard recordEnd <= bytes.count else { return nil }
+        if currentFieldID != fieldID {
+            result.append(bytes.subdata(in: offset..<recordEnd))
+        }
+        offset = recordEnd
+    }
+
+    result.append(UInt8(payload.count >> 8))                  // payload length (BE)
+    result.append(UInt8(payload.count & 0xFF))
+    result.append(UInt8(fieldID >> 8))                        // binary tag is zero
+    result.append(UInt8(fieldID & 0xFF))
+    result.append(payload)
+    return result
 }
 
 // MARK: - Instant Mission Control Gesture
@@ -895,6 +1005,23 @@ func postMissionControlTransition(proxy: CGEventTapProxy,
         event.tapPostEvent(proxy)
     }
     return true
+}
+
+/// Rebuilds a macOS 27 physical vertical Ended event with no movement.
+///
+/// That release mirrors progress and velocity inside field 4205. Mutating only
+/// the ordinary fields leaves contradictory motion in the IOHID payload, so a
+/// claimed gesture's terminal cleanup must update both representations.
+func makeMissionControlCleanupEvent(from physicalEvent: CGEvent) -> CGEvent? {
+    guard requiresEventAugmentation(),
+          physicalEvent.getIntegerValueField(kCGEventGestureSwipeMotion)
+              == kGestureMotionVertical,
+          let cleanup = physicalEvent.copy() else { return nil }
+
+    cleanup.setDoubleValueField(kCGEventGestureSwipeProgress, value: 0)
+    cleanup.setDoubleValueField(kCGEventGestureSwipeVelocityX, value: 0)
+    cleanup.setDoubleValueField(kCGEventGestureSwipeVelocityY, value: 0)
+    return augmentDockSwipeEvent(cleanup)
 }
 
 /// Creates one phase of the macOS 27 dock swipe, with the extra fields

@@ -154,15 +154,15 @@ velocities, and Instant removes the transition.
 
 Mission Control uses vertical DockSwipes (`motion = 2`). Because physical Began
 does not reliably carry direction, the tap copies and holds Began (plus companion
-events) only when the layer-18 overview scan can positively identify desktop versus
-overview state. The first non-zero Changed progress resolves the gesture. Real
+events) only when the Dock state can positively identify the desktop or Mission
+Control itself. The first non-zero Changed progress resolves the gesture. Real
 vertical trackpad input uses screen-coordinate signs on macOS 26: negative from
 the desktop enters Mission Control; positive from an overview dismisses it. That
 physical-input convention is intentionally converted before posting because the
 synthetic vertical DockSwipe uses the opposite signs (`+1` entry, `-1` dismissal).
-App Exposé entry, opposite directions, cancellation, copy failure, or synthetic
-construction failure replays the held prefix through the tap proxy before the
-current event continues natively. An unavailable window list also stays native.
+App Exposé, Show Desktop, opposite directions, cancellation, copy failure, or
+synthetic construction failure replays the held prefix through the tap proxy before
+the current event continues natively. Unavailable private state also stays native.
 
 Both directions post the segmented vertical sequence used by
 [FasterSwiper](https://github.com/mgbowen/FasterSwiper): epsilon progress on Began,
@@ -177,8 +177,9 @@ vertical events are rejected on macOS 26 even though bare horizontal events stil
 work there.) The vertical path does not use horizontal gesture envelopes or
 horizontal sign rules. macOS 27+ additionally receives the stricter mirrored
 fields. The remaining physical stream is swallowed, except that macOS 27+ receives
-its Ended event with ordinary progress/X/Y velocity zeroed, matching the horizontal
-interceptor's cleanup.
+a rebuilt Ended event with progress/X/Y velocity zeroed in both its ordinary fields
+and its field-4205 payload, matching the horizontal interceptor's cleanup without
+leaving contradictory serialized motion.
 The interceptor is limited to the known macOS 15–27 schemas; an unknown future
 major release leaves the option inert and the physical gesture native.
 
@@ -224,9 +225,11 @@ once an action is about to happen, never per event:
 - **Feature 3** — on the Began phase only. Standing down means *not tracking* the
   gesture, so all later phases pass through via the existing `gSwipeTracking`
   checks, one lookup per swipe instead of one per sample.
-- **Instant Mission Control** — before holding vertical Began. Unlike the existing
-  boolean stand-down callers, a failed window-list read is treated as unavailable
-  and the gesture remains native.
+- **Instant Mission Control** — before holding vertical Began. An absent layer-18
+  marker identifies the desktop. When a marker exists, `SLSCopySpaces` and
+  `SLSSpaceCopyName` must identify the `mission-control` OS space; App Exposé
+  (`show-front`), Show Desktop, conflicts, and failed private-state reads remain
+  native.
 - **Feature 2** — after the speed and suppression-window guards, before the
   window-to-space lookups.
 
@@ -240,6 +243,8 @@ once an action is about to happen, never per event:
 | `CGSGetActiveSpace` | `cgsGetActiveSpace` | `(cid) -> UInt64` | Active space ID on main display |
 | `CGSCopyManagedDisplaySpaces` | `cgsCopyDisplaySpaces` | `(cid, displayUUID?) -> CFArray?` | All displays + their spaces |
 | `SLSCopySpacesForWindows` | `slsCopySpacesForWindows` | `(cid, spaceType, windowIDs) -> CFArray?` | Maps window IDs → space IDs |
+| `SLSCopySpaces` | `slsCopySpaces` | `(cid, mask) -> CFArray?` | Current OS-managed spaces used to identify overview state |
+| `SLSSpaceCopyName` | `slsSpaceCopyName` | `(cid, spaceID) -> CFString?` | Internal OS-space names such as `mission-control` and `show-front` |
 
 **Do not use `CGSManagedDisplaySetCurrentSpace`:** it was tried for instant cross-display switching and reverted. It flips the window server's current-space pointer without running the real transition, desyncing state — target-space windows composite on top of the still-displayed space (worst with fullscreen spaces), and subsequent edge bounds-checks read the stale pointer and overshoot into a black non-existent space.
 
@@ -301,7 +306,7 @@ macOS 27's Dock **rejects** the bare gesture pairs above (the user hears the err
 
 1. **Extra dock-event fields**: field 134 (`kCGEventGesturePhase2`) mirrors the phase, 138 (`kCGEventGestureFlavor`) = 3.0 (`kIOHIDGestureFlavorDockPrimary`), 169 (`kCGEventGestureTimestamp`) = `mach_absolute_time()` as a double, 125 (`kCGEventGesturePositionX`) = 0.1 (must be non-zero or the Dock discards the event). Progress (124) = ±1.0 on **every** phase; Ended-phase velocity = ±9999 (`kAugmentedInstantVelocity`). Fields 135/119/139 from the legacy recipe are not set.
 2. **Inverted sign convention**: NEGATIVE progress/velocity moves right, positive moves left (opposite of the legacy path). Do **not** "un-invert" these to match the legacy path — that was tried (PR #15) and reverted, and it is the cause of issue #19: every switch travels the wrong way, so Ctrl+Arrow walks to the first/last space instead of stepping, and at either edge the Dock flashes black and rubber-bands back to the starting space. Measured on build 26A5388g by posting the augmented sequence and reading the index back from `CGSCopyManagedDisplaySpaces`: `+1.0/+9999` moves left, `-1.0/-9999` moves right. This is the *posting* convention only — reading a real trackpad gesture's direction has its own separate rule (`isRightSwipe`, see Feature 3).
-3. **Serialized IOHID payload under field 4205**: the Dock validates the event against a packed little-endian IOHID queue payload — `IOHIDSystemQueueElementHeader` (28 B) + `IOHIDFluidTouchGestureData` (40 B) + `IOHIDVelocityEventData` (28 B, appended only when velocity ≠ 0 or phase = Ended) — mirroring the event's gesture fields (positions/progress/velocity as signed 16.16 fixed-point, phase in the high byte of the gesture's `options`). Field 4205 can NOT be set via the normal field-setter API: the event is flattened with `CGEventCreateData`, a raw record (big-endian u16 payload length, big-endian u16 field ID 4205, payload bytes) is appended, and the event is rebuilt with `CGEventCreateFromData`. The serialized header must be `00 00 00 02` — anything else means Apple changed the format and `augmentDockSwipeEvent` bails (gesture not posted). Swift structs make no layout guarantees, so the payload is serialized field-by-field (`Data.appendLE`), not by casting structs — the layout was verified byte-identical against the packed C structs.
+3. **Serialized IOHID payload under field 4205**: the Dock validates the event against a packed little-endian IOHID queue payload — `IOHIDSystemQueueElementHeader` (28 B) + `IOHIDFluidTouchGestureData` (40 B) + `IOHIDVelocityEventData` (28 B, appended only when velocity ≠ 0 or phase = Ended) — mirroring the event's gesture fields (positions/progress/velocity as signed 16.16 fixed-point, phase in the high byte of the gesture's `options`). Field 4205 can NOT be set via the normal field-setter API: the event is flattened with `CGEventCreateData`, any existing field-4205 record is replaced with a current packed payload, and the event is rebuilt with `CGEventCreateFromData`. The serialized header must be `00 00 00 02` — anything else means Apple changed the format and `augmentDockSwipeEvent` bails (gesture not posted). Swift structs make no layout guarantees, so the payload is serialized field-by-field (`Data.appendLE`), not by casting structs — the layout was verified byte-identical against the packed C structs.
 
 The augmented sequence is **Began + Changed + Ended** (three pairs, not two — macOS 27 requires the Changed phase). All three events are built and augmented up front so a mid-sequence failure posts nothing (a Began without its Ended would leave the Dock's gesture state half-open). Animated slider velocities (50–70) pass through unclamped — **uncalibrated on macOS 27**; only the instant velocity (9999) is confirmed working upstream. Anything ≥ `kInstantSwitchVelocity` (400) is mapped to 9999.
 
@@ -345,7 +350,7 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
 | `gInstantMissionControlEnabled` | `Bool` | Mission Control entry/dismissal transition toggle (default **false** — opt-in) |
 | `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-horizontal-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
-| `gMissionControlSwipeTracking` / `gPendingMissionControlEvents` / `gPendingMissionControlStartedInOverview` | `Bool` / `[CGEvent]` / `Bool?` | Claimed vertical stream, copied prefix, and its desktop/overview origin awaiting direction/native replay |
+| `gMissionControlSwipeTracking` / `gPendingMissionControlEvents` / `gPendingMissionControlOverviewState` | `Bool` / `[CGEvent]` / `DockOverviewState?` | Claimed vertical stream, copied prefix, and its exact desktop/Mission Control origin awaiting direction/native replay |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`). Stamped by Features 1/3 and by non-auto-follow space changes |
 | `gLastFollowedPid` / `gLastFollowedTime` | `pid_t` / `Date` | Last app auto-follow chased — the echo guard's scope (`-1` = none) |
@@ -381,6 +386,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kAutoFollowEchoWindow` | AutoFollow | `0.3` (TimeInterval) | Window in which a repeat activation of the **same** app reads as the echo of our own follow |
 | `kAutoFollowSelfChangeWindow` | AutoFollow | `1.5` (TimeInterval) | How long `gAutoFollowTargetSpace` stays credible as the cause of a space-change notification |
 | `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the Mission Control marker |
+| `kCurrentOSSpacesMask` | SpaceSwitching | `(1 << 0) \| (1 << 3)` | Private mask used to query the active Dock-managed overview space |
 | `kGestureMotionHorizontal` / `kGestureMotionVertical` | SwipeIntercept | `1` / `2` (Int64) | `kCGEventGestureSwipeMotion` values for Space and Mission Control swipes |
 | `kSyntheticGestureMarker` | SwipeIntercept | `0x53504152` ('SPAR') | Stamped into `.eventSourceUserData` on every gesture Space Rabbit posts, so the swipe tap passes its own events through |
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
