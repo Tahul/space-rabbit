@@ -1033,12 +1033,12 @@ final class FeaturesPaneController: SettingsPaneViewController {
             rowDivider(),
             settingsRow(label: L("settings.features.instantTrackpadSwipe"),
                         control: trackpadSwipeControl),
-            rowDivider(),
-            cycleShortcutRow,
         ])
         let speedGroup = groupBox([
             settingsRow(label: L("settings.features.transitionSpeed"),
                         control: makeSpeedControl()),
+            rowDivider(),
+            cycleShortcutRow,
         ])
         updateCycleShortcutAvailability()
         return [togglesGroup, speedGroup]
