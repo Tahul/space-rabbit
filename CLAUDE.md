@@ -141,10 +141,8 @@ keyboard Space shortcuts, Cmd+Tab auto-follow, physical Space swipes, and Missio
 Control entry/dismissal. Every synthetic transition resolves through
 `currentSwitchVelocity()`. Horizontal switches use that value as terminal
 velocity; Mission Control maps the same value to its timed progress duration.
-Multi-Space jumps reuse that exact velocity for every step; they must never
-multiply it by distance because doing so can silently turn an animated tick into
-Instant. At Normal, each path stands down and leaves the transition native. The
-only safety exception is a cross-display target at a non-Instant tick: synthetic
+At Normal, each path stands down and leaves the transition native. The only
+safety exception is a cross-display target at a non-Instant tick: synthetic
 DockSwipes carry no display identity, so that path declines and lets macOS
 perform its native transition.
 
