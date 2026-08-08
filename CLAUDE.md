@@ -138,19 +138,21 @@ Control transitions.
 **Global speed contract** — `gSwitchSpeed` is the sole speed preference for
 keyboard Space shortcuts, Cmd+Tab auto-follow, physical Space swipes, and Mission
 Control entry/dismissal. Every synthetic transition resolves through
-`currentSwitchVelocity()`. Multi-Space jumps reuse that exact velocity for every
-step; they must never multiply it by distance because doing so can silently turn
-an animated tick into Instant. At Normal, each path stands down and leaves the
-transition native. The only safety exception is a cross-display target at a
-non-Instant tick: synthetic DockSwipes carry no display identity, so that path
-declines and lets macOS perform its native transition.
+`currentSwitchVelocity()`. Horizontal switches use that value as terminal
+velocity; Mission Control maps the same value to its timed progress duration.
+Multi-Space jumps reuse that exact velocity for every step; they must never
+multiply it by distance because doing so can silently turn an animated tick into
+Instant. At Normal, each path stands down and leaves the transition native. The
+only safety exception is a cross-display target at a non-Instant tick: synthetic
+DockSwipes carry no display identity, so that path declines and lets macOS
+perform its native transition.
 
 ### Optional Instant Mission Control (`SwipeIntercept.swift`)
 
 Off by default and independent from Instant Trackpad Swipe. Upward entry and
 downward dismissal both follow the shared transition-speed slider: Normal leaves
-the physical gesture native, Fast/Faster/Fastest use increasing synthetic
-velocities, and Instant removes the transition.
+the physical gesture native, Fast/Faster/Fastest use progressively shorter timed
+progress streams, and Instant removes the transition.
 
 Mission Control uses vertical DockSwipes (`motion = 2`). Because physical Began
 does not reliably carry direction, the tap copies and holds Began (plus companion
@@ -164,19 +166,25 @@ App Exposé entry, opposite directions, cancellation, copy failure, or synthetic
 construction failure replays the held prefix through the tap proxy before the
 current event continues natively. An unavailable window list also stays native.
 
-Both directions post the segmented vertical sequence used by
-[FasterSwiper](https://github.com/mgbowen/FasterSwiper): epsilon progress on Began,
-signed `±1.0` on Changed/Ended, then the slider-selected signed velocity on Ended.
-At Instant that is `9999`; the high terminal velocity is the key difference from
-FasterSwiper's normal animated commit. Field
-129 is used for terminal velocity on both axes despite its private `VelocityX`
-name. All three DockControl events are
-built before posting, receive the serialized field-4205 IOHID payload on every
-supported macOS release, and are injected through the current tap proxy. (Bare
-vertical events are rejected on macOS 26 even though bare horizontal events still
-work there.) The vertical path does not use horizontal gesture envelopes or
-horizontal sign rules. macOS 27+ additionally receives the stricter mirrored
-fields. The remaining physical stream is swallowed, except that macOS 27+ receives
+Both directions use the segmented vertical sequence from
+[FasterSwiper](https://github.com/mgbowen/FasterSwiper). Fast/Faster/Fastest post
+epsilon progress on Began, then fresh Changed events at 120 Hz along a cubic
+ease-out curve before Ended. Their durations are 0.20/0.16/0.12 seconds,
+calibrated to the shared slider's horizontal 50/60/70 velocity ticks. Sending
+`Changed ±1.0` immediately and varying only Ended velocity does not animate
+Mission Control because the Dock has already reached the boundary. Instant is
+therefore a separate three-event path: epsilon Began, `Changed ±1.0`, then
+Ended at `±1.0` with velocity `±9999`. Field 129 carries that terminal
+velocity despite its private `VelocityX` name.
+
+Every vertical event receives a fresh serialized field-4205 IOHID payload on
+every supported macOS release. Began is injected through the active tap proxy;
+timed Changed/Ended samples run on a serial user-interactive queue and use the
+session tap, keeping the event-tap callback non-blocking. A new animation first
+finishes and invalidates an overlapping one. (Bare vertical events are rejected
+on macOS 26 even though bare horizontal events still work there.) The vertical
+path does not use horizontal gesture envelopes or horizontal sign rules. macOS
+27+ additionally receives the stricter mirrored fields. The remaining physical stream is swallowed, except that macOS 27+ receives
 its Ended event with ordinary progress/X/Y velocity zeroed, matching the horizontal
 interceptor's cleanup.
 The interceptor is limited to the known macOS 15–27 schemas; an unknown future
@@ -375,8 +383,9 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kInstantSwitchProgress` | SpaceSwitching | `2.0` | Fully-committed swipe progress |
 | `kInstantSwitchVelocity` | SpaceSwitching | `400.0` | Velocity above Dock's instant threshold |
 | `kMissionControlEpsilon` | SpaceSwitching | `1/65536` | Smallest signed 16.16 value used for vertical entry Began/Ended |
-| `kAugmentedInstantVelocity` | SpaceSwitching | `9999.0` | Hardened instant velocity for macOS 27+ horizontal gestures and all Mission Control transitions (horizontal sign inverted: negative = right) |
+| `kAugmentedInstantVelocity` | SpaceSwitching | `9999.0` | Hardened instant velocity for macOS 27+ horizontal gestures and Instant Mission Control transitions (horizontal sign inverted: negative = right) |
 | `kAnimatedVelocityMin/Max` | SpaceSwitching | `40.0` / `80.0` | Animated velocity band for the transition-speed slider (from InstantSpaceSwitcher's presets). `currentSwitchVelocity()` interpolates the Fast/Faster/Fastest ticks to 50/60/70, or returns `kInstantSwitchVelocity` at the "Instant" end cap. At the "Normal" tick `isNativeSwitchSpeed()` is true and **no gestures are posted at all** — the event tap passes shortcuts through and auto-follow stands down, giving macOS's native animation |
+| `kMissionControlAnimationDurationSlow/Fast` | SpaceSwitching | `0.24` / `0.08` seconds | Duration endpoints that map the shared velocity band to Mission Control's timed progress stream. Slider ticks Fast/Faster/Fastest resolve to 0.20/0.16/0.12 seconds |
 | `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period after a *user-driven* space switch before auto-follow kicks in |
 | `kAutoFollowEchoWindow` | AutoFollow | `0.3` (TimeInterval) | Window in which a repeat activation of the **same** app reads as the echo of our own follow |
 | `kAutoFollowSelfChangeWindow` | AutoFollow | `1.5` (TimeInterval) | How long `gAutoFollowTargetSpace` stays credible as the cause of a space-change notification |

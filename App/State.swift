@@ -50,7 +50,7 @@ var gAutoFollowEnabled: Bool = true
 var gTrackpadSwipeEnabled: Bool = false
 
 /// Optional Mission Control transition interception. Replaces upward entry and
-/// downward dismissal with completed vertical DockSwipes governed by the shared
+/// downward dismissal with vertical DockSwipes governed by the shared
 /// transition-speed control. Off by default because it swallows physical
 /// gestures and relies on private event fields. Independent from Feature 3.
 var gInstantMissionControlEnabled: Bool = false
@@ -61,8 +61,9 @@ var gInstantMissionControlEnabled: Bool = false
 /// instant — no animation at all.
 /// 0.0 ("Normal") means macOS's native animation: Space Rabbit posts no
 /// gestures and lets the OS switch on its own (see `isNativeSwitchSpeed()`).
-/// The ticks in between post gestures at increasing animated velocities
-/// (see `currentSwitchVelocity()`).
+/// The ticks in between post progressively faster animated gestures. Horizontal
+/// switches use increasing terminal velocities (`currentSwitchVelocity()`),
+/// while Mission Control uses equivalent timed progress durations.
 var gSwitchSpeed: Double = 1.0
 
 // MARK: - Space Switch Timing
