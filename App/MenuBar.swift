@@ -114,7 +114,13 @@ final class SwoopMenu: NSObject {
         gAutoFollowEnabled       = defaults.bool(forKey: Defaults.autoFollow)
         gTrackpadSwipeEnabled    = defaults.bool(forKey: Defaults.trackpadSwipe)
         gInstantMissionControlEnabled = defaults.bool(forKey: Defaults.instantMissionControl)
-        gSwitchSpeed             = defaults.double(forKey: Defaults.switchSpeed)
+        let persistedSpeedObject = defaults.object(forKey: Defaults.switchSpeed)
+        let persistedSwitchSpeed = (persistedSpeedObject as? NSNumber)?.doubleValue ?? 1.0
+        gSwitchSpeed             = normalizedSwitchSpeed(persistedSwitchSpeed)
+        let hasNumericSwitchSpeed = persistedSpeedObject is NSNumber
+        if !hasNumericSwitchSpeed || persistedSwitchSpeed != gSwitchSpeed {
+            defaults.set(gSwitchSpeed, forKey: Defaults.switchSpeed)
+        }
         gSwitchCount             = defaults.integer(forKey: Defaults.switchCount)
         gSwitchCountSaved        = gSwitchCount
 

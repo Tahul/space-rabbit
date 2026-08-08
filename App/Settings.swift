@@ -1053,7 +1053,8 @@ final class FeaturesPaneController: SettingsPaneViewController {
     }
 
     @objc private func speedChanged() {
-        gSwitchSpeed = speedSlider.doubleValue
+        gSwitchSpeed = normalizedSwitchSpeed(speedSlider.doubleValue)
+        speedSlider.doubleValue = gSwitchSpeed
         UserDefaults.standard.set(gSwitchSpeed, forKey: Defaults.switchSpeed)
         updateSpeedDisplay()
         updateSwipeTap()

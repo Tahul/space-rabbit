@@ -2,9 +2,10 @@
  * State.swift — Global runtime state and persistence
  *
  * All mutable runtime state lives here as module-level globals.
- * This is intentional: the app is a single-process menu bar utility
- * with no concurrency beyond the main thread, so global state is
- * simpler and more appropriate than a singleton class.
+ * This is intentional: the app is a single-process menu bar utility, so
+ * global state is simpler and more appropriate than a singleton class.
+ * State is main-thread-owned unless its declaration documents a dedicated
+ * serial queue (the Mission Control animator is the only exception).
  *
  * Persisted values are backed by UserDefaults under the "spacerabbit." prefix.
  */
@@ -66,6 +67,16 @@ var gInstantMissionControlEnabled: Bool = false
 /// while Mission Control uses equivalent timed progress durations.
 var gSwitchSpeed: Double = 1.0
 
+/// Clamps and snaps an externally supplied transition speed to one of the
+/// slider's five supported tick values. Corrupt or non-finite preferences use
+/// the safe default (Instant) instead of leaking invalid timing values into
+/// gesture construction.
+func normalizedSwitchSpeed(_ value: Double) -> Double {
+    guard value.isFinite else { return 1.0 }
+    let clamped = min(max(value, 0), 1)
+    return (clamped * 4).rounded() / 4
+}
+
 // MARK: - Space Switch Timing
 
 /// Timestamp of the last space switch triggered by instant-switch.
@@ -123,6 +134,33 @@ var gPendingMissionControlEvents: [CGEvent] = []
 /// Exact overview state captured with the pending vertical Began. The live
 /// state may already be transitioning by the time Changed reveals direction.
 var gPendingMissionControlOverviewState: DockOverviewState?
+
+// MARK: - Mission Control Animation State
+
+/// A fully constructed terminal pair retained before an animated gesture
+/// begins. If constructing a later sample fails, posting this pair guarantees
+/// that the Dock never receives an unterminated synthetic gesture.
+struct MissionControlTerminalEvents {
+    let changed: CGEvent
+    let ended: CGEvent
+}
+
+/// Queue-owned state for the one Mission Control animation that may be active.
+/// The fallback terminal pair is also used when a newer physical gesture
+/// interrupts this animation.
+struct MissionControlAnimationState {
+    let id: UInt64
+    let direction: Int
+    let augmented: Bool
+    let fallbackTerminal: MissionControlTerminalEvents
+}
+
+/// These two globals are accessed only on
+/// `kMissionControlAnimationQueue` in SpaceSwitching.swift. Keeping them here
+/// preserves the repository's single state-module convention while making the
+/// queue-ownership exception explicit.
+var gMissionControlAnimation: MissionControlAnimationState?
+var gMissionControlAnimationID: UInt64 = 0
 
 // MARK: - Statistics
 

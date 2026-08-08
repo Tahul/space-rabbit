@@ -146,6 +146,11 @@ safety exception is a cross-display target at a non-Instant tick: synthetic
 DockSwipes carry no display identity, so that path declines and lets macOS
 perform its native transition.
 
+The persisted slider value is normalized at launch to the supported
+`0.0...1.0` quarter-step ticks. Non-finite or corrupt values reset to Instant,
+preventing invalid velocities or animation durations from reaching either
+gesture path.
+
 ### Optional Instant Mission Control (`SwipeIntercept.swift`)
 
 Off by default and independent from Instant Trackpad Swipe. Upward entry and
@@ -179,12 +184,16 @@ velocity despite its private `VelocityX` name.
 Every vertical event receives a fresh serialized field-4205 IOHID payload on
 every supported macOS release. Began is injected through the active tap proxy;
 timed Changed/Ended samples run on a serial user-interactive queue and use the
-session tap, keeping the event-tap callback non-blocking. A new animation first
-finishes and invalidates an overlapping one. (Bare vertical events are rejected
-on macOS 26 even though bare horizontal events still work there.) The vertical
-path does not use horizontal gesture envelopes or horizontal sign rules. macOS
-27+ additionally receives the stricter mirrored fields. The remaining physical
-stream is swallowed, except that macOS 27+ receives
+session tap, keeping the event-tap callback non-blocking. Before Began, the app
+constructs a complete fallback Changed/Ended pair; any later allocation or
+augmentation failure uses that pair rather than leaving an open Dock gesture. A
+new animation invalidates an overlapping one and posts the old terminal pair
+through the active tap proxy before its own Began, giving the two streams a
+deterministic order. (Bare vertical events are rejected on macOS 26 even though
+bare horizontal events still work there.) The vertical path does not use
+horizontal gesture envelopes or horizontal sign rules. macOS 27+ additionally
+receives the stricter mirrored fields. The remaining physical stream is
+swallowed, except that macOS 27+ receives
 a rebuilt Ended event with progress/X/Y velocity zeroed in both its ordinary fields
 and its field-4205 payload, matching the horizontal interceptor's cleanup without
 leaving contradictory serialized motion.
@@ -346,7 +355,10 @@ Used in `visibleWindowSpaces(for:)` — the window-lookup helper behind `findSpa
 
 ## Global state (`State.swift`)
 
-All runtime state is module-level globals (not a singleton class). This is intentional: single-threaded app, no concurrency beyond the main thread.
+All runtime state is module-level globals (not a singleton class). Main-thread
+ownership remains the default. The only concurrency exception is the Mission
+Control animator state, which is confined to its dedicated serial queue and is
+documented at its declaration in `State.swift`.
 
 | Variable | Type | Purpose |
 |---|---|---|
@@ -359,6 +371,7 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | `gInstantMissionControlEnabled` | `Bool` | Mission Control entry/dismissal transition toggle (default **false** — opt-in) |
 | `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-horizontal-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
 | `gMissionControlSwipeTracking` / `gPendingMissionControlEvents` / `gPendingMissionControlOverviewState` | `Bool` / `[CGEvent]` / `DockOverviewState?` | Claimed vertical stream, copied prefix, and its exact desktop/Mission Control origin awaiting direction/native replay |
+| `gMissionControlAnimation` / `gMissionControlAnimationID` | `MissionControlAnimationState?` / `UInt64` | Active timed vertical transition and generation ID; accessed only on the Mission Control animation queue |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`). Stamped by Features 1/3 and by non-auto-follow space changes |
 | `gLastFollowedPid` / `gLastFollowedTime` | `pid_t` / `Date` | Last app auto-follow chased — the echo guard's scope (`-1` = none) |
@@ -855,7 +868,9 @@ local.env               — git-ignored; signing credentials
 ## Coding conventions
 
 - **No hardcoded user-visible strings** — every one goes through `L("key")` and must be declared in *all* `.lproj` tables (see "Localization"). Developer-facing `fputs`/`print` diagnostics stay in English.
-- **Globals prefixed `g`** — all mutable runtime state (e.g. `gEnabled`, `gTap`). Single-threaded app, no locks needed.
+- **Globals prefixed `g`** — all mutable runtime state (e.g. `gEnabled`, `gTap`).
+  Globals are main-thread-owned unless their declaration explicitly confines
+  them to a serial queue; the Mission Control animator is the sole exception.
 - **Constants prefixed `k`** — named magic numbers (e.g. `kSLSSpaceTypeAll`, `kInstantSwitchVelocity`).
 - **Enums for grouping constants** — `Defaults` (UserDefaults keys), `CarbonModifier` (bitmasks), `Layout` (UI sizing), `ToggleColors`.
 - **`MARK` sections** — every file uses `// MARK: -` with descriptive headers.

@@ -915,16 +915,6 @@ private let kMissionControlAnimationQueue = DispatchQueue(
     qos: .userInteractive
 )
 
-private struct MissionControlAnimationState {
-    let id: UInt64
-    let direction: Int
-    let augmented: Bool
-}
-
-/// Accessed only on `kMissionControlAnimationQueue`.
-private var gMissionControlAnimation: MissionControlAnimationState?
-private var gMissionControlAnimationID: UInt64 = 0
-
 /// Maps the shared horizontal velocity band to a Mission Control duration.
 /// The two private gesture protocols expose different controls (terminal
 /// velocity versus timed progress), but the user's one slider remains the
@@ -1013,29 +1003,46 @@ private func prepareMissionControlDockEvent(phase: Int64,
     return augmentedEvent
 }
 
-/// Closes an in-flight animated vertical gesture at its target boundary.
-/// Called on the animation queue for normal completion and before replacing an
-/// overlapping animation.
-private func postMissionControlAnimationTerminal(direction: Int,
-                                                 augmented: Bool) {
-    if let changed = prepareMissionControlDockEvent(
+/// Constructs a complete terminal pair before either event can be posted.
+/// Callers retain a pair before Began so allocation or augmentation failure on
+/// a later animation tick can never strand an open synthetic Dock gesture.
+private func prepareMissionControlAnimationTerminal(
+    direction: Int,
+    augmented: Bool
+) -> MissionControlTerminalEvents? {
+    guard let changed = prepareMissionControlDockEvent(
         phase: kCGSGesturePhaseChanged,
         direction: direction,
         progressMagnitude: 1,
         augmented: augmented
-    ) {
-        changed.post(tap: .cgSessionEventTap)
-    }
-
-    if let ended = prepareMissionControlDockEvent(
+    ), let ended = prepareMissionControlDockEvent(
         phase: kCGSGesturePhaseEnded,
         direction: direction,
         progressMagnitude: 1,
         velocityMagnitude: kMissionControlEpsilon,
         augmented: augmented
-    ) {
-        ended.post(tap: .cgSessionEventTap)
-    }
+    ) else { return nil }
+
+    return MissionControlTerminalEvents(changed: changed, ended: ended)
+}
+
+/// Posts a prepared terminal pair from the asynchronous animation queue.
+private func postMissionControlAnimationTerminal(
+    _ terminal: MissionControlTerminalEvents
+) {
+    terminal.changed.post(tap: .cgSessionEventTap)
+    terminal.ended.post(tap: .cgSessionEventTap)
+}
+
+/// Posts a prepared terminal pair through the current tap callback. Interrupted
+/// animation cleanup and the replacement Began therefore share one injection
+/// path and have deterministic ordering.
+private func postMissionControlAnimationTerminal(
+    _ terminal: MissionControlTerminalEvents,
+    proxy: CGEventTapProxy
+) {
+    terminal.changed.tapPostEvent(proxy)
+    terminal.ended.tapPostEvent(proxy)
 }
 
 /// Starts a non-blocking progress animation. Every tick creates a fresh event
@@ -1051,77 +1058,97 @@ private func postAnimatedMissionControlTransition(proxy: CGEventTapProxy,
         direction: direction,
         progressMagnitude: kMissionControlEpsilon,
         augmented: augmented
+    ), let fallbackTerminal = prepareMissionControlAnimationTerminal(
+        direction: direction,
+        augmented: augmented
     ) else { return false }
 
     let sampleCount = max(2, Int(ceil(duration * kMissionControlAnimationFPS)))
-
-    kMissionControlAnimationQueue.sync {
-        if let previous = gMissionControlAnimation {
-            postMissionControlAnimationTerminal(direction: previous.direction,
-                                                augmented: previous.augmented)
+    let setup: (id: UInt64, interrupted: MissionControlAnimationState?) =
+        kMissionControlAnimationQueue.sync {
+            let interrupted = gMissionControlAnimation
+            gMissionControlAnimationID &+= 1
+            let animationID = gMissionControlAnimationID
+            gMissionControlAnimation = MissionControlAnimationState(
+                id: animationID,
+                direction: direction,
+                augmented: augmented,
+                fallbackTerminal: fallbackTerminal
+            )
+            return (animationID, interrupted)
         }
 
-        gMissionControlAnimationID &+= 1
-        let animationID = gMissionControlAnimationID
-        gMissionControlAnimation = MissionControlAnimationState(
-            id: animationID,
-            direction: direction,
-            augmented: augmented
-        )
+    // Keep overlap cleanup and the replacement Began on the same tap proxy.
+    // This guarantees the old Ended is observed before the new Began; later
+    // animation ticks cannot retain the proxy and use the session tap.
+    if let interruptedAnimation = setup.interrupted {
+        let terminal = prepareMissionControlAnimationTerminal(
+            direction: interruptedAnimation.direction,
+            augmented: interruptedAnimation.augmented
+        ) ?? interruptedAnimation.fallbackTerminal
+        postMissionControlAnimationTerminal(terminal, proxy: proxy)
+    }
+    began.tapPostEvent(proxy)
 
-        for index in 1...sampleCount {
-            let linearProgress = Double(index) / Double(sampleCount)
-            let delay = duration * linearProgress
+    // Do not schedule session-tap samples until Began has been injected.
+    let animationID = setup.id
+    for index in 1...sampleCount {
+        let linearProgress = Double(index) / Double(sampleCount)
+        let delay = duration * linearProgress
 
-            kMissionControlAnimationQueue.asyncAfter(deadline: .now() + delay) {
-                guard gMissionControlAnimation?.id == animationID else { return }
+        kMissionControlAnimationQueue.asyncAfter(deadline: .now() + delay) {
+            guard let animation = gMissionControlAnimation,
+                  animation.id == animationID else { return }
 
-                // Cubic ease-out closely follows Dock's existing transition:
-                // quick initial response with a smooth arrival at the target.
-                let easedProgress = 1 - pow(1 - linearProgress, 3)
-                let isLast = index == sampleCount
+            // Cubic ease-out closely follows Dock's existing transition:
+            // quick initial response with a smooth arrival at the target.
+            let easedProgress = 1 - pow(1 - linearProgress, 3)
+            let isLast = index == sampleCount
 
-                if isLast {
-                    gMissionControlAnimation = nil
-                }
-
-                if let changed = prepareMissionControlDockEvent(
-                    phase: kCGSGesturePhaseChanged,
+            if isLast {
+                let terminal = prepareMissionControlAnimationTerminal(
                     direction: direction,
-                    progressMagnitude: easedProgress,
                     augmented: augmented
-                ) {
-                    changed.post(tap: .cgSessionEventTap)
-                }
-
-                if isLast,
-                   let ended = prepareMissionControlDockEvent(
-                       phase: kCGSGesturePhaseEnded,
-                       direction: direction,
-                       progressMagnitude: 1,
-                       velocityMagnitude: kMissionControlEpsilon,
-                       augmented: augmented
-                   ) {
-                    ended.post(tap: .cgSessionEventTap)
-                }
+                ) ?? animation.fallbackTerminal
+                postMissionControlAnimationTerminal(terminal)
+                gMissionControlAnimation = nil
+                return
             }
+
+            guard let changed = prepareMissionControlDockEvent(
+                phase: kCGSGesturePhaseChanged,
+                direction: direction,
+                progressMagnitude: easedProgress,
+                augmented: augmented
+            ) else {
+                postMissionControlAnimationTerminal(animation.fallbackTerminal)
+                gMissionControlAnimation = nil
+                return
+            }
+            changed.post(tap: .cgSessionEventTap)
         }
     }
-
-    // Began must be injected immediately after the claimed physical sample.
-    // Later animation ticks cannot retain the proxy and use the session tap.
-    began.tapPostEvent(proxy)
 
     return true
 }
 
 /// Completes and invalidates any timed animation before an Instant transition.
-private func finishAnimatedMissionControlTransitionIfNeeded() {
-    kMissionControlAnimationQueue.sync {
-        guard let previous = gMissionControlAnimation else { return }
+/// Cleanup uses the active proxy so its Ended is ordered before the new Began.
+private func finishAnimatedMissionControlTransitionIfNeeded(
+    proxy: CGEventTapProxy
+) {
+    let interruptedAnimation = kMissionControlAnimationQueue.sync {
+        let current = gMissionControlAnimation
         gMissionControlAnimation = nil
-        postMissionControlAnimationTerminal(direction: previous.direction,
-                                            augmented: previous.augmented)
+        return current
+    }
+
+    if let interruptedAnimation {
+        let terminal = prepareMissionControlAnimationTerminal(
+            direction: interruptedAnimation.direction,
+            augmented: interruptedAnimation.augmented
+        ) ?? interruptedAnimation.fallbackTerminal
+        postMissionControlAnimationTerminal(terminal, proxy: proxy)
     }
 }
 
@@ -1154,8 +1181,6 @@ func postMissionControlTransition(proxy: CGEventTapProxy,
         )
     }
 
-    finishAnimatedMissionControlTransitionIfNeeded()
-
     let phases = [kCGSGesturePhaseBegan, kCGSGesturePhaseChanged,
                   kCGSGesturePhaseEnded]
     var events = [CGEvent]()
@@ -1172,6 +1197,11 @@ func postMissionControlTransition(proxy: CGEventTapProxy,
         ) else { return false }
         events.append(event)
     }
+
+    // Only interrupt an existing animation after the replacement sequence is
+    // fully constructed. If construction fails, the existing gesture remains
+    // valid and the physical event can continue natively.
+    finishAnimatedMissionControlTransitionIfNeeded(proxy: proxy)
 
     for event in events {
         event.tapPostEvent(proxy)
