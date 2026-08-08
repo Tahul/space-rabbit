@@ -35,21 +35,23 @@ Exact initialization order — getting this wrong causes subtle bugs:
 6. `checkForUpdatesAutomatically()` — owns its own 5-second delay, and applies it only when it is actually going to make a network request (a throttled launch restores the update banner from UserDefaults immediately). Must run after step 5, which creates `gMenu`, the banner's host
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
 8. **Event tap creation** — `CGEvent.tapCreate` → `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
-9. **Swipe-intercept tap** — `updateSwipeTap()` installs the Feature 3 tap if the persisted toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
+9. **Gesture-intercept tap** — `updateSwipeTap()` installs the shared tap if either persisted gesture toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
 10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
 11. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
 12. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
 13. `app.run()` — enter run loop
 
-## Three core features
+## Core features
 
 ### Feature 1: Instant space switch (`eventTapCallback` in `EventTap.swift`)
 
 A `CGEvent` tap at `.cgSessionEventTap` / `.headInsertEventTap` listens for `keyDown` events. When the user's configured modifier+arrow shortcut is detected:
 
 1. The original key event is **swallowed** (callback returns `nil`).
-2. `postSwitchGesture(direction:)` posts a Began+Ended gesture pair with high velocity.
-3. The Dock handles the gesture and switches the space with no animation.
+2. `postSwitchGesture(direction:)` posts a Began+Ended gesture pair using the
+   global transition velocity.
+3. The Dock handles the gesture at the selected speed (with no animation at
+   the Instant tick).
 
 The tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to stay alive.
 
@@ -116,8 +118,9 @@ synthetic-echo bug below than a scrolling-preference bug.
 gestures post into the same session tap and would loop right back into this tap.
 Every posting path in `SpaceSwitching.swift` calls `markSyntheticGesture(_:)` on each
 event before posting, stamping `.eventSourceUserData`; the swipe tap checks that field
-first and waves those events straight through. On the macOS 27+ path the stamp must be
-applied **before** `augmentDockSwipeEvent` flattens and rebuilds the event.
+first and waves those events straight through. `CGEventCreateFromData` does not
+preserve that field, so augmented events must be stamped **after**
+`augmentDockSwipeEvent` flattens and rebuilds them.
 
 Do **not** go back to counting pending synthetic events (`gSwipePassthroughCount`, the
 joshuarli/iss technique, removed): the real gesture's own Changed samples carry the
@@ -127,10 +130,66 @@ and fired a second switch from its `±kInstantSwitchVelocity` sign — a cascade
 looks exactly like a direction bug.
 
 **Tap lifecycle** — unlike the keyboard tap (installed once at startup), this tap is
-created/torn down on demand by `updateSwipeTap()` so it only exists while
-`gEnabled && gTrackpadSwipeEnabled`. Called from startup, `SwoopMenu.setEnabled`,
-and both feature toggles (menu + settings). The "Normal" speed tick is gated inside
-the callback (`isNativeSwitchSpeed()` → everything passes through untouched).
+created/torn down on demand by `updateSwipeTap()` so it only exists while `gEnabled`
+and either opt-in gesture feature is enabled. Called from startup,
+`SwoopMenu.setEnabled`, both gesture toggles (menu + settings), and the speed
+slider. The "Normal" speed tick gates both horizontal Space swipes and Mission
+Control transitions.
+
+**Global speed contract** — `gSwitchSpeed` is the sole speed preference for
+keyboard Space shortcuts, Cmd+Tab auto-follow, physical Space swipes, and Mission
+Control entry/dismissal. Every synthetic transition resolves through
+`currentSwitchVelocity()`. Horizontal switches use that value as terminal
+velocity; Mission Control maps the same value to its timed progress duration.
+At Normal, each path stands down and leaves the transition native. The only
+safety exception is a cross-display target at a non-Instant tick: synthetic
+DockSwipes carry no display identity, so that path declines and lets macOS
+perform its native transition.
+
+### Optional Instant Mission Control (`SwipeIntercept.swift`)
+
+Off by default and independent from Instant Trackpad Swipe. Upward entry and
+downward dismissal both follow the shared transition-speed slider: Normal leaves
+the physical gesture native, Fast/Faster/Fastest use progressively shorter timed
+progress streams, and Instant removes the transition.
+
+Mission Control uses vertical DockSwipes (`motion = 2`). Because physical Began
+does not reliably carry direction, the tap copies and holds Began (plus companion
+events) only when the Dock state can positively identify the desktop or Mission
+Control itself. The first non-zero Changed progress resolves the gesture. Real
+vertical trackpad input uses screen-coordinate signs on macOS 26: negative from
+the desktop enters Mission Control; positive from an overview dismisses it. That
+physical-input convention is intentionally converted before posting because the
+synthetic vertical DockSwipe uses the opposite signs (`+1` entry, `-1` dismissal).
+App Exposé, Show Desktop, opposite directions, cancellation, copy failure, or
+synthetic construction failure replays the held prefix through the tap proxy before
+the current event continues natively. Unavailable private state also stays native.
+
+Both directions use the segmented vertical sequence from
+[FasterSwiper](https://github.com/mgbowen/FasterSwiper). Fast/Faster/Fastest post
+epsilon progress on Began, then fresh Changed events at 120 Hz along a cubic
+ease-out curve before Ended. Their durations are 0.20/0.16/0.12 seconds,
+calibrated to the shared slider's horizontal 50/60/70 velocity ticks. Sending
+`Changed ±1.0` immediately and varying only Ended velocity does not animate
+Mission Control because the Dock has already reached the boundary. Instant is
+therefore a separate three-event path: epsilon Began, `Changed ±1.0`, then
+Ended at `±1.0` with velocity `±9999`. Field 129 carries that terminal
+velocity despite its private `VelocityX` name.
+
+Every vertical event receives a fresh serialized field-4205 IOHID payload on
+every supported macOS release. Began is injected through the active tap proxy;
+timed Changed/Ended samples run on a serial user-interactive queue and use the
+session tap, keeping the event-tap callback non-blocking. A new animation first
+finishes and invalidates an overlapping one. (Bare vertical events are rejected
+on macOS 26 even though bare horizontal events still work there.) The vertical
+path does not use horizontal gesture envelopes or horizontal sign rules. macOS
+27+ additionally receives the stricter mirrored fields. The remaining physical
+stream is swallowed, except that macOS 27+ receives
+a rebuilt Ended event with progress/X/Y velocity zeroed in both its ordinary fields
+and its field-4205 payload, matching the horizontal interceptor's cleanup without
+leaving contradictory serialized motion.
+The interceptor is limited to the known macOS 15–27 schemas; an unknown future
+major release leaves the option inert and the physical gesture native.
 
 ### Feature interaction (suppression guard)
 
@@ -151,12 +210,12 @@ destination) still stamp normally.
 
 ### Mission Control stand-down (`isMissionControlActive()` in `SpaceSwitching.swift`)
 
-All three features stand down while a Mission Control-style overview (Mission
-Control, App Exposé, Show Desktop) is on screen, letting macOS handle the input
-natively. The overview drives space navigation itself, and a synthetic DockSwipe
-posted into it is evaluated against the overview's state rather than the
-desktop's: the screen blanks, swipes, and lands back on the space the user
-started from (issue #16).
+The existing Space-switch features stand down while a Mission Control-style
+overview (Mission Control, App Exposé, Show Desktop) is on screen, letting macOS
+handle the input natively. The overview drives space navigation itself, and a
+synthetic DockSwipe posted into it is evaluated against the overview's state
+rather than the desktop's: the screen blanks, swipes, and lands back on the
+space the user started from (issue #16).
 
 Detection is a synchronous `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` scan
 for a **Dock-owned window at `kCGWindowLayer` 18** — the display-sized overlay the
@@ -174,6 +233,11 @@ once an action is about to happen, never per event:
 - **Feature 3** — on the Began phase only. Standing down means *not tracking* the
   gesture, so all later phases pass through via the existing `gSwipeTracking`
   checks, one lookup per swipe instead of one per sample.
+- **Instant Mission Control** — before holding vertical Began. An absent layer-18
+  marker identifies the desktop. When a marker exists, `SLSCopySpaces` and
+  `SLSSpaceCopyName` must identify the `mission-control` OS space; App Exposé
+  (`show-front`), Show Desktop, conflicts, and failed private-state reads remain
+  native.
 - **Feature 2** — after the speed and suppression-window guards, before the
   window-to-space lookups.
 
@@ -187,6 +251,8 @@ once an action is about to happen, never per event:
 | `CGSGetActiveSpace` | `cgsGetActiveSpace` | `(cid) -> UInt64` | Active space ID on main display |
 | `CGSCopyManagedDisplaySpaces` | `cgsCopyDisplaySpaces` | `(cid, displayUUID?) -> CFArray?` | All displays + their spaces |
 | `SLSCopySpacesForWindows` | `slsCopySpacesForWindows` | `(cid, spaceType, windowIDs) -> CFArray?` | Maps window IDs → space IDs |
+| `SLSCopySpaces` | `slsCopySpaces` | `(cid, mask) -> CFArray?` | Current OS-managed spaces used to identify overview state |
+| `SLSSpaceCopyName` | `slsSpaceCopyName` | `(cid, spaceID) -> CFString?` | Internal OS-space names such as `mission-control` and `show-front` |
 
 **Do not use `CGSManagedDisplaySetCurrentSpace`:** it was tried for instant cross-display switching and reverted. It flips the window server's current-space pointer without running the real transition, desyncing state — target-space windows composite on top of the still-displayed space (worst with fullscreen spaces), and subsequent edge bounds-checks read the stale pointer and overshoot into a black non-existent space.
 
@@ -248,7 +314,7 @@ macOS 27's Dock **rejects** the bare gesture pairs above (the user hears the err
 
 1. **Extra dock-event fields**: field 134 (`kCGEventGesturePhase2`) mirrors the phase, 138 (`kCGEventGestureFlavor`) = 3.0 (`kIOHIDGestureFlavorDockPrimary`), 169 (`kCGEventGestureTimestamp`) = `mach_absolute_time()` as a double, 125 (`kCGEventGesturePositionX`) = 0.1 (must be non-zero or the Dock discards the event). Progress (124) = ±1.0 on **every** phase; Ended-phase velocity = ±9999 (`kAugmentedInstantVelocity`). Fields 135/119/139 from the legacy recipe are not set.
 2. **Inverted sign convention**: NEGATIVE progress/velocity moves right, positive moves left (opposite of the legacy path). Do **not** "un-invert" these to match the legacy path — that was tried (PR #15) and reverted, and it is the cause of issue #19: every switch travels the wrong way, so Ctrl+Arrow walks to the first/last space instead of stepping, and at either edge the Dock flashes black and rubber-bands back to the starting space. Measured on build 26A5388g by posting the augmented sequence and reading the index back from `CGSCopyManagedDisplaySpaces`: `+1.0/+9999` moves left, `-1.0/-9999` moves right. This is the *posting* convention only — reading a real trackpad gesture's direction has its own separate rule (`isRightSwipe`, see Feature 3).
-3. **Serialized IOHID payload under field 4205**: the Dock validates the event against a packed little-endian IOHID queue payload — `IOHIDSystemQueueElementHeader` (28 B) + `IOHIDFluidTouchGestureData` (40 B) + `IOHIDVelocityEventData` (28 B, appended only when velocity ≠ 0 or phase = Ended) — mirroring the event's gesture fields (positions/progress/velocity as signed 16.16 fixed-point, phase in the high byte of the gesture's `options`). Field 4205 can NOT be set via the normal field-setter API: the event is flattened with `CGEventCreateData`, a raw record (big-endian u16 payload length, big-endian u16 field ID 4205, payload bytes) is appended, and the event is rebuilt with `CGEventCreateFromData`. The serialized header must be `00 00 00 02` — anything else means Apple changed the format and `augmentDockSwipeEvent` bails (gesture not posted). Swift structs make no layout guarantees, so the payload is serialized field-by-field (`Data.appendLE`), not by casting structs — the layout was verified byte-identical against the packed C structs.
+3. **Serialized IOHID payload under field 4205**: the Dock validates the event against a packed little-endian IOHID queue payload — `IOHIDSystemQueueElementHeader` (28 B) + `IOHIDFluidTouchGestureData` (40 B) + `IOHIDVelocityEventData` (28 B, appended only when velocity ≠ 0 or phase = Ended) — mirroring the event's gesture fields (positions/progress/velocity as signed 16.16 fixed-point, phase in the high byte of the gesture's `options`). Field 4205 can NOT be set via the normal field-setter API: the event is flattened with `CGEventCreateData`, any existing field-4205 record is replaced with a current packed payload, and the event is rebuilt with `CGEventCreateFromData`. The serialized header must be `00 00 00 02` — anything else means Apple changed the format and `augmentDockSwipeEvent` bails (gesture not posted). Swift structs make no layout guarantees, so the payload is serialized field-by-field (`Data.appendLE`), not by casting structs — the layout was verified byte-identical against the packed C structs.
 
 The augmented sequence is **Began + Changed + Ended** (three pairs, not two — macOS 27 requires the Changed phase). All three events are built and augmented up front so a mid-sequence failure posts nothing (a Began without its Ended would leave the Dock's gesture state half-open). Animated slider velocities (50–70) pass through unclamped — **uncalibrated on macOS 27**; only the instant velocity (9999) is confirmed working upstream. Anything ≥ `kInstantSwitchVelocity` (400) is mapped to 9999.
 
@@ -285,12 +351,14 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | Variable | Type | Purpose |
 |---|---|---|
 | `gTap` | `CFMachPort?` | The active CGEvent tap (keyboard, Feature 1) |
-| `gSwipeTap` / `gSwipeTapSource` | `CFMachPort?` / `CFRunLoopSource?` | Swipe-intercept tap (Feature 3) — exists only while the feature is active (`updateSwipeTap()`) |
+| `gSwipeTap` / `gSwipeTapSource` | `CFMachPort?` / `CFRunLoopSource?` | Shared gesture-intercept tap — exists only while at least one gesture feature is active (`updateSwipeTap()`) |
 | `gEnabled` | `Bool` | Master on/off toggle |
 | `gInstantSwitchEnabled` | `Bool` | Feature 1 toggle |
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
 | `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
-| `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
+| `gInstantMissionControlEnabled` | `Bool` | Mission Control entry/dismissal transition toggle (default **false** — opt-in) |
+| `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-horizontal-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
+| `gMissionControlSwipeTracking` / `gPendingMissionControlEvents` / `gPendingMissionControlOverviewState` | `Bool` / `[CGEvent]` / `DockOverviewState?` | Claimed vertical stream, copied prefix, and its exact desktop/Mission Control origin awaiting direction/native replay |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`). Stamped by Features 1/3 and by non-auto-follow space changes |
 | `gLastFollowedPid` / `gLastFollowedTime` | `pid_t` / `Date` | Last app auto-follow chased — the echo guard's scope (`-1` = none) |
@@ -303,7 +371,7 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 ### UserDefaults keys (`Defaults` enum)
 
-`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`,
+`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.instantMissionControl`, `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`,
 `spacerabbit.lastUpdateCheck`, `spacerabbit.pendingUpdateVersion`,
 `spacerabbit.pendingUpdateURL` (the last three belong to the update throttle — see
 "Update flow"; none has a `g` global, they are read and written where they are used).
@@ -319,13 +387,16 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kSLSSpaceTypeAll` | SpaceSwitching | `7` (Int32) | Bitmask for "all space types" in SLS calls |
 | `kInstantSwitchProgress` | SpaceSwitching | `2.0` | Fully-committed swipe progress |
 | `kInstantSwitchVelocity` | SpaceSwitching | `400.0` | Velocity above Dock's instant threshold |
-| `kAugmentedInstantVelocity` | SpaceSwitching | `9999.0` | Instant velocity on the macOS 27+ augmented path (sign inverted: negative = right) |
+| `kMissionControlEpsilon` | SpaceSwitching | `1/65536` | Smallest signed 16.16 value used for vertical entry Began/Ended |
+| `kAugmentedInstantVelocity` | SpaceSwitching | `9999.0` | Hardened instant velocity for macOS 27+ horizontal gestures and Instant Mission Control transitions (horizontal sign inverted: negative = right) |
 | `kAnimatedVelocityMin/Max` | SpaceSwitching | `40.0` / `80.0` | Animated velocity band for the transition-speed slider (from InstantSpaceSwitcher's presets). `currentSwitchVelocity()` interpolates the Fast/Faster/Fastest ticks to 50/60/70, or returns `kInstantSwitchVelocity` at the "Instant" end cap. At the "Normal" tick `isNativeSwitchSpeed()` is true and **no gestures are posted at all** — the event tap passes shortcuts through and auto-follow stands down, giving macOS's native animation |
+| `kMissionControlAnimationDurationSlow/Fast` | SpaceSwitching | `0.24` / `0.08` seconds | Duration endpoints that map the shared velocity band to Mission Control's timed progress stream. Slider ticks Fast/Faster/Fastest resolve to 0.20/0.16/0.12 seconds |
 | `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period after a *user-driven* space switch before auto-follow kicks in |
 | `kAutoFollowEchoWindow` | AutoFollow | `0.3` (TimeInterval) | Window in which a repeat activation of the **same** app reads as the echo of our own follow |
 | `kAutoFollowSelfChangeWindow` | AutoFollow | `1.5` (TimeInterval) | How long `gAutoFollowTargetSpace` stays credible as the cause of a space-change notification |
 | `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the Mission Control marker |
-| `kGestureMotionHorizontal` | SwipeIntercept | `1` (Int64) | `kCGEventGestureSwipeMotion` value of a horizontal swipe (vertical swipes pass through) |
+| `kCurrentOSSpacesMask` | SpaceSwitching | `(1 << 0) \| (1 << 3)` | Private mask used to query the active Dock-managed overview space |
+| `kGestureMotionHorizontal` / `kGestureMotionVertical` | SwipeIntercept | `1` / `2` (Int64) | `kCGEventGestureSwipeMotion` values for Space and Mission Control swipes |
 | `kSyntheticGestureMarker` | SwipeIntercept | `0x53504152` ('SPAR') | Stamped into `.eventSourceUserData` on every gesture Space Rabbit posts, so the swipe tap passes its own events through |
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
@@ -392,12 +463,12 @@ Both call `startUpdate(downloadURL:)` which delegates to `UpdaterWindowControlle
 
 Toggles can be changed from two places. The sync pattern:
 
-1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`/`toggleTrackpadSwipe`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
-2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`/`toggleTrackpadSwipe`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
+1. **Menu bar** → `SwoopMenu.toggleInstantSwitch`/`toggleAutoFollow`/`toggleTrackpadSwipe`/`toggleInstantMissionControl`: writes `gXxxEnabled` → `UserDefaults` → updates menu checkmark
+2. **Settings window** → the matching `FeaturesPaneController` actions: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
 3. **Settings pane appears** (`viewWillAppear`, fires on every pane swap): refreshes its switch controls from globals
 
-The trackpad swipe toggle additionally calls `updateSwipeTap()` from both places (its
-tap only exists while the feature is active).
+Both gesture toggles additionally call `updateSwipeTap()` from both places (the
+shared tap only exists while at least one is active).
 
 Master enable/disable (`gEnabled`) is only togglable from the menu bar (header-row switch or right-click on the icon; both go through `setEnabled`, which keeps the switch state in sync and calls `updateSwipeTap()`).
 
@@ -431,6 +502,8 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        ├─ Auto-follow on ⌘⇥ toggle (checkmark, shortcut: F)
        ├─ Instant trackpad swipe toggle (checkmark, shortcut: T,
        │    icon: rectangle.and.hand.point.up.left.filled)
+       ├─ Instant Mission Control toggle (checkmark, shortcut: M,
+       │    icon: rectangle.3.group)
        ├─ "Statistics:" section header
        ├─ Switch count + time-saved display (non-interactive)
        ├─ Version label
@@ -449,7 +522,8 @@ SettingsWindowController (singleton, NSWindowDelegate)
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
        │    + Launch at Login (SMAppService)
        ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow +
-       │    Instant trackpad swipe toggles, then Transition speed slider on its
+       │    Instant trackpad swipe + Instant Mission Control toggles, then
+       │    Transition speed slider on its
        │    own (5 ticks, snapping: Normal = native macOS animation / Fast /
        │    Faster / Fastest / right end cap = "Instant", the default)
        ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
@@ -748,8 +822,8 @@ App/
   SpaceSwitching.swift  — space queries, synthetic gesture posting, navigation
   EventTap.swift        — CGEvent tap callback (Feature 1: instant switch)
   AutoFollow.swift      — app-activation observer (Feature 2: auto-follow)
-  SwipeIntercept.swift  — gesture tap intercepting real trackpad swipes
-                          (Feature 3: instant trackpad swipe)
+  SwipeIntercept.swift  — shared gesture tap for horizontal Space swipes and
+                          Mission Control entry/dismissal
   MenuBar.swift         — SwoopMenu status item and dropdown menu
   Settings.swift        — preferences window (General + About tabs) — largest file
   UpdateCheck.swift     — GitHub release version checking
@@ -795,6 +869,9 @@ local.env               — git-ignored; signing credentials
 - Trackpad swipe gestures animate unless the opt-in "Instant Trackpad Swipe"
   feature is enabled (they bypass the keyboard event tap; Feature 3 intercepts
   them with its own gesture tap).
+- Mission Control entry and dismissal remain native unless the independent opt-in
+  "Instant Mission Control" feature is enabled. They then follow the shared
+  transition-speed slider; unrelated in-overview gestures remain native.
 - Space switches inside a Mission Control overview are left to macOS (animated) — the overview cannot be driven by synthetic DockSwipes at all (see "Mission Control stand-down").
 - Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display: at the "Instant" speed setting, `switchOnOtherDisplay` warps the cursor to that display, posts the gesture, and restores the cursor after `kCursorWarpRestoreDelay` (skipping the restore if the user moved it); at animated speeds it stands down and macOS's native animated switch handles it. Direct APIs are not an option (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates. macOS 27 already did this once: it rejects bare synthetic DockSwipe events, requiring the augmented path (see "macOS 27+ gesture augmentation").
