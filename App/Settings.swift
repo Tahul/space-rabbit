@@ -120,6 +120,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        // Rasterize the About pane's icon once the window is on screen, so the
+        // decode is done by the time the user reaches that pane rather than
+        // hitching its first paint. No-op after the first call.
+        DispatchQueue.main.async {
+            AboutAppIcon.prewarm()
+        }
     }
 
     /// Refreshes the open window's panes from the global state.
@@ -1363,6 +1370,68 @@ final class UpdatesPaneController: SettingsPaneViewController {
 
 // MARK: - About Pane
 
+/// Pre-rendered app icon for the About pane.
+///
+/// `NSImage(named: "NSApplicationIcon")` is lazy: the `.icns` file is only read
+/// and its best-matching representation decoded when the image is first drawn,
+/// which showed up as a visible hitch (~250 ms) on the About pane's first paint.
+/// The icon is rasterized once into a bitmap at the size the pane displays it
+/// and reused for the process's lifetime; `prewarm()` pays that cost when the
+/// settings window opens — the user is on another pane then — so even the first
+/// paint of the About pane is instant.
+enum AboutAppIcon {
+
+    private static var cached: NSImage?
+
+    /// The rasterized icon, rendering it on first use if `prewarm()` has not run.
+    ///
+    /// - Returns: The icon at `Layout.aboutIconSize`, or `nil` if the bundle has none.
+    static func image() -> NSImage? {
+        if cached == nil { cached = render() }
+        return cached
+    }
+
+    /// Renders and caches the icon ahead of the About pane ever being shown.
+    static func prewarm() {
+        _ = image()
+    }
+
+    /// Draws the application icon into a bitmap at the About pane's display size.
+    ///
+    /// Rendered at the highest backing scale of any attached display, so moving
+    /// the window to a Retina screen does not reveal a soft image.
+    ///
+    /// - Returns: The rasterized icon, or `nil` if the source image or the
+    ///            bitmap context could not be created.
+    private static func render() -> NSImage? {
+        guard let source = NSImage(named: "NSApplicationIcon") else { return nil }
+
+        let size   = Layout.aboutIconSize
+        let scale  = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2
+        let pixels = Int((size * scale).rounded())
+
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                         pixelsWide: pixels, pixelsHigh: pixels,
+                                         bitsPerSample: 8, samplesPerPixel: 4,
+                                         hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB,
+                                         bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: rep)
+        else { return nil }
+
+        rep.size = NSSize(width: size, height: size)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        source.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
+        NSGraphicsContext.restoreGraphicsState()
+
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.addRepresentation(rep)
+        return image
+    }
+}
+
 /// The "About" pane showing app info, version, and authors.
 ///
 /// Displays the app icon, name, version, copyright, website link,
@@ -1398,7 +1467,7 @@ final class AboutPaneController: SettingsPaneViewController {
     private func buildAppInfoStack() -> NSStackView {
         // App icon
         let iconView = NSImageView()
-        iconView.image        = NSImage(named: "NSApplicationIcon")
+        iconView.image        = AboutAppIcon.image()
         iconView.imageScaling = .scaleProportionallyDown
         NSLayoutConstraint.activate([
             iconView.widthAnchor.constraint(equalToConstant: Layout.aboutIconSize),
