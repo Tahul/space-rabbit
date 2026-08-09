@@ -112,6 +112,11 @@ let kCGEventIOHIDPayloadField: UInt16 = 4205
 /// HID event type for a Dock swipe gesture.
 let kIOHIDEventTypeDockSwipe: Int64 = 23
 
+/// `NX_SYSDEFINED` — the event type AppKit exposes as `systemDefined` (media
+/// keys and other hardware controls). CoreGraphics ships no named
+/// `CGEventType` case for it, so the tap mask and callback use the raw value.
+let kCGEventTypeSystemDefined = CGEventType(rawValue: 14)!
+
 /// CGS event subtype: generic gesture (acts as the envelope event).
 let kCGSEventGesture:         Int64 = 29
 

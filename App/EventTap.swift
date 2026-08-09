@@ -28,10 +28,6 @@ private let kRelevantModifiers: CGEventFlags = [
     .maskControl, .maskCommand, .maskAlternate, .maskShift
 ]
 
-/// CoreGraphics omits a named case for AppKit's `systemDefined` event type
-/// (`NX_SYSDEFINED`), used by media keys and other hardware controls.
-let kSystemDefinedEventType = CGEventType(rawValue: 14)!
-
 /// Tracks a possible bare-Fn press until release. The switch happens on
 /// release so Fn can still be used as a modifier without cycling spaces.
 private var gFnPressState: BareFnPressState = .idle
@@ -55,17 +51,32 @@ private func resetCycleShortcutTracking() {
 
 /// Moves to the next space on the display under the cursor, wrapping from
 /// the last space back to the first.
-private func cycleToNextSpace() {
-    guard !CGEventSource.buttonState(.combinedSessionState, button: .left) else { return }
+///
+/// Only called once the configured cycle shortcut has matched — both guards
+/// below scan the window list or the space layout, too heavy to run for every
+/// event passing through the tap.
+///
+/// - Returns: `true` when a switch was posted. `false` means Space Rabbit
+///   stood down and the caller should let macOS handle the key natively.
+@discardableResult
+private func cycleToNextSpace() -> Bool {
+    // Preserve native window-manager behavior while a window is dragged.
+    // Cheapest of the three checks, so it runs first.
+    guard !CGEventSource.buttonState(.combinedSessionState, button: .left)
+    else { return false }
+
+    // Mission Control navigates its own carousel — see isMissionControlActive().
+    guard !isMissionControlActive() else { return false }
 
     let (spaceIDs, currentIdx) = getSpaceList()
-    guard currentIdx >= 0, spaceIDs.count > 1 else { return }
+    guard currentIdx >= 0, spaceIDs.count > 1 else { return false }
 
     let targetIdx = (currentIdx + 1) % spaceIDs.count
-    if case .switched = switchToSpace(spaceIDs[targetIdx]) {
-        gLastSpaceSwitchTime = Date()
-        gMenu?.recordSwitch()
-    }
+    guard case .switched = switchToSpace(spaceIDs[targetIdx]) else { return false }
+
+    gLastSpaceSwitchTime = Date()
+    gMenu?.recordSwitch()
+    return true
 }
 
 // MARK: - Event Tap Callback
@@ -108,7 +119,7 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 
     // Only process keyboard events while the master switch is enabled.
     guard type == .keyDown || type == .keyUp || type == .flagsChanged
-            || type == kSystemDefinedEventType,
+            || type == kCGEventTypeSystemDefined,
           gEnabled else {
         resetCycleShortcutTracking()
         return passthrough
@@ -151,6 +162,10 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
             )
         } else {
             let wasBarePress = gFnPressState.finish()
+            // A bare-Fn binding owns the key either way: when the cycle stands
+            // down (Mission Control, a window being dragged, unknown layout)
+            // the tap simply performs no switch. There is no native Fn
+            // behavior worth restoring mid-press.
             if cycleShortcut.isBareFn, wasBarePress { cycleToNextSpace() }
         }
         return cycleShortcut.isBareFn ? nil : passthrough
@@ -180,14 +195,18 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
        keycode == shortcut.keycode,
        (!gFnPressState.isDown || shortcut.isFunctionKey),
        flags.intersection(shortcut.matchingModifierMask) == shortcut.modifiers {
-        // Preserve native window-manager behavior while a window is dragged.
-        guard !CGEventSource.buttonState(.combinedSessionState, button: .left)
-        else { return passthrough }
+        // Cycle once per physical press: a repeat is swallowed only when the
+        // press it belongs to was ours to begin with.
+        guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else {
+            return gCycleShortcutActiveKeycode == keycode ? nil : passthrough
+        }
+
+        // Standing down (Mission Control, a dragged window, unknown layout)
+        // hands the key back to macOS rather than eating it — and leaves no
+        // active keycode, so the paired key-up passes through as well.
+        guard cycleToNextSpace() else { return passthrough }
 
         gCycleShortcutActiveKeycode = keycode
-        if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
-            cycleToNextSpace()
-        }
         return nil
     }
 

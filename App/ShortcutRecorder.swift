@@ -116,7 +116,7 @@ final class ShortcutRecorderButton: NSButton {
         let modifiers = cycleModifiers(from: event.modifierFlags)
 
         // Escape cancels without changing the existing shortcut.
-        if keycode == 53 {
+        if keycode == kEscapeKeycode {
             cancelRecording()
             return
         }
@@ -134,7 +134,8 @@ final class ShortcutRecorderButton: NSButton {
         }
 
         // An unmodified Delete or Forward Delete clears the field.
-        if (keycode == 51 || keycode == 117), modifiers.isEmpty {
+        if keycode == kDeleteKeycode || keycode == kForwardDeleteKeycode,
+           modifiers.isEmpty {
             commit(nil)
             return
         }
@@ -184,14 +185,9 @@ final class ShortcutRecorderButton: NSButton {
     /// Returns a compact key label and whether the key is an F-key (which is
     /// safe to bind without another modifier).
     private func keyLabel(for event: NSEvent) -> (label: String, isFunctionKey: Bool)? {
-        let special: [Int64: String] = [
-            36: "↩", 48: "⇥", 49: "␣", 51: "⌫", 53: "⎋", 57: "⇪",
-            63: "fn", 115: "↖", 116: "⇞", 117: "⌦", 119: "↘", 121: "⇟",
-            123: "←", 124: "→", 125: "↓", 126: "↑",
-        ]
         let keycode = Int64(event.keyCode)
         if let label = CycleShortcut.functionKeyLabels[keycode] { return (label, true) }
-        if let label = special[keycode]      { return (label, false) }
+        if let label = CycleShortcut.specialKeyLabels[keycode]  { return (label, false) }
 
         guard let characters = event.charactersIgnoringModifiers,
               !characters.isEmpty else { return nil }

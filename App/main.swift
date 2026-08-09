@@ -124,7 +124,7 @@ Timer.scheduledTimer(withTimeInterval: flushInterval, repeats: true) { _ in
 let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
               | CGEventMask(1 << CGEventType.keyUp.rawValue)
               | CGEventMask(1 << CGEventType.flagsChanged.rawValue)
-              | CGEventMask(1 << kSystemDefinedEventType.rawValue)
+              | CGEventMask(1 << kCGEventTypeSystemDefined.rawValue)
 
 gTap = CGEvent.tapCreate(
     tap: .cgSessionEventTap,

@@ -68,7 +68,12 @@ held cancels the cycle. Repeated Fn-down events preserve that cancelled state, a
 modifiers already held when Fn goes down cancel it immediately. The shortcut moves
 to the next space on the cursor's display and wraps from the last space to the first.
 It is independent of the Instant Space switch toggle, but stands down at the Normal
-transition-speed tick like all synthetic switching. At Normal, the Features pane
+transition-speed tick like all synthetic switching, and in Mission Control, while a
+window is being dragged, or when the space layout is unknown — `cycleToNextSpace()`
+owns all three checks and returns whether it acted. An ordinary binding that stands
+down is passed through to macOS (and so is its `keyUp`, since no active keycode was
+recorded); a bare-Fn binding stays swallowed either way, as the key has no native
+behavior worth restoring mid-press. At Normal, the Features pane
 dims the recorder and toggle and shows a System Settings-style warning subtitle;
 the saved enabled state and shortcut remain unchanged and return at faster speeds.
 
@@ -182,8 +187,11 @@ window regardless of state.
 Where the check runs matters — it copies the window list, so it is only reached
 once an action is about to happen, never per event:
 
-- **Feature 1** — after a shortcut has matched (both the left/right bindings and
-  the "Switch to Desktop N" loop), not for every `keyDown`.
+- **Feature 1** — after a shortcut has matched (the left/right bindings, the
+  "Switch to Desktop N" loop, and the cycle shortcut inside
+  `cycleToNextSpace()`), not for every `keyDown`. For a bare-Fn binding that
+  means one lookup per Fn *release*, and only once the press has qualified as
+  a bare tap.
 - **Feature 3** — on the Began phase only. Standing down means *not tracking* the
   gesture, so all later phases pass through via the existing `gSwipeTracking`
   checks, one lookup per swipe instead of one per sample.
@@ -326,6 +334,13 @@ All runtime state is module-level globals (not a singleton class). This is inten
 `spacerabbit.pendingUpdateURL` (the last three belong to the update throttle — see
 "Update flow"; none has a `g` global, they are read and written where they are used).
 
+The four cycle-shortcut keys are read and written as a unit by
+`loadCycleShortcut()` / `persistCycleShortcut()` in `State.swift` (the loader is
+called from `SwoopMenu.init` with the rest of the startup state). A keycode of
+`-1` is the sentinel for a recorder the user explicitly cleared, which the loader
+turns back into `gCycleShortcut = nil` with the feature forced off — distinct from
+a fresh install, whose registered default is a latent (disabled) bare Fn.
+
 Menu bar icon visibility has no `g` global: the live truth is `statusItem.isVisible` (`SwoopMenu.isMenuBarIconVisible`), persisted through `setMenuBarIconVisible(_:)`.
 
 Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount != gSwitchCountSaved`. Called every 300s by timer and once on app termination. Acceptable to lose a few counts on crash.
@@ -346,6 +361,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kGestureMotionHorizontal` | SwipeIntercept | `1` (Int64) | `kCGEventGestureSwipeMotion` value of a horizontal swipe (vertical swipes pass through) |
 | `kSyntheticGestureMarker` | SwipeIntercept | `0x53504152` ('SPAR') | Stamped into `.eventSourceUserData` on every gesture Space Rabbit posts, so the swipe tap passes its own events through |
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
+| `kCGEventTypeSystemDefined` | PrivateAPI | `14` (CGEventType) | `NX_SYSDEFINED`, which CoreGraphics exposes no named case for. In the keyboard tap's mask so media keys cancel a bare-Fn candidate |
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |
 | `kFnKeycode` | State | `63` | Virtual keycode used for the recordable bare-Fn/Globe binding |
@@ -779,7 +795,9 @@ App/
   State.swift           — global runtime state, UserDefaults keys, persistence
   Shortcuts.swift       — reads macOS space-switch keyboard shortcuts
   SpaceSwitching.swift  — space queries, synthetic gesture posting, navigation
-  EventTap.swift        — CGEvent tap callback (Feature 1: instant switch)
+  EventTap.swift        — CGEvent tap callback (Feature 1: instant switch,
+                          plus the configurable cycle shortcut)
+  ShortcutRecorder.swift — Preferences control that records the cycle shortcut
   AutoFollow.swift      — app-activation observer (Feature 2: auto-follow)
   SwipeIntercept.swift  — gesture tap intercepting real trackpad swipes
                           (Feature 3: instant trackpad swipe)

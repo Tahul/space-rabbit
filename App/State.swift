@@ -130,6 +130,12 @@ typealias KeyBinding = (keycode: Int64, mods: CGEventFlags)
 /// Virtual keycode emitted by the Fn/Globe key on Apple keyboards.
 let kFnKeycode: Int64 = 63
 
+/// Virtual keycodes the shortcut recorder acts on rather than records:
+/// Escape cancels, either Delete clears the binding.
+let kEscapeKeycode: Int64        = 53
+let kDeleteKeycode: Int64        = 51
+let kForwardDeleteKeycode: Int64 = 117
+
 /// Modifiers checked when matching ordinary configurable cycle shortcuts.
 /// Fn is included to reject it as an unrecorded extra modifier. The automatic
 /// function flag on special/F-keys is normalized separately.
@@ -181,15 +187,25 @@ struct CycleShortcut {
         106: "F16", 64: "F17", 79: "F18", 80: "F19", 90: "F20",
     ]
 
+    /// Non-alphanumeric keycodes and the glyphs the recorder shows for them.
+    /// Anything absent from this table and from `functionKeyLabels` is
+    /// labelled with the character the key produces unmodified.
+    static let specialKeyLabels: [Int64: String] = [
+        36: "↩", 48: "⇥", 49: "␣", kDeleteKeycode: "⌫", kEscapeKeycode: "⎋",
+        57: "⇪", kFnKeycode: "fn", 115: "↖", 116: "⇞", kForwardDeleteKeycode: "⌦",
+        119: "↘", 121: "⇟", 123: "←", 124: "→", 125: "↓", 126: "↑",
+    ]
+
     /// Non-F keys whose events carry `.maskSecondaryFn` automatically even
     /// when the physical Fn key is not held. AppKit classifies these as
     /// function/navigation keys, so that synthesized flag must be ignored
     /// during modifier matching.
     private static let implicitFunctionFlagKeycodes: Set<Int64> = [
-        71,                          // Keypad Clear
-        114,                         // Help / Insert
-        115, 116, 117, 119, 121,    // Home, Page Up, Forward Delete, End, Page Down
-        123, 124, 125, 126,         // Arrow keys
+        71,                              // Keypad Clear
+        114,                             // Help / Insert
+        115, 116, 119, 121,              // Home, Page Up, End, Page Down
+        kForwardDeleteKeycode,
+        123, 124, 125, 126,              // Arrow keys
     ]
 
     let keycode: Int64
@@ -294,6 +310,32 @@ enum Defaults {
 }
 
 // MARK: - Persistence
+
+/// Reads the configurable cycle shortcut and its enabled state into the
+/// globals. Counterpart of `persistCycleShortcut()` — the negative keycode
+/// written there for an explicitly-cleared recorder resolves back to `nil`,
+/// with the feature forced off since it has nothing left to match.
+func loadCycleShortcut() {
+    let defaults = UserDefaults.standard
+    gCycleShortcutEnabled = defaults.bool(forKey: Defaults.cycleShortcutEnabled)
+
+    let keycode = (defaults.object(forKey: Defaults.cycleShortcutKeycode)
+                     as? NSNumber)?.int64Value ?? kFnKeycode
+    guard keycode >= 0 else {
+        gCycleShortcut        = nil
+        gCycleShortcutEnabled = false
+        return
+    }
+
+    let rawModifiers = (defaults.object(forKey: Defaults.cycleShortcutModifiers)
+                          as? NSNumber)?.uint64Value ?? 0
+    gCycleShortcut = CycleShortcut(
+        keycode: keycode,
+        modifiers: CGEventFlags(rawValue: rawModifiers),
+        keyLabel: defaults.string(forKey: Defaults.cycleShortcutLabel)
+            ?? CycleShortcut.fn.keyLabel
+    )
+}
 
 /// Writes the configurable cycle shortcut and its enabled state.
 func persistCycleShortcut() {
