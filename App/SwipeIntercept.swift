@@ -482,25 +482,28 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 // MARK: - Direction & Firing
 
 /// Whether the given progress/velocity sign means "move to the space on
-/// the right". The raw sign convention of REAL trackpad DockSwipe events
-/// has flipped across macOS releases (independently of the posting-side
-/// convention documented in SpaceSwitching.swift):
+/// the right".
 ///
-///   - macOS ≤ 26: positive = right
-///   - macOS 27+:  negative = right (inverted on the augmented path)
+/// Real trackpad DockSwipe events report horizontal progress/velocity with
+/// positive = right on every macOS release this app runs on. macOS 27
+/// (including build 26A5388g) inverts only the POSTING-side convention
+/// (`makeAugmentedDockEvent` in SpaceSwitching.swift): the augmented
+/// synthetic events the Dock accepts carry negative signs for rightward
+/// movement. That inversion does NOT extend to real events — assuming it
+/// does makes `isRightSwipe` read every physical swipe backwards, so a
+/// left-to-right swipe switches to the previous space (issue #40).
 ///
 /// The "Natural scrolling" setting needs no handling here: the window
 /// server already flips the reported sign when the user turns it off, so
-/// the rows above hold in both modes and the mapping from sign to space is
-/// unconditional. Correcting for the setting on top of that double-flips
-/// it — measured on macOS 26, natural scrolling OFF: a left-to-right swipe
-/// reports progress +0.045 and must move right, same rule as ON.
+/// the mapping from sign to space is unconditional. Correcting for the
+/// setting on top of that double-flips it — measured on macOS 26, natural
+/// scrolling OFF: a left-to-right swipe reports progress +0.045 and must
+/// move right, same rule as ON.
 ///
 /// - Parameter sign: A non-zero swipe progress or X velocity sample.
 /// - Returns: `true` when the swipe targets the next space to the right.
 private func isRightSwipe(_ sign: Double) -> Bool {
-    if requiresEventAugmentation() { return sign < 0 }
-    return sign > 0
+    sign > 0
 }
 
 /// Fires the instant switch replacing an intercepted swipe, mirroring the
