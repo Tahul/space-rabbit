@@ -91,7 +91,7 @@
 "settings.features.instantSpaceSwitch" = "即时切换空间";
 "settings.features.instantAppSwitch" = "即时切换应用";
 "settings.features.instantTrackpadSwipe" = "即时触控板轻扫";
-"settings.features.cycleSpaces" = "循环切换空间";
+"settings.features.cycleSpaces" = "循环切换空间快捷键";
 "settings.features.cycleSpaces.normalWarning" = "当过渡速度设为“正常”时，循环切换空间不可用。";
 "settings.features.shortcut.recording" = "按下快捷键…";
 "settings.features.shortcut.none" = "无";

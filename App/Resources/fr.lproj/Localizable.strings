@@ -90,7 +90,7 @@
 "settings.features.instantSpaceSwitch" = "Changement d’Espace instantané";
 "settings.features.instantAppSwitch" = "Changement d’app instantané";
 "settings.features.instantTrackpadSwipe" = "Balayage instantané du trackpad";
-"settings.features.cycleSpaces" = "Parcourir les Espaces";
+"settings.features.cycleSpaces" = "Raccourci pour parcourir les Espaces";
 "settings.features.cycleSpaces.normalWarning" = "« Parcourir les Espaces » n’est pas disponible lorsque la vitesse de transition est réglée sur « Normale ».";
 "settings.features.shortcut.recording" = "Appuyez sur un raccourci…";
 "settings.features.shortcut.none" = "Aucun";

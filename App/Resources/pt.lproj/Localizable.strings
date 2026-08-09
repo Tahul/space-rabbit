@@ -89,7 +89,7 @@
 "settings.features.instantSpaceSwitch" = "Mudança de espaço instantânea";
 "settings.features.instantAppSwitch" = "Mudança de app instantânea";
 "settings.features.instantTrackpadSwipe" = "Deslize instantâneo no trackpad";
-"settings.features.cycleSpaces" = "Alternar espaços";
+"settings.features.cycleSpaces" = "Atalho para alternar espaços";
 "settings.features.cycleSpaces.normalWarning" = "Alternar espaços não está disponível quando a velocidade da transição está definida como “Normal”.";
 "settings.features.shortcut.recording" = "Pressione um atalho…";
 "settings.features.shortcut.none" = "Nenhum";

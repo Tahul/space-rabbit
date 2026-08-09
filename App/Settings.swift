@@ -1044,11 +1044,12 @@ final class FeaturesPaneController: SettingsPaneViewController {
         let speedGroup = groupBox([
             settingsRow(label: L("settings.features.transitionSpeed"),
                         control: makeSpeedControl()),
-            rowDivider(),
-            cycleShortcutRow,
         ])
+        // The cycle shortcut is purely optional, so it stands on its own below
+        // the speed group rather than reading as part of it
+        let cycleGroup = groupBox([cycleShortcutRow])
         updateCycleShortcutAvailability()
-        return [togglesGroup, speedGroup]
+        return [togglesGroup, speedGroup, cycleGroup]
     }
 
     override func syncFromGlobals() {

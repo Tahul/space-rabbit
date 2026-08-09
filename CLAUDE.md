@@ -460,8 +460,8 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        ├─ Auto-follow on ⌘⇥ toggle (checkmark, shortcut: F)
        ├─ Instant trackpad swipe toggle (checkmark, shortcut: T,
        │    icon: rectangle.and.hand.point.up.left.filled)
-       ├─ Cycle Spaces toggle (checkmark, shortcut: C,
-       │    disabled while transition speed is Normal)
+       │    (the cycle shortcut is deliberately NOT here — secondary feature,
+       │    settings-only)
        ├─ "Statistics:" section header
        ├─ Switch count + time-saved display (non-interactive)
        ├─ Version label
@@ -479,11 +479,12 @@ SettingsWindowController (singleton, NSWindowDelegate)
        │    window resizes per pane
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
        │    + Launch at Login (SMAppService)
-       ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow +
+       ├─ FeaturesPaneController — three groups: Instant switch + Auto-follow +
        │    Instant trackpad swipe toggles, then Transition speed slider
        │    (5 ticks, snapping: Normal = native macOS animation / Fast / Faster /
-       │    Fastest / right end cap = "Instant", the default) with the configurable
-       │    cycle-shortcut recorder + enable switch directly beneath it
+       │    Fastest / right end cap = "Instant", the default), then a group of
+       │    its own for the optional "Cycle spaces shortcut" recorder + enable
+       │    switch
        ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
        │    autohide-time-modifier, killall Dock) + Show menu bar icon toggle
        │    (statusItem.isVisible; when hidden, relaunching the app reopens
