@@ -72,6 +72,7 @@ final class SwoopMenu: NSObject {
     private let instantSwitchItem:     NSMenuItem
     private let autoFollowItem:        NSMenuItem
     private let trackpadSwipeItem:     NSMenuItem
+    private let cycleSpacesItem:       NSMenuItem
     private let statsItem:             NSMenuItem
 
     /// Header row at the top of the menu: app name + master enable switch.
@@ -96,13 +97,17 @@ final class SwoopMenu: NSObject {
         // the user has toggled anything)
         let defaults = UserDefaults.standard
         defaults.register(defaults: [
-            Defaults.enabled:          true,
-            Defaults.instantSwitch:    true,
-            Defaults.autoFollow:       true,
-            Defaults.trackpadSwipe:    false,  // opt-in — swallows a real gesture
-            Defaults.switchSpeed:      1.0,
-            Defaults.switchCount:      0,
-            Defaults.showMenuBarIcon:  true,
+            Defaults.enabled:                true,
+            Defaults.instantSwitch:          true,
+            Defaults.autoFollow:             true,
+            Defaults.trackpadSwipe:          false,  // opt-in — swallows a real gesture
+            Defaults.cycleShortcutEnabled:   false,
+            Defaults.cycleShortcutKeycode:   kFnKeycode,
+            Defaults.cycleShortcutModifiers: UInt64(0),
+            Defaults.cycleShortcutLabel:     "fn",
+            Defaults.switchSpeed:            1.0,
+            Defaults.switchCount:            0,
+            Defaults.showMenuBarIcon:        true,
         ])
 
         // Load persisted state from UserDefaults into the global variables
@@ -111,6 +116,25 @@ final class SwoopMenu: NSObject {
         gInstantSwitchEnabled    = defaults.bool(forKey: Defaults.instantSwitch)
         gAutoFollowEnabled       = defaults.bool(forKey: Defaults.autoFollow)
         gTrackpadSwipeEnabled    = defaults.bool(forKey: Defaults.trackpadSwipe)
+        gCycleShortcutEnabled    = defaults.bool(forKey: Defaults.cycleShortcutEnabled)
+
+        let cycleKeycode = (defaults.object(forKey: Defaults.cycleShortcutKeycode) as? NSNumber)?
+            .int64Value ?? kFnKeycode
+        if cycleKeycode >= 0 {
+            let rawModifiers = (defaults.object(
+                forKey: Defaults.cycleShortcutModifiers
+            ) as? NSNumber)?.uint64Value ?? 0
+            let keyLabel = defaults.string(forKey: Defaults.cycleShortcutLabel) ?? "fn"
+            gCycleShortcut = CycleShortcut(
+                keycode: cycleKeycode,
+                modifiers: CGEventFlags(rawValue: rawModifiers),
+                keyLabel: keyLabel
+            )
+        } else {
+            gCycleShortcut = nil
+            gCycleShortcutEnabled = false
+        }
+
         gSwitchSpeed             = defaults.double(forKey: Defaults.switchSpeed)
         gSwitchCount             = defaults.integer(forKey: Defaults.switchCount)
         gSwitchCountSaved        = gSwitchCount
@@ -129,6 +153,9 @@ final class SwoopMenu: NSObject {
         trackpadSwipeItem = NSMenuItem(title: L("menu.instantTrackpadSwipe"),
                                        action: #selector(toggleTrackpadSwipe(_:)),
                                        keyEquivalent: "t")
+        cycleSpacesItem   = NSMenuItem(title: L("settings.features.cycleSpaces"),
+                                       action: #selector(toggleCycleSpaces(_:)),
+                                       keyEquivalent: "c")
         statsItem         = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
         super.init()
@@ -209,8 +236,11 @@ final class SwoopMenu: NSObject {
         instantSwitchItem.state     = gInstantSwitchEnabled    ? .on : .off
         autoFollowItem.target       = self
         autoFollowItem.state        = gAutoFollowEnabled       ? .on : .off
-        trackpadSwipeItem.target = self
-        trackpadSwipeItem.state  = gTrackpadSwipeEnabled ? .on : .off
+        trackpadSwipeItem.target   = self
+        trackpadSwipeItem.state    = gTrackpadSwipeEnabled ? .on : .off
+        cycleSpacesItem.target     = self
+        cycleSpacesItem.state      = gCycleShortcutEnabled ? .on : .off
+        cycleSpacesItem.isEnabled  = !isNativeSwitchSpeed()
         statsItem.isEnabled         = false  // Non-interactive display item
     }
 
@@ -230,6 +260,11 @@ final class SwoopMenu: NSObject {
                              accessibilityDescription: nil) {
             img.isTemplate = true
             trackpadSwipeItem.image = img
+        }
+        if let img = NSImage(systemSymbolName: "arrow.triangle.2.circlepath",
+                             accessibilityDescription: nil) {
+            img.isTemplate = true
+            cycleSpacesItem.image = img
         }
         if let img = NSImage(systemSymbolName: "timer",
                              accessibilityDescription: nil) {
@@ -259,6 +294,7 @@ final class SwoopMenu: NSObject {
         statusMenu.addItem(instantSwitchItem)
         statusMenu.addItem(autoFollowItem)
         statusMenu.addItem(trackpadSwipeItem)
+        statusMenu.addItem(cycleSpacesItem)
         statusMenu.addItem(.separator())
 
         // Statistics section
@@ -317,6 +353,7 @@ final class SwoopMenu: NSObject {
             // it so right-click continues to work (NSStatusItem only supports
             // either a menu OR an action, not both simultaneously).
             updateLaunchWarning()
+            syncMenuItems()
             statusItem.menu = statusMenu
             sender.performClick(nil)
             statusItem.menu = nil
@@ -534,7 +571,12 @@ final class SwoopMenu: NSObject {
     func syncMenuItems() {
         instantSwitchItem.state    = gInstantSwitchEnabled    ? .on : .off
         autoFollowItem.state       = gAutoFollowEnabled       ? .on : .off
-        trackpadSwipeItem.state = gTrackpadSwipeEnabled ? .on : .off
+        trackpadSwipeItem.state    = gTrackpadSwipeEnabled    ? .on : .off
+        cycleSpacesItem.state      = gCycleShortcutEnabled    ? .on : .off
+        cycleSpacesItem.isEnabled  = !isNativeSwitchSpeed()
+        cycleSpacesItem.toolTip    = isNativeSwitchSpeed()
+            ? L("settings.features.cycleSpaces.normalWarning")
+            : nil
     }
 
     @objc private func toggleInstantSwitch(_ sender: NSMenuItem) {
@@ -556,6 +598,16 @@ final class SwoopMenu: NSObject {
         sender.state = gTrackpadSwipeEnabled ? .on : .off
         UserDefaults.standard.set(gTrackpadSwipeEnabled, forKey: Defaults.trackpadSwipe)
         updateSwipeTap()
+        SettingsWindowController.shared.syncPanes()
+    }
+
+    @objc private func toggleCycleSpaces(_ sender: NSMenuItem) {
+        gCycleShortcutEnabled.toggle()
+        if gCycleShortcutEnabled, gCycleShortcut == nil {
+            gCycleShortcut = .fn
+        }
+        sender.state = gCycleShortcutEnabled ? .on : .off
+        persistCycleShortcut()
         SettingsWindowController.shared.syncPanes()
     }
 

@@ -88,6 +88,10 @@
 "settings.features.instantSpaceSwitch" = "Instant Space switch";
 "settings.features.instantAppSwitch" = "Instant App switch";
 "settings.features.instantTrackpadSwipe" = "Instant Trackpad swipe";
+"settings.features.cycleSpaces" = "Cycle Spaces";
+"settings.features.cycleSpaces.normalWarning" = "Unavailable when the transition speed is set to Normal";
+"settings.features.shortcut.recording" = "Press shortcut…";
+"settings.features.shortcut.none" = "None";
 "settings.features.transitionSpeed" = "Transition speed";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

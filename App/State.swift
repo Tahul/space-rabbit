@@ -44,6 +44,10 @@ var gInstantSwitchEnabled: Bool = true
 /// Only effective when `gEnabled` is also `true`.
 var gAutoFollowEnabled: Bool = true
 
+/// Whether the configurable global cycle shortcut is active.
+/// Only effective when `gEnabled` is true and the transition speed is not Normal.
+var gCycleShortcutEnabled: Bool = false
+
 /// Feature 3 toggle: intercept real trackpad swipes and replace
 /// them with instant switches. Off by default (opt-in) — it swallows the
 /// user's physical gesture, which is a bigger behavioral change than the
@@ -123,6 +127,119 @@ var gSwitchCountSaved: Int = 0
 /// A keyboard shortcut: virtual keycode plus its exact modifier set.
 typealias KeyBinding = (keycode: Int64, mods: CGEventFlags)
 
+/// Virtual keycode emitted by the Fn/Globe key on Apple keyboards.
+let kFnKeycode: Int64 = 63
+
+/// Modifiers checked when matching ordinary configurable cycle shortcuts.
+/// Fn is included to reject it as an unrecorded extra modifier. The automatic
+/// function flag on special/F-keys is normalized separately.
+let kCycleShortcutModifiers: CGEventFlags = [
+    .maskControl, .maskCommand, .maskAlternate, .maskShift, .maskSecondaryFn
+]
+
+/// State of a possible bare-Fn press while waiting for its release.
+enum BareFnPressState {
+    case idle
+    case candidate
+    case chorded
+
+    var isDown: Bool {
+        if case .idle = self { return false }
+        return true
+    }
+
+    mutating func begin(usedAsModifier: Bool) {
+        guard case .idle = self else { return }
+        self = usedAsModifier ? .chorded : .candidate
+    }
+
+    mutating func markChorded() {
+        guard isDown else { return }
+        self = .chorded
+    }
+
+    /// Finishes the press and returns whether it remained a bare-Fn tap.
+    mutating func finish() -> Bool {
+        let wasBare: Bool
+        if case .candidate = self { wasBare = true } else { wasBare = false }
+        self = .idle
+        return wasBare
+    }
+
+    mutating func reset() {
+        self = .idle
+    }
+}
+
+/// A persisted global shortcut for cycling to the next Space.
+struct CycleShortcut {
+    /// F-key virtual keycodes and their recorder labels.
+    static let functionKeyLabels: [Int64: String] = [
+        122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5",
+        97: "F6", 98: "F7", 100: "F8", 101: "F9", 109: "F10",
+        103: "F11", 111: "F12", 105: "F13", 107: "F14", 113: "F15",
+        106: "F16", 64: "F17", 79: "F18", 80: "F19", 90: "F20",
+    ]
+
+    /// Non-F keys whose events carry `.maskSecondaryFn` automatically even
+    /// when the physical Fn key is not held. AppKit classifies these as
+    /// function/navigation keys, so that synthesized flag must be ignored
+    /// during modifier matching.
+    private static let implicitFunctionFlagKeycodes: Set<Int64> = [
+        71,                          // Keypad Clear
+        114,                         // Help / Insert
+        115, 116, 117, 119, 121,    // Home, Page Up, Forward Delete, End, Page Down
+        123, 124, 125, 126,         // Arrow keys
+    ]
+
+    let keycode: Int64
+    let modifiers: CGEventFlags
+    let keyLabel: String
+
+    /// Default shortcut used when the feature has not been configured.
+    static let fn = CycleShortcut(keycode: kFnKeycode, modifiers: [], keyLabel: "fn")
+
+    /// Whether this binding represents a tap of Fn/Globe by itself.
+    var isBareFn: Bool { keycode == kFnKeycode && modifiers.isEmpty }
+
+    /// Whether the primary key is F1 through F20.
+    var isFunctionKey: Bool { Self.functionKeyLabels[keycode] != nil }
+
+    /// Whether modifier matching should normalize away the function flag.
+    /// Navigation keys carry it implicitly; F-keys ignore it so both macOS
+    /// top-row modes resolve to the same binding.
+    var normalizesFunctionFlag: Bool {
+        isFunctionKey || Self.implicitFunctionFlagKeycodes.contains(keycode)
+    }
+
+    /// Modifier flags considered when matching this shortcut.
+    var matchingModifierMask: CGEventFlags {
+        normalizesFunctionFlag
+            ? kCycleShortcutModifiers.subtracting(.maskSecondaryFn)
+            : kCycleShortcutModifiers
+    }
+
+    /// Compact macOS-style glyph string shown by the recorder control.
+    var displayString: String {
+        if isBareFn { return keyLabel }
+
+        var result = ""
+        if modifiers.contains(.maskControl)     { result += "⌃" }
+        if modifiers.contains(.maskAlternate)   { result += "⌥" }
+        if modifiers.contains(.maskShift)       { result += "⇧" }
+        if modifiers.contains(.maskCommand)     { result += "⌘" }
+        return result + keyLabel
+    }
+}
+
+/// Configured cycle binding. Defaults to Fn while the feature remains off.
+/// `nil` means the user explicitly cleared the recorder.
+var gCycleShortcut: CycleShortcut? = .fn
+
+/// True while the Preferences shortcut field is recording. The global event
+/// tap passes keyboard events through so the field can receive them locally.
+var gIsRecordingCycleShortcut = false
+
 /// Binding for "move left a space" (default: Control + Left Arrow).
 /// `nil` when the hotkey is disabled in System Settings.
 var gBindingLeft: KeyBinding? = (keycode: 123, mods: .maskControl)
@@ -156,6 +273,10 @@ enum Defaults {
     /// purpose — the feature was renamed to "Instant Trackpad Swipe", and
     /// renaming the key would silently reset the opt-in for existing users.
     static let trackpadSwipe    = "spacerabbit.threeFingerSwipe"
+    static let cycleShortcutEnabled   = "spacerabbit.cycleShortcut.enabled"
+    static let cycleShortcutKeycode   = "spacerabbit.cycleShortcut.keycode"
+    static let cycleShortcutModifiers = "spacerabbit.cycleShortcut.modifiers"
+    static let cycleShortcutLabel     = "spacerabbit.cycleShortcut.label"
     static let switchSpeed      = "spacerabbit.switchSpeed"
     static let switchCount      = "spacerabbit.switchCount"
     /// When `false`, the rabbit icon is removed from the menu bar.
@@ -173,6 +294,25 @@ enum Defaults {
 }
 
 // MARK: - Persistence
+
+/// Writes the configurable cycle shortcut and its enabled state.
+func persistCycleShortcut() {
+    let defaults = UserDefaults.standard
+    defaults.set(gCycleShortcutEnabled, forKey: Defaults.cycleShortcutEnabled)
+
+    if let shortcut = gCycleShortcut {
+        defaults.set(shortcut.keycode, forKey: Defaults.cycleShortcutKeycode)
+        defaults.set(shortcut.modifiers.rawValue,
+                     forKey: Defaults.cycleShortcutModifiers)
+        defaults.set(shortcut.keyLabel, forKey: Defaults.cycleShortcutLabel)
+    } else {
+        // A negative keycode distinguishes an explicitly-cleared recorder
+        // from a fresh install, whose latent default remains Fn.
+        defaults.set(-1, forKey: Defaults.cycleShortcutKeycode)
+        defaults.removeObject(forKey: Defaults.cycleShortcutModifiers)
+        defaults.removeObject(forKey: Defaults.cycleShortcutLabel)
+    }
+}
 
 /// Writes the current switch count to UserDefaults if it has changed.
 ///

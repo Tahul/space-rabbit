@@ -46,6 +46,7 @@ private enum Layout {
     static let aboutSpacing:      CGFloat = 20
     static let speedSliderWidth:  CGFloat = 140
     static let speedTailSpacing:  CGFloat = 3
+    static let shortcutMinWidth:  CGFloat = 92
 }
 
 // MARK: - Panes
@@ -506,6 +507,155 @@ extension SettingsSidebarController: NSTableViewDataSource, NSTableViewDelegate 
 
 // MARK: - Pane Base Class
 
+/// A standard settings row with optional secondary content beneath its title.
+///
+/// Conditional subtitles are inserted into and removed from the arranged-view
+/// hierarchy instead of merely hidden. That makes the row's intrinsic height
+/// deterministic across repeated expand/collapse transitions.
+final class SettingsRowView: NSStackView {
+
+    private let textStack = NSStackView()
+    private let subtitleView: NSView?
+    private let subtitleVerticalPadding: CGFloat
+    var onIntrinsicHeightChanged: (() -> Void)?
+
+    var isSubtitleVisible: Bool {
+        guard let subtitleView else { return false }
+        return textStack.arrangedSubviews.contains { $0 === subtitleView }
+    }
+
+    init(label: String, control: NSView, subtitle: NSView?,
+         subtitleVerticalPadding: CGFloat) {
+        subtitleView            = subtitle
+        self.subtitleVerticalPadding = subtitleVerticalPadding
+        super.init(frame: .zero)
+
+        let labelField = NSTextField(labelWithString: label)
+        labelField.font = .systemFont(ofSize: 13)
+
+        textStack.orientation = .vertical
+        textStack.spacing     = 2
+        textStack.alignment   = .leading
+        textStack.addArrangedSubview(labelField)
+        if let subtitle { textStack.addArrangedSubview(subtitle) }
+
+        orientation = .horizontal
+        spacing     = 10
+        alignment   = .centerY
+        updateVerticalInsets(subtitleVisible: subtitle != nil)
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+        addArrangedSubview(textStack)
+        addArrangedSubview(NSView())
+        addArrangedSubview(control)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Presents or removes the optional subtitle and reports whether the
+    /// arranged-view hierarchy changed.
+    func setSubtitleVisible(_ visible: Bool) -> Bool {
+        guard let subtitleView, visible != isSubtitleVisible else { return false }
+
+        if visible {
+            textStack.addArrangedSubview(subtitleView)
+        } else {
+            textStack.removeArrangedSubview(subtitleView)
+            subtitleView.removeFromSuperview()
+        }
+        updateVerticalInsets(subtitleVisible: visible)
+
+        textStack.invalidateIntrinsicContentSize()
+        textStack.needsLayout = true
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+        onIntrinsicHeightChanged?()
+        return true
+    }
+
+    private func updateVerticalInsets(subtitleVisible: Bool) {
+        let extra = subtitleVisible ? subtitleVerticalPadding : 0
+        edgeInsets = NSEdgeInsets(top: Layout.rowVerticalPad + extra,
+                                  left: Layout.rowHorizontalPad,
+                                  bottom: Layout.rowVerticalPad + extra,
+                                  right: Layout.rowHorizontalPad)
+    }
+}
+
+/// Rounded settings card whose height follows its rows' intrinsic content.
+/// Rows notify the card when conditional content changes so AppKit does not
+/// retain a previous `.fill` allocation after a subtitle is removed.
+final class SettingsGroupBox: NSBox {
+
+    private let contentStack = NSStackView()
+
+    /// A borderless custom `NSBox` otherwise keeps part of its previous frame
+    /// in its fitting size after arranged content contracts. Size the card
+    /// directly from the rows so repeated subtitle transitions are reversible.
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric,
+               height: contentStack.fittingSize.height)
+    }
+
+    init(views: [NSView]) {
+        super.init(frame: .zero)
+
+        contentStack.orientation = .vertical
+        contentStack.spacing     = 0
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.setContentHuggingPriority(.required, for: .vertical)
+        contentStack.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        for subview in views {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            contentStack.addArrangedSubview(subview)
+            if let row = subview as? SettingsRowView {
+                row.onIntrinsicHeightChanged = { [weak self] in
+                    self?.contentHeightChanged()
+                }
+            }
+        }
+
+        boxType            = .custom
+        titlePosition      = .noTitle
+        cornerRadius       = Layout.groupCornerRadius
+        borderWidth        = 0
+        borderColor        = .clear
+        fillColor          = .quaternarySystemFill
+        contentViewMargins = .zero
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+
+        if let content = contentView {
+            content.addSubview(contentStack)
+            NSLayoutConstraint.activate([
+                contentStack.topAnchor.constraint(equalTo: content.topAnchor),
+                contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+                contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            ])
+            NSLayoutConstraint.activate(views.map {
+                $0.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
+            })
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func contentHeightChanged() {
+        contentStack.invalidateIntrinsicContentSize()
+        contentStack.needsLayout = true
+        contentView?.invalidateIntrinsicContentSize()
+        contentView?.needsLayout = true
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+}
+
 /// Base class for settings panes shown to the right of the sidebar.
 ///
 /// Provides the bold pane header, the outer stack assembly, and the shared
@@ -585,36 +735,45 @@ class SettingsPaneViewController: NSViewController {
 
     // MARK: Row Builder Helpers
 
-    /// Creates a standard settings row: label (+ optional subtitle below)
+    /// Creates a standard settings row: label (+ optional subtitle view below)
     /// with the control pushed to the trailing edge via a flexible spacer.
     ///
     /// - Parameters:
     ///   - label: Primary text label for the setting.
     ///   - control: The interactive control (typically an `NSSwitch`).
-    ///   - subtitle: Optional secondary label shown below the primary label.
-    /// - Returns: A configured `NSView` ready to add to a group box.
+    ///   - subtitle: Optional secondary content shown below the primary label.
+    /// - Returns: A configured row ready to add to a group box.
     func settingsRow(label: String, control: NSView,
-                     subtitle: NSTextField? = nil) -> NSView {
-        let labelField = NSTextField(labelWithString: label)
-        labelField.font = .systemFont(ofSize: 13)
+                     subtitle: NSView? = nil,
+                     subtitleVerticalPadding: CGFloat = 0) -> SettingsRowView {
+        SettingsRowView(label: label, control: control, subtitle: subtitle,
+                        subtitleVerticalPadding: subtitleVerticalPadding)
+    }
 
-        let textStack = NSStackView()
-        textStack.orientation = .vertical
-        textStack.spacing     = 2
-        textStack.alignment   = .leading
-        textStack.addArrangedSubview(labelField)
-        if let subtitle = subtitle { textStack.addArrangedSubview(subtitle) }
+    /// Creates the compact warning subtitle used by System Settings-style
+    /// conditional rows: a yellow warning symbol with muted explanatory text.
+    /// Its small vertical inset gives expanded rows a little extra breathing
+    /// room without changing the standard padding of compact rows.
+    func makeWarningSubtitle(_ text: String) -> NSView {
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill",
+                             accessibilityDescription: nil)?
+            .withSymbolConfiguration(symbolConfig)
+        icon.contentTintColor = .systemYellow
+        icon.setContentHuggingPriority(.required, for: .horizontal)
 
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing     = 10
-        row.alignment   = .centerY
-        row.edgeInsets  = NSEdgeInsets(top: Layout.rowVerticalPad, left: Layout.rowHorizontalPad,
-                                       bottom: Layout.rowVerticalPad, right: Layout.rowHorizontalPad)
-        row.addArrangedSubview(textStack)
-        row.addArrangedSubview(NSView())   // Flexible spacer pushes the control to the right
-        row.addArrangedSubview(control)
-        return row
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font                    = .systemFont(ofSize: 11)
+        label.textColor               = .secondaryLabelColor
+        label.preferredMaxLayoutWidth = 275
+
+        let warning = NSStackView(views: [icon, label])
+        warning.orientation = .horizontal
+        warning.spacing     = 5
+        warning.alignment   = .centerY
+        warning.edgeInsets  = NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
+        return warning
     }
 
     /// Wraps the given views in a rounded, subtly-filled group card
@@ -623,39 +782,8 @@ class SettingsPaneViewController: NSViewController {
     ///
     /// - Parameter views: Rows (and dividers) stacked top to bottom.
     /// - Returns: The group box, ready to return from `buildContent()`.
-    func groupBox(_ views: [NSView]) -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing     = 0
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        for subview in views {
-            subview.translatesAutoresizingMaskIntoConstraints = false
-            stack.addArrangedSubview(subview)
-        }
-
-        let box = NSBox()
-        box.boxType            = .custom
-        box.titlePosition      = .noTitle
-        box.cornerRadius       = Layout.groupCornerRadius
-        box.borderWidth        = 0
-        box.borderColor        = .clear
-        box.fillColor          = .quaternarySystemFill
-        box.contentViewMargins = .zero
-
-        if let content = box.contentView {
-            content.addSubview(stack)
-            NSLayoutConstraint.activate([
-                stack.topAnchor.constraint(equalTo: content.topAnchor),
-                stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-                stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-                stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            ])
-            // Stretch every row to the group's full width
-            NSLayoutConstraint.activate(views.map {
-                $0.widthAnchor.constraint(equalTo: stack.widthAnchor)
-            })
-        }
-        return box
+    func groupBox(_ views: [NSView]) -> SettingsGroupBox {
+        SettingsGroupBox(views: views)
     }
 
     /// Creates a horizontal separator line between settings rows,
@@ -851,22 +979,57 @@ final class AutoStartPaneController: SettingsPaneViewController {
 
 // MARK: - Features Pane
 
-/// The "Features" pane: instant space switch, auto-follow, transition speed.
+/// The "Features" pane: instant space switch, auto-follow, configurable
+/// cycle shortcut, and transition speed.
 final class FeaturesPaneController: SettingsPaneViewController {
 
     override var paneTitle: String { SettingsPane.features.title }
 
-    private var instantSwitchControl:    NSSwitch!
-    private var autoFollowControl:       NSSwitch!
-    private var trackpadSwipeControl:    NSSwitch!
-    private var speedSlider:             NSSlider!
-    private var speedValueLabel:         NSTextField!
-    private var speedBoltIcon:           NSImageView!
+    private var instantSwitchControl: NSSwitch!
+    private var autoFollowControl:    NSSwitch!
+    private var trackpadSwipeControl: NSSwitch!
+    private var cycleShortcutControl: NSSwitch!
+    private var shortcutRecorder:     ShortcutRecorderButton!
+    private var cycleShortcutRow:     SettingsRowView!
+    private var speedSlider:          NSSlider!
+    private var speedValueLabel:      NSTextField!
+    private var speedBoltIcon:        NSImageView!
 
     override func buildContent() -> [NSView] {
-        instantSwitchControl    = makeSwitch(gInstantSwitchEnabled,    #selector(toggleInstantSwitch))
-        autoFollowControl       = makeSwitch(gAutoFollowEnabled,       #selector(toggleAutoFollow))
-        trackpadSwipeControl    = makeSwitch(gTrackpadSwipeEnabled,    #selector(toggleTrackpadSwipe))
+        instantSwitchControl = makeSwitch(gInstantSwitchEnabled, #selector(toggleInstantSwitch))
+        autoFollowControl    = makeSwitch(gAutoFollowEnabled,    #selector(toggleAutoFollow))
+        trackpadSwipeControl = makeSwitch(gTrackpadSwipeEnabled, #selector(toggleTrackpadSwipe))
+        cycleShortcutControl = makeSwitch(
+            gCycleShortcutEnabled,
+            #selector(toggleCycleShortcut)
+        )
+
+        shortcutRecorder = ShortcutRecorderButton(
+            shortcut: gCycleShortcut,
+            recordingTitle: L("settings.features.shortcut.recording"),
+            emptyTitle: L("settings.features.shortcut.none")
+        )
+        shortcutRecorder.onChange = { [weak self] shortcut in
+            self?.cycleShortcutChanged(shortcut)
+        }
+        shortcutRecorder.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: Layout.shortcutMinWidth
+        ).isActive = true
+        let cycleShortcutWarning = makeWarningSubtitle(
+            L("settings.features.cycleSpaces.normalWarning")
+        )
+
+        let cycleControls = NSStackView(views: [shortcutRecorder, cycleShortcutControl])
+        cycleControls.orientation = .horizontal
+        cycleControls.spacing     = 10
+        cycleControls.alignment   = .centerY
+
+        cycleShortcutRow = settingsRow(
+            label: L("settings.features.cycleSpaces"),
+            control: cycleControls,
+            subtitle: cycleShortcutWarning,
+            subtitleVerticalPadding: 1
+        )
 
         let togglesGroup = groupBox([
             settingsRow(label: L("settings.features.instantSpaceSwitch"),
@@ -881,7 +1044,10 @@ final class FeaturesPaneController: SettingsPaneViewController {
         let speedGroup = groupBox([
             settingsRow(label: L("settings.features.transitionSpeed"),
                         control: makeSpeedControl()),
+            rowDivider(),
+            cycleShortcutRow,
         ])
+        updateCycleShortcutAvailability()
         return [togglesGroup, speedGroup]
     }
 
@@ -891,8 +1057,11 @@ final class FeaturesPaneController: SettingsPaneViewController {
         instantSwitchControl.state    = gInstantSwitchEnabled    ? .on : .off
         autoFollowControl.state       = gAutoFollowEnabled       ? .on : .off
         trackpadSwipeControl.state    = gTrackpadSwipeEnabled    ? .on : .off
+        cycleShortcutControl.state    = gCycleShortcutEnabled    ? .on : .off
+        shortcutRecorder.setShortcut(gCycleShortcut)
         speedSlider.doubleValue       = gSwitchSpeed
         updateSpeedDisplay()
+        updateCycleShortcutAvailability()
     }
 
     /// Builds the transition-speed control: a 5-tick slider with a trailing
@@ -956,6 +1125,31 @@ final class FeaturesPaneController: SettingsPaneViewController {
         speedValueLabel.textColor   = isInstant ? .labelColor : .secondaryLabelColor
         speedBoltIcon.contentTintColor = .labelColor
         speedBoltIcon.isHidden         = !isInstant
+    }
+
+    /// Makes Cycle Spaces temporarily unavailable at the Normal speed without
+    /// altering its saved toggle or shortcut. Moving the slider away from
+    /// Normal restores the controls and the user's prior configuration.
+    private func updateCycleShortcutAvailability(resize: Bool = false) {
+        let unavailable = isNativeSwitchSpeed()
+        let visibilityChanged = cycleShortcutRow.setSubtitleVisible(unavailable)
+        cycleShortcutControl.isEnabled = !unavailable
+        shortcutRecorder.isEnabled     = !unavailable
+
+        let explanation = unavailable
+            ? L("settings.features.cycleSpaces.normalWarning")
+            : nil
+        cycleShortcutControl.toolTip = explanation
+        shortcutRecorder.toolTip     = explanation
+
+        if visibilityChanged {
+            // Resolve the stack's new intrinsic height before the root
+            // controller asks for the pane's fitting size. This keeps slider
+            // tracking from leaving behind the expanded row height.
+            view.needsLayout = true
+            view.layoutSubtreeIfNeeded()
+            if resize { resizePaneToFit() }
+        }
     }
 
     /// Localized names of the five slider ticks, slowest first — "Normal" being
@@ -1030,6 +1224,26 @@ final class FeaturesPaneController: SettingsPaneViewController {
         gMenu?.syncMenuItems()
     }
 
+    @objc private func toggleCycleShortcut() {
+        gCycleShortcutEnabled = cycleShortcutControl.state == .on
+        if gCycleShortcutEnabled, gCycleShortcut == nil {
+            gCycleShortcut = .fn
+            shortcutRecorder.setShortcut(gCycleShortcut)
+        }
+        persistCycleShortcut()
+        gMenu?.syncMenuItems()
+    }
+
+    /// Applies a shortcut recorded (or cleared) by the recorder field.
+    /// Recording enables the feature; clearing it turns the feature off.
+    private func cycleShortcutChanged(_ shortcut: CycleShortcut?) {
+        gCycleShortcut = shortcut
+        gCycleShortcutEnabled = shortcut != nil
+        cycleShortcutControl.state = gCycleShortcutEnabled ? .on : .off
+        persistCycleShortcut()
+        gMenu?.syncMenuItems()
+    }
+
     @objc private func toggleTrackpadSwipe() {
         gTrackpadSwipeEnabled = trackpadSwipeControl.state == .on
         UserDefaults.standard.set(gTrackpadSwipeEnabled, forKey: Defaults.trackpadSwipe)
@@ -1041,6 +1255,8 @@ final class FeaturesPaneController: SettingsPaneViewController {
         gSwitchSpeed = speedSlider.doubleValue
         UserDefaults.standard.set(gSwitchSpeed, forKey: Defaults.switchSpeed)
         updateSpeedDisplay()
+        updateCycleShortcutAvailability(resize: true)
+        gMenu?.syncMenuItems()
     }
 }
 

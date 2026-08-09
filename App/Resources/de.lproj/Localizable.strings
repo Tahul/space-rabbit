@@ -86,6 +86,10 @@
 "settings.features.instantSpaceSwitch" = "Sofortiger Space-Wechsel";
 "settings.features.instantAppSwitch" = "Sofortiger App-Wechsel";
 "settings.features.instantTrackpadSwipe" = "Sofortiges Trackpad-Streichen";
+"settings.features.cycleSpaces" = "Spaces durchlaufen";
+"settings.features.cycleSpaces.normalWarning" = "„Spaces durchlaufen“ ist nicht verfügbar, wenn die Übergangsgeschwindigkeit auf „Normal“ eingestellt ist.";
+"settings.features.shortcut.recording" = "Kurzbefehl drücken…";
+"settings.features.shortcut.none" = "Keiner";
 "settings.features.transitionSpeed" = "Übergangsgeschwindigkeit";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

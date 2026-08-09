@@ -3,7 +3,9 @@
  *
  * Installs a CGEvent tap at the session level to intercept keyDown
  * events that match the user's "Move left/right a space" or
- * "Switch to Desktop N" shortcuts.
+ * "Switch to Desktop N" shortcuts. It also observes keyUp,
+ * flagsChanged, and systemDefined events so the configurable cycle
+ * shortcut can safely support both ordinary chords and bare Fn.
  *
  * When the shortcut is detected:
  *   1. The original key event is swallowed (returns nil to the tap)
@@ -26,6 +28,46 @@ private let kRelevantModifiers: CGEventFlags = [
     .maskControl, .maskCommand, .maskAlternate, .maskShift
 ]
 
+/// CoreGraphics omits a named case for AppKit's `systemDefined` event type
+/// (`NX_SYSDEFINED`), used by media keys and other hardware controls.
+let kSystemDefinedEventType = CGEventType(rawValue: 14)!
+
+/// Tracks a possible bare-Fn press until release. The switch happens on
+/// release so Fn can still be used as a modifier without cycling spaces.
+private var gFnPressState: BareFnPressState = .idle
+
+/// Key-down swallowed for an ordinary configured cycle shortcut. Its key-up
+/// is swallowed too so the frontmost app never receives an orphan release.
+private var gCycleShortcutActiveKeycode: Int64?
+
+// MARK: - Configurable Space Cycling
+
+/// Clears the in-progress bare-Fn candidate.
+private func resetFnPressTracking() {
+    gFnPressState.reset()
+}
+
+/// Clears all state associated with an in-progress cycle shortcut.
+private func resetCycleShortcutTracking() {
+    resetFnPressTracking()
+    gCycleShortcutActiveKeycode = nil
+}
+
+/// Moves to the next space on the display under the cursor, wrapping from
+/// the last space back to the first.
+private func cycleToNextSpace() {
+    guard !CGEventSource.buttonState(.combinedSessionState, button: .left) else { return }
+
+    let (spaceIDs, currentIdx) = getSpaceList()
+    guard currentIdx >= 0, spaceIDs.count > 1 else { return }
+
+    let targetIdx = (currentIdx + 1) % spaceIDs.count
+    if case .switched = switchToSpace(spaceIDs[targetIdx]) {
+        gLastSpaceSwitchTime = Date()
+        gMenu?.recordSwitch()
+    }
+}
+
 // MARK: - Event Tap Callback
 //
 // This is a C-compatible global function used as the CGEvent tap callback.
@@ -34,7 +76,8 @@ private let kRelevantModifiers: CGEventFlags = [
 
 /// CGEvent tap callback that intercepts space-switch keyboard shortcuts.
 ///
-/// Called for every `keyDown` event system-wide (requires Accessibility permission).
+/// Called for the keyboard event types in the event tap's mask system-wide
+/// (requires Accessibility permission).
 /// Returns `nil` to swallow the event (preventing the default animated switch),
 /// or `Unmanaged.passUnretained(event)` to let it through unchanged.
 ///
@@ -51,13 +94,23 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // macOS may disable our tap if it takes too long to process an event
     // or if it suspects misbehavior. Re-enable it immediately to stay alive.
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        resetCycleShortcutTracking()
         if let tap = gTap { CGEvent.tapEnable(tap: tap, enable: true) }
         return passthrough
     }
 
-    // Only process keyDown events when both the master switch and
-    // the instant-switch feature are enabled
-    guard type == .keyDown, gEnabled, gInstantSwitchEnabled else {
+    // While Preferences records a replacement shortcut, let AppKit receive
+    // every candidate event without the existing global binding firing.
+    if gIsRecordingCycleShortcut {
+        resetCycleShortcutTracking()
+        return passthrough
+    }
+
+    // Only process keyboard events while the master switch is enabled.
+    guard type == .keyDown || type == .keyUp || type == .flagsChanged
+            || type == kSystemDefinedEventType,
+          gEnabled else {
+        resetCycleShortcutTracking()
         return passthrough
     }
 
@@ -65,8 +118,81 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // animated switch — let every shortcut through untouched so the OS
     // handles it exactly as if Space Rabbit weren't running.
     guard !isNativeSwitchSpeed() else {
+        resetCycleShortcutTracking()
         return passthrough
     }
+
+    let flags   = event.flags
+    let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+
+    // Track physical Fn transitions for every configured cycle shortcut. That
+    // lets ordinary navigation-key bindings distinguish their implicit
+    // function flag from an actual extra Fn modifier. A configured bare Fn is
+    // deferred until release and cancelled if another key or modifier is used.
+    if type == .flagsChanged {
+        guard gCycleShortcutEnabled, let cycleShortcut = gCycleShortcut else {
+            resetFnPressTracking()
+            return passthrough
+        }
+
+        guard keycode == kFnKeycode else {
+            gFnPressState.markChorded()
+            return passthrough
+        }
+
+        if flags.contains(.maskSecondaryFn) {
+            // Only a new up -> down transition starts a bare-Fn candidate.
+            // Repeated down events must not erase evidence that Fn was used
+            // with another key.
+            // A modifier may already be held before Fn goes down, so its
+            // flagsChanged event occurred before this candidate existed.
+            gFnPressState.begin(
+                usedAsModifier: !flags.intersection(kRelevantModifiers).isEmpty
+            )
+        } else {
+            let wasBarePress = gFnPressState.finish()
+            if cycleShortcut.isBareFn, wasBarePress { cycleToNextSpace() }
+        }
+        return cycleShortcut.isBareFn ? nil : passthrough
+    }
+
+    // Any ordinary or system-defined keyboard event between Fn down and up
+    // makes this a chord, not a bare-Fn tap. keyUp is included as a safety
+    // net for hardware whose modified key does not expose a matching keyDown.
+    gFnPressState.markChorded()
+
+    // Swallow the release paired with an ordinary configured shortcut.
+    if type == .keyUp {
+        guard gCycleShortcutActiveKeycode == keycode else { return passthrough }
+        gCycleShortcutActiveKeycode = nil
+        return nil
+    }
+
+    // systemDefined is observed only for bare-Fn chord detection. Shortcut
+    // matching itself applies to ordinary keyDown events.
+    guard type == .keyDown else { return passthrough }
+
+    // Match the user-recorded cycle shortcut before the macOS Space bindings.
+    // This feature is independent of the Instant Space switch toggle.
+    if gCycleShortcutEnabled,
+       let shortcut = gCycleShortcut,
+       !shortcut.isBareFn,
+       keycode == shortcut.keycode,
+       (!gFnPressState.isDown || shortcut.isFunctionKey),
+       flags.intersection(shortcut.matchingModifierMask) == shortcut.modifiers {
+        // Preserve native window-manager behavior while a window is dragged.
+        guard !CGEventSource.buttonState(.combinedSessionState, button: .left)
+        else { return passthrough }
+
+        gCycleShortcutActiveKeycode = keycode
+        if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+            cycleToNextSpace()
+        }
+        return nil
+    }
+
+    // The system Space shortcuts still follow the Instant Space switch toggle.
+    guard gInstantSwitchEnabled else { return passthrough }
 
     // Window managers such as Rectangle Pro and Raycast move a window to an
     // adjacent Space by holding its title bar while invoking the system Space
@@ -76,9 +202,6 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     if CGEventSource.buttonState(.combinedSessionState, button: .left) {
         return passthrough
     }
-
-    let flags   = event.flags
-    let keycode = event.getIntegerValueField(.keyboardEventKeycode)
 
     // Check that exactly the required modifiers are held (no extras).
     // This prevents false positives when e.g. Cmd+Control+Arrow is pressed

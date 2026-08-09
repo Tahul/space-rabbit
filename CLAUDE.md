@@ -34,7 +34,7 @@ Exact initialization order — getting this wrong causes subtle bugs:
 5. `gMenu = SwoopMenu()` — creates status item (hidden via `statusItem.isVisible` if so configured), loads persisted state from UserDefaults into globals
 6. `checkForUpdatesAutomatically()` — owns its own 5-second delay, and applies it only when it is actually going to make a network request (a throttled launch restores the update banner from UserDefaults immediately). Must run after step 5, which creates `gMenu`, the banner's host
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
-8. **Event tap creation** — `CGEvent.tapCreate` → `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
+8. **Event tap creation** — listens for `keyDown`, `keyUp`, `flagsChanged`, and `systemDefined`; these support the configurable cycle shortcut (including bare Fn) as well as the system Space bindings, then `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
 9. **Swipe-intercept tap** — `updateSwipeTap()` installs the Feature 3 tap if the persisted toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
 10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
 11. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
@@ -58,6 +58,19 @@ The tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to st
 - Check `flags.intersection(kRelevantModifiers) == gModMask` — ensures *exactly* the right modifiers (no extras)
 - Match keycode against `gKeyLeft` (direction -1) or `gKeyRight` (direction +1)
 - Bounds check via `getSpaceList()` — don't switch past the first/last space
+
+The optional cycle shortcut is user-recordable in the Features pane. Ordinary
+shortcuts match exact keycode + Control/Option/Shift/Command modifiers on `keyDown`;
+their repeat and paired `keyUp` events are swallowed so the frontmost app sees
+nothing. Bare Fn is the one supported modifier-only binding: it is recognized on
+release, and any ordinary, media/system-defined, or modifier key event while Fn is
+held cancels the cycle. Repeated Fn-down events preserve that cancelled state, and
+modifiers already held when Fn goes down cancel it immediately. The shortcut moves
+to the next space on the cursor's display and wraps from the last space to the first.
+It is independent of the Instant Space switch toggle, but stands down at the Normal
+transition-speed tick like all synthetic switching. At Normal, the Features pane
+dims the recorder and toggle and shows a System Settings-style warning subtitle;
+the saved enabled state and shortcut remain unchanged and return at faster speeds.
 
 ### Feature 2: Auto-follow on Cmd+Tab (`SwoopObserver` in `AutoFollow.swift`)
 
@@ -289,6 +302,9 @@ All runtime state is module-level globals (not a singleton class). This is inten
 | `gEnabled` | `Bool` | Master on/off toggle |
 | `gInstantSwitchEnabled` | `Bool` | Feature 1 toggle |
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
+| `gCycleShortcutEnabled` | `Bool` | Whether the configurable cycle shortcut is active |
+| `gCycleShortcut` | `CycleShortcut?` | Recorded cycle keycode, exact modifiers, and display label (`nil` when cleared) |
+| `gIsRecordingCycleShortcut` | `Bool` | Makes the global event tap stand down while Preferences records a replacement |
 | `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
 | `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
@@ -303,7 +319,9 @@ All runtime state is module-level globals (not a singleton class). This is inten
 
 ### UserDefaults keys (`Defaults` enum)
 
-`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`, `spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`,
+`spacerabbit.enabled`, `spacerabbit.instantSwitch`, `spacerabbit.autoFollow`,
+`spacerabbit.cycleShortcut.enabled`, `.keycode`, `.modifiers`, `.label`,
+`spacerabbit.threeFingerSwipe` (the "Instant Trackpad Swipe" toggle — legacy spelling kept deliberately, see `Defaults.trackpadSwipe`), `spacerabbit.switchSpeed`, `spacerabbit.switchCount`, `spacerabbit.showMenuBarIcon`,
 `spacerabbit.lastUpdateCheck`, `spacerabbit.pendingUpdateVersion`,
 `spacerabbit.pendingUpdateURL` (the last three belong to the update throttle — see
 "Update flow"; none has a `g` global, they are read and written where they are used).
@@ -330,6 +348,8 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |
+| `kFnKeycode` | State | `63` | Virtual keycode used for the recordable bare-Fn/Globe binding |
+| `kCycleShortcutModifiers` | State | Control/Cmd/Alt/Shift/Fn | Exact modifier set checked for recorded cycle shortcuts. The automatic function flag on special/F-keys is normalized; a physically held Fn is still rejected as an unrecorded extra except for F-key bindings, where it is allowed to support either macOS top-row mode. |
 | `kUpdateCheckInterval` | UpdateCheck | `3600` (TimeInterval) | Minimum gap between two *automatic* update checks; a launch inside the window reads the remembered release instead of the network |
 | `kUpdateCheckLaunchDelay` | UpdateCheck | `5` (TimeInterval) | Settle time before the automatic check hits the network — skipped entirely on the cached path |
 | `kMenuIconSize` | MenuBar | `16` (CGFloat) | Tinted SF Symbol size in menu items |
@@ -396,6 +416,15 @@ Toggles can be changed from two places. The sync pattern:
 2. **Settings window** → `FeaturesPaneController.toggleInstantSwitch`/`toggleAutoFollow`/`toggleTrackpadSwipe`: writes `gXxxEnabled` → `UserDefaults` → calls `gMenu?.syncMenuItems()` to sync menu checkmarks
 3. **Settings pane appears** (`viewWillAppear`, fires on every pane swap): refreshes its switch controls from globals
 
+The cycle-shortcut row additionally uses `ShortcutRecorderButton` from
+`ShortcutRecorder.swift`: clicking it installs
+a temporary local key monitor and sets `gIsRecordingCycleShortcut` so the global tap
+passes candidates through. Escape cancels, unmodified Delete clears, bare typing keys
+require Control/Option/Command, standalone F-keys are allowed, and bare Fn is recorded
+on release. Fn used with an ordinary, modifier, or media key does not record bare Fn;
+Fn-produced F-keys are normalized to the same binding as standalone F-keys. Recording
+a shortcut enables it; clearing disables it.
+
 The trackpad swipe toggle additionally calls `updateSwipeTap()` from both places (its
 tap only exists while the feature is active).
 
@@ -431,6 +460,8 @@ SwoopMenu (NSStatusItem, icon: "hare.fill")
        ├─ Auto-follow on ⌘⇥ toggle (checkmark, shortcut: F)
        ├─ Instant trackpad swipe toggle (checkmark, shortcut: T,
        │    icon: rectangle.and.hand.point.up.left.filled)
+       ├─ Cycle Spaces toggle (checkmark, shortcut: C,
+       │    disabled while transition speed is Normal)
        ├─ "Statistics:" section header
        ├─ Switch count + time-saved display (non-interactive)
        ├─ Version label
@@ -449,9 +480,10 @@ SettingsWindowController (singleton, NSWindowDelegate)
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
        │    + Launch at Login (SMAppService)
        ├─ FeaturesPaneController — two groups: Instant switch + Auto-follow +
-       │    Instant trackpad swipe toggles, then Transition speed slider on its
-       │    own (5 ticks, snapping: Normal = native macOS animation / Fast /
-       │    Faster / Fastest / right end cap = "Instant", the default)
+       │    Instant trackpad swipe toggles, then Transition speed slider
+       │    (5 ticks, snapping: Normal = native macOS animation / Fast / Faster /
+       │    Fastest / right end cap = "Instant", the default) with the configurable
+       │    cycle-shortcut recorder + enable switch directly beneath it
        ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
        │    autohide-time-modifier, killall Dock) + Show menu bar icon toggle
        │    (statusItem.isVisible; when hidden, relaunching the app reopens

@@ -116,11 +116,15 @@ Timer.scheduledTimer(withTimeInterval: flushInterval, repeats: true) { _ in
 
 // MARK: - Event Tap Installation
 //
-// The event tap intercepts keyDown events at the session level.
+// The event tap intercepts keyDown shortcuts and observes the other keyboard
+// event forms needed to distinguish bare Fn from an Fn-modified key press.
 // When a space-switch shortcut is detected, the original event is
 // swallowed and replaced with a synthetic DockSwipe gesture.
 
 let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+              | CGEventMask(1 << CGEventType.keyUp.rawValue)
+              | CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+              | CGEventMask(1 << kSystemDefinedEventType.rawValue)
 
 gTap = CGEvent.tapCreate(
     tap: .cgSessionEventTap,
