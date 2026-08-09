@@ -34,7 +34,7 @@ Exact initialization order — getting this wrong causes subtle bugs:
 5. `gMenu = SwoopMenu()` — creates status item (hidden via `statusItem.isVisible` if so configured), loads persisted state from UserDefaults into globals
 6. `checkForUpdatesAutomatically()` — owns its own 5-second delay, and applies it only when it is actually going to make a network request (a throttled launch restores the update banner from UserDefaults immediately). Must run after step 5, which creates `gMenu`, the banner's host
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
-8. **Event tap creation** — listens for `keyDown`, `keyUp`, `flagsChanged`, and `systemDefined`; these support the configurable cycle shortcut (including bare Fn) as well as the system Space bindings, then `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
+8. **Event tap creation** — `gTap` listens for `keyDown` only, then `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`. `installAuxiliaryKeyboardTaps()` immediately adds the two on-demand companions carrying the other three event forms the cycle shortcut (including bare Fn) and the system Space bindings need — see "Three keyboard taps" under Feature 1. Failure of the primary tap is fatal; failure of an auxiliary one is logged and tolerated
 9. **Gesture-intercept tap** — `updateSwipeTap()` installs the shared tap pair if either persisted gesture toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
 10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
 11. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
@@ -54,6 +54,29 @@ A `CGEvent` tap at `.cgSessionEventTap` / `.headInsertEventTap` listens for `key
    the Instant tick).
 
 The tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to stay alive.
+
+**Three keyboard taps.** The feature needs four event forms, but only `keyDown`
+can ever *match* a shortcut; the other three exist to close out a press that
+already matched. They are split the same way, and for the same reason, as the
+gesture taps (see Feature 3): a `.defaultTap` costs a synchronous round-trip
+through this process per subscribed event, so a type that only matters inside a
+narrow window is not subscribed to outside it. Measured while typing on macOS
+26 — 127 `keyDown`, 127 `keyUp`, 6 `flagsChanged`, 0 `systemDefined` over 25 s,
+so the split removes 51% of the wakeups:
+
+- `gTap` — `keyDown`. Installed once at startup, never torn down.
+- `gClaimedKeyTap` — `keyUp` + `systemDefined`. Enabled only while
+  `gCycleShortcutActiveKeycode`/`gMissionControlActiveKeycode` is set or a
+  bare-Fn candidate is live: the swallowed release and the media keys that
+  cancel a bare-Fn tap. `keyUp` alone was half of the old tap's traffic.
+- `gModifierKeyTap` — `flagsChanged`. Enabled only while a cycle shortcut is
+  configured and the recorder is idle. With none recorded (the default) the
+  callback passed every modifier transition straight back.
+
+`syncKeyboardAuxiliaryTaps()` derives both states and runs from a `defer`
+covering every exit of `eventTapCallback`, plus `persistCycleShortcut()` and
+the recorder's start/stop. Because the callback re-runs it on the next
+`keyDown`, a missed call site self-corrects within one keystroke.
 
 **Shortcut matching logic** in `eventTapCallback`:
 - Extract `flags` and `keycode` from the event
@@ -460,7 +483,9 @@ documented at its declaration in `State.swift`.
 
 | Variable | Type | Purpose |
 |---|---|---|
-| `gTap` | `CFMachPort?` | The active CGEvent tap (keyboard, Feature 1) |
+| `gTap` | `CFMachPort?` | The active CGEvent tap (keyboard, Feature 1) — `keyDown` only |
+| `gClaimedKeyTap` / `gClaimedKeyTapSource` / `gClaimedKeyTapEnabled` | `CFMachPort?` / `CFRunLoopSource?` / `Bool` | `keyUp` + `systemDefined` companion — enabled only while a press is claimed or a bare-Fn candidate is live (`syncKeyboardAuxiliaryTaps()`) |
+| `gModifierKeyTap` / `gModifierKeyTapSource` / `gModifierKeyTapEnabled` | `CFMachPort?` / `CFRunLoopSource?` / `Bool` | `flagsChanged` companion — enabled only while a cycle shortcut is configured and the recorder is idle |
 | `gSwipeTap` / `gSwipeTapSource` | `CFMachPort?` / `CFRunLoopSource?` | Shared gesture-intercept tap, DockControl (30) only — exists while at least one gesture feature is active (`updateSwipeTap()`) |
 | `gGestureEnvelopeTap` / `gGestureEnvelopeTapSource` / `gGestureEnvelopeTapEnabled` | `CFMachPort?` / `CFRunLoopSource?` / `Bool` | Companion tap for the high-rate gesture envelopes (29) — created with `gSwipeTap` but enabled only while a gesture is claimed (`syncGestureEnvelopeTap()`) |
 | `gEnabled` | `Bool` | Master on/off toggle |

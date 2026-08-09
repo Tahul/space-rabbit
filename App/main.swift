@@ -116,15 +116,16 @@ Timer.scheduledTimer(withTimeInterval: flushInterval, repeats: true) { _ in
 
 // MARK: - Event Tap Installation
 //
-// The event tap intercepts keyDown shortcuts and observes the other keyboard
-// event forms needed to distinguish bare Fn from an Fn-modified key press.
-// When a space-switch shortcut is detected, the original event is
-// swallowed and replaced with a synthetic DockSwipe gesture.
+// The event tap intercepts keyDown shortcuts. When a space-switch shortcut is
+// detected, the original event is swallowed and replaced with a synthetic
+// DockSwipe gesture.
+//
+// The other three keyboard event forms the feature needs — keyUp,
+// systemDefined and flagsChanged — go on the two auxiliary taps installed
+// just below, each enabled only for the narrow window in which it can matter.
+// See `gTap` in State.swift for why.
 
 let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-              | CGEventMask(1 << CGEventType.keyUp.rawValue)
-              | CGEventMask(1 << CGEventType.flagsChanged.rawValue)
-              | CGEventMask(1 << kCGEventTypeSystemDefined.rawValue)
 
 gTap = CGEvent.tapCreate(
     tap: .cgSessionEventTap,
@@ -147,6 +148,13 @@ guard let runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
 
 CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)
+
+// The keyUp/systemDefined and flagsChanged companions to the tap above. Both
+// are created disabled and switched on only while they can matter. Failure is
+// not fatal here, unlike the primary tap: it costs the ability to swallow the
+// release paired with a claimed shortcut (leaving the frontmost app an orphan
+// key-up), which is a far smaller loss than refusing to launch.
+installAuxiliaryKeyboardTaps()
 
 // Install the shared gesture-intercept tap if either opt-in feature is enabled.
 // Must come after gMenu is created — it reads the persisted toggles.
@@ -223,6 +231,8 @@ NotificationCenter.default.addObserver(
     NSWorkspace.shared.notificationCenter.removeObserver(observer)
     CGEvent.tapEnable(tap: tap, enable: false)
     CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+    if let claimedKeyTap = gClaimedKeyTap { CGEvent.tapEnable(tap: claimedKeyTap, enable: false) }
+    if let modifierKeyTap = gModifierKeyTap { CGEvent.tapEnable(tap: modifierKeyTap, enable: false) }
     if let swipeTap = gSwipeTap { CGEvent.tapEnable(tap: swipeTap, enable: false) }
     if let envelopeTap = gGestureEnvelopeTap { CGEvent.tapEnable(tap: envelopeTap, enable: false) }
 }

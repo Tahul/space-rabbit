@@ -18,7 +18,47 @@ import Foundation
 /// The active CGEvent tap (installed at startup, never replaced).
 /// Used by the event tap callback to intercept space-switch shortcuts,
 /// and re-enabled automatically if macOS disables it.
+///
+/// It listens for `keyDown` only — the sole event form that can *match* a
+/// shortcut. The other three keyboard event forms the feature needs are split
+/// onto the two on-demand taps below, for the reason described at
+/// `gGestureEnvelopeTap`: every subscribed event costs a synchronous
+/// round-trip through this process, so a type that is only meaningful in a
+/// narrow window should not be subscribed to outside it. Measured while
+/// typing on macOS 26: `keyUp` is exactly as frequent as `keyDown`, and was
+/// half of this tap's wakeups.
 var gTap: CFMachPort?
+
+/// Tap for `keyUp` and `systemDefined`, enabled only while a key press has
+/// actually been claimed or a bare-Fn candidate is in progress
+/// (`syncKeyboardAuxiliaryTaps()`).
+///
+/// Both types exist purely to close out a press that already matched: the
+/// release paired with a swallowed key-down, and the media keys that cancel a
+/// bare-Fn candidate. Neither can ever *start* anything, so outside that
+/// window they are dead weight on every keystroke.
+var gClaimedKeyTap: CFMachPort?
+
+/// Run loop source backing `gClaimedKeyTap`.
+var gClaimedKeyTapSource: CFRunLoopSource?
+
+/// Whether `gClaimedKeyTap` is currently enabled.
+var gClaimedKeyTapEnabled: Bool = false
+
+/// Tap for `flagsChanged`, enabled only while a cycle shortcut is configured
+/// and the recorder is not running.
+///
+/// Modifier transitions are observed exclusively to track physical Fn for the
+/// configurable cycle shortcut. With no shortcut recorded — the default — the
+/// callback passes every one of them straight back, so the tap is simply not
+/// installed instead.
+var gModifierKeyTap: CFMachPort?
+
+/// Run loop source backing `gModifierKeyTap`.
+var gModifierKeyTapSource: CFRunLoopSource?
+
+/// Whether `gModifierKeyTap` is currently enabled.
+var gModifierKeyTapEnabled: Bool = false
 
 /// The gesture-intercept CGEvent tap. Unlike `gTap`, this one is created and
 /// torn down on demand: it only exists while the master switch and at least
@@ -450,6 +490,11 @@ func persistCycleShortcut() {
         defaults.removeObject(forKey: Defaults.cycleShortcutModifiers)
         defaults.removeObject(forKey: Defaults.cycleShortcutLabel)
     }
+
+    // Whether a shortcut is configured decides whether modifier transitions
+    // are worth watching at all. Both Preferences paths that change it land
+    // here, so this is the one place that has to say so.
+    syncKeyboardAuxiliaryTaps()
 }
 
 /// Writes the current switch count to UserDefaults if it has changed.

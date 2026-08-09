@@ -54,6 +54,93 @@ private var gMissionControlActiveKeycode: Int64?
 /// DockSwipe of its own — Dock runs its animated transition internally.
 private let kMissionControlKeycode: Int64 = 160
 
+// MARK: - Auxiliary Tap Lifecycle
+
+/// Creates the two on-demand companions to `gTap`, both left disabled.
+///
+/// Called once at startup, right after the primary tap. A failure here is
+/// logged and tolerated — see the call site in `main.swift`.
+func installAuxiliaryKeyboardTaps() {
+    let claimedKeyMask = CGEventMask(1 << CGEventType.keyUp.rawValue)
+                       | CGEventMask(1 << kCGEventTypeSystemDefined.rawValue)
+    let modifierMask   = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+
+    if let claimed = makeKeyboardTap(mask: claimedKeyMask) {
+        gClaimedKeyTap       = claimed.tap
+        gClaimedKeyTapSource = claimed.source
+    } else {
+        fputs("Space Rabbit: failed to create claimed-key tap\n", stderr)
+    }
+
+    if let modifier = makeKeyboardTap(mask: modifierMask) {
+        gModifierKeyTap       = modifier.tap
+        gModifierKeyTapSource = modifier.source
+    } else {
+        fputs("Space Rabbit: failed to create modifier key tap\n", stderr)
+    }
+
+    syncKeyboardAuxiliaryTaps()
+}
+
+/// Creates one session tap feeding `eventTapCallback`, added to the run loop
+/// but left disabled.
+///
+/// - Parameter mask: The event types the tap should receive.
+/// - Returns: The tap and its run loop source, or `nil` on failure.
+private func makeKeyboardTap(mask: CGEventMask) -> (tap: CFMachPort, source: CFRunLoopSource)? {
+    guard let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap,
+        place: .headInsertEventTap,
+        options: .defaultTap,
+        eventsOfInterest: mask,
+        callback: eventTapCallback,
+        userInfo: nil
+    ), let source = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
+        return nil
+    }
+
+    CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: false)
+    return (tap, source)
+}
+
+/// Brings both auxiliary taps in line with the state that makes them useful.
+///
+/// Runs from a `defer` covering every exit of `eventTapCallback`, so no branch
+/// can leave one enabled after the press it belonged to ended. It is also
+/// called wherever the cycle shortcut itself changes, since that happens
+/// outside the event path — and because the callback re-runs it on the very
+/// next key-down, a missed call site self-corrects within one keystroke rather
+/// than stranding the tap.
+func syncKeyboardAuxiliaryTaps() {
+    // A claimed press still owes macOS a swallowed release, and a live bare-Fn
+    // candidate still needs to see whether another key cancels it.
+    let claimedKeyListening = gCycleShortcutActiveKeycode != nil
+        || gMissionControlActiveKeycode != nil
+        || gFnPressState.isDown
+
+    // Physical Fn tracking only exists to serve a configured cycle shortcut.
+    let modifierListening = gCycleShortcutEnabled
+        && gCycleShortcut != nil
+        && !gIsRecordingCycleShortcut
+
+    setKeyboardTap(gClaimedKeyTap, enabled: claimedKeyListening, state: &gClaimedKeyTapEnabled)
+    setKeyboardTap(gModifierKeyTap, enabled: modifierListening, state: &gModifierKeyTapEnabled)
+}
+
+/// Pushes a tap's enabled state to the window server only when it changed.
+///
+/// - Parameters:
+///   - tap: The tap to update, if it was created.
+///   - enabled: The state it should be in.
+///   - state: The cached flag tracking what was last applied.
+private func setKeyboardTap(_ tap: CFMachPort?, enabled: Bool, state: inout Bool) {
+    guard let tap, enabled != state else { return }
+
+    CGEvent.tapEnable(tap: tap, enable: enabled)
+    state = enabled
+}
+
 // MARK: - Configurable Space Cycling
 
 /// Clears the in-progress bare-Fn candidate.
@@ -191,8 +278,17 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                       event: CGEvent, userInfo: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
     let passthrough = Unmanaged.passUnretained(event)
 
+    // The auxiliary taps are only worth their wakeups while a press is claimed
+    // or a cycle shortcut is configured, and any branch below can change that.
+    defer { syncKeyboardAuxiliaryTaps() }
+
     // macOS may disable our tap if it takes too long to process an event
     // or if it suspects misbehavior. Re-enable it immediately to stay alive.
+    //
+    // The notification does not identify which of the three taps was disabled,
+    // so the always-on one is re-enabled unconditionally (a redundant enable is
+    // harmless) and the auxiliaries are left to the `defer` above, which now
+    // resolves to "disabled" because the reset dropped every claim.
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         resetKeyTracking()
         if let tap = gTap { CGEvent.tapEnable(tap: tap, enable: true) }

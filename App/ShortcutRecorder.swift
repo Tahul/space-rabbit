@@ -64,6 +64,7 @@ final class ShortcutRecorderButton: NSButton {
         isRecording = true
         recordingFnState.reset()
         gIsRecordingCycleShortcut = true
+        syncKeyboardAuxiliaryTaps()
         title = recordingTitle
         window?.makeFirstResponder(self)
 
@@ -221,6 +222,7 @@ final class ShortcutRecorderButton: NSButton {
         isRecording = false
         recordingFnState.reset()
         gIsRecordingCycleShortcut = false
+        syncKeyboardAuxiliaryTaps()
         updateTitle()
     }
 
