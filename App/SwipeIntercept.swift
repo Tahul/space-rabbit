@@ -355,6 +355,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
                     gPendingMissionControlOverviewState = nil
                     gMissionControlSwipeTracking = true
+                    gMenu?.recordSwitch()
                     return nil
                 }
 
@@ -371,6 +372,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                                                 direction: direction) {
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
                     finishMissionControlInterception()
+                    gMenu?.recordSwitch()
                     if requiresEventAugmentation() {
                         return missionControlCleanupResult(for: event)
                     }

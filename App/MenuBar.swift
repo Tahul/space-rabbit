@@ -614,8 +614,9 @@ final class SwoopMenu: NSObject {
 
     /// Increments the switch counter and refreshes the stats display.
     ///
-    /// Called by both the event tap (instant switch) and the auto-follow
-    /// observer whenever a space switch is performed.
+    /// Called by the event tap (instant switch), the auto-follow observer, the
+    /// swipe interceptor and the Mission Control interceptor whenever a
+    /// synthetic transition replaces an animated one.
     func recordSwitch() {
         gSwitchCount += 1
         updateStatsDisplay()
