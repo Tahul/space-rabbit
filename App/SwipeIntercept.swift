@@ -121,6 +121,7 @@ func updateSwipeTap() {
 func resetSwipeIntercept() {
     gSwipeTracking               = false
     gSwipeFired                  = false
+    gSwipeInOverview             = false
     gMissionControlSwipeTracking = false
     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
     gPendingMissionControlOverviewState = nil
@@ -402,12 +403,19 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         }
     }
 
-    // Horizontal feature gates. Mission Control is independent from the
-    // trackpad-Space toggle and was already handled above with the shared
-    // transition-speed slider.
-    guard gTrackpadSwipeEnabled, !isNativeSwitchSpeed() else {
-        gSwipeTracking = false
-        gSwipeFired    = false
+    // Horizontal feature gates. Two independent features reach this path: the
+    // trackpad-Space toggle owns swipes on the desktop, and the Mission Control
+    // toggle additionally owns the ones that navigate its overview's carousel.
+    // Both follow the shared transition-speed slider.
+    let desktopSwipeEnabled  = gTrackpadSwipeEnabled && !isNativeSwitchSpeed()
+    let overviewSwipeEnabled = gInstantMissionControlEnabled
+        && !isNativeSwitchSpeed()
+        && supportsInstantMissionControlInterception()
+
+    guard desktopSwipeEnabled || overviewSwipeEnabled else {
+        gSwipeTracking   = false
+        gSwipeFired      = false
+        gSwipeInOverview = false
         return passthrough
     }
 
@@ -420,12 +428,28 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         let phase = event.getIntegerValueField(kCGEventGesturePhase)
 
         if phase == kCGSGesturePhaseBegan {
-            // Mission Control slides its own carousel from this gesture —
-            // see isMissionControlActive(). Stand down for the whole swipe
-            // by not tracking it: every later phase then passes through
-            // untouched, so the window-list lookup runs once per gesture
-            // rather than for every high-frequency sample.
-            guard !isMissionControlActive() else { return passthrough }
+            // Which recipe replaces this swipe depends on what is on screen,
+            // and the answer is settled once here: every later phase then
+            // follows gSwipeTracking, so the window-list lookup runs once per
+            // gesture rather than for every high-frequency sample.
+            //
+            // Off the desktop this stays the cheap layer-18 test, whose
+            // fail-open answer keeps the long-standing desktop path working
+            // when the window list cannot be read. Only once an overview is
+            // known to be up is the exact state resolved: Mission Control
+            // navigates spaces with this gesture and can be driven, while App
+            // Exposé, Show Desktop and unreadable private state stay native.
+            if isMissionControlActive() {
+                guard overviewSwipeEnabled,
+                      currentDockOverviewState() == .missionControl
+                else { return passthrough }
+
+                gSwipeInOverview = true
+            } else {
+                guard desktopSwipeEnabled else { return passthrough }
+
+                gSwipeInOverview = false
+            }
 
             gSwipeTracking = true
             gSwipeFired    = false
@@ -438,7 +462,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                 let progress = event.getDoubleValueField(kCGEventGestureSwipeProgress)
                 if progress != 0 {
                     gSwipeFired = true
-                    performSwipeSwitch(isRight: isRightSwipe(progress))
+                    performSwipeSwitch(proxy: proxy, isRight: isRightSwipe(progress))
                 }
             }
             return nil
@@ -449,10 +473,13 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
             // progress — fall back to the final velocity's sign.
             if !gSwipeFired {
                 let velocity = event.getDoubleValueField(kCGEventGestureSwipeVelocityX)
-                if velocity != 0 { performSwipeSwitch(isRight: isRightSwipe(velocity)) }
+                if velocity != 0 {
+                    performSwipeSwitch(proxy: proxy, isRight: isRightSwipe(velocity))
+                }
             }
-            gSwipeTracking = false
-            gSwipeFired    = false
+            gSwipeTracking   = false
+            gSwipeFired      = false
+            gSwipeInOverview = false
 
             // macOS 27's Dock needs to see the gesture close to keep its
             // internal state consistent — pass the Ended event through
@@ -465,8 +492,9 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         }
 
         if phase == kCGSGesturePhaseCancelled {
-            gSwipeTracking = false
-            gSwipeFired    = false
+            gSwipeTracking   = false
+            gSwipeFired      = false
+            gSwipeInOverview = false
             return nil
         }
 
@@ -508,15 +536,21 @@ private func isRightSwipe(_ sign: Double) -> Bool {
     sign > 0
 }
 
-/// Fires the instant switch replacing an intercepted swipe, mirroring the
-/// keyboard path's safety rails: stand down when the space layout is
-/// unknown (never post blind — issue #6), and do nothing at the edges
-/// (the real gesture is already swallowed, so there is no bounce either
-/// way). Velocity follows the transition-speed slider via
-/// `postSwitchGesture`'s default, exactly like the keyboard feature.
+/// Fires the switch replacing an intercepted swipe, mirroring the keyboard
+/// path's safety rails: stand down when the space layout is unknown (never
+/// post blind — issue #6), and do nothing at the edges (the real gesture is
+/// already swallowed, so there is no bounce either way). Speed follows the
+/// transition-speed slider on both recipes, exactly like the keyboard feature.
 ///
-/// - Parameter isRight: `true` to move to the next space on the right.
-private func performSwipeSwitch(isRight: Bool) {
+/// A gesture that began inside the Mission Control overview is replaced with
+/// the segmented carousel stream instead of the desktop's boundary jump, which
+/// the overview cannot act on (issue #16).
+///
+/// - Parameters:
+///   - proxy: The active swipe-intercept tap proxy, used by the overview
+///     recipe to inject its replacement gesture in order.
+///   - isRight: `true` to move to the next space on the right.
+private func performSwipeSwitch(proxy: CGEventTapProxy, isRight: Bool) {
     let direction = isRight ? 1 : -1
 
     let (spaceIDs, currentIdx) = getSpaceList()
@@ -525,7 +559,11 @@ private func performSwipeSwitch(isRight: Bool) {
     let targetIdx = currentIdx + direction
     guard targetIdx >= 0, targetIdx < spaceIDs.count else { return }
 
-    if postSwitchGesture(direction: direction) {
+    let posted = gSwipeInOverview
+        ? postOverviewSpaceSwitch(proxy: proxy, direction: direction)
+        : postSwitchGesture(direction: direction)
+
+    if posted {
         gLastSpaceSwitchTime = Date()
         gMenu?.recordSwitch()
     }

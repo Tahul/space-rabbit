@@ -171,10 +171,11 @@ gesture path.
 
 ### Optional Instant Mission Control (`SwipeIntercept.swift`)
 
-Off by default and independent from Instant Trackpad Swipe. Upward entry and
-downward dismissal both follow the shared transition-speed slider: Normal leaves
-the physical gesture native, Fast/Faster/Fastest use progressively shorter timed
-progress streams, and Instant removes the transition.
+Off by default and independent from Instant Trackpad Swipe. Upward entry,
+downward dismissal, and horizontal space navigation *inside* the overview all
+follow the shared transition-speed slider: Normal leaves the physical gesture
+native, Fast/Faster/Fastest use progressively shorter timed progress streams,
+and Instant removes the transition.
 
 Mission Control uses vertical DockSwipes (`motion = 2`). Because physical Began
 does not reliably carry direction, the tap copies and holds Began (plus companion
@@ -220,6 +221,24 @@ Dock's gesture state open, which is the worse failure.
 The interceptor is limited to the known macOS 15–27 schemas; an unknown future
 major release leaves the option inert and the physical gesture native.
 
+**Horizontal swipes inside the overview.** Mission Control navigates spaces from
+the same horizontal 3-finger swipe the desktop uses, so this toggle also owns
+that gesture while the overview is up — independently of the Instant Trackpad
+Swipe toggle, which owns the desktop ones. The desktop recipe cannot be reused
+(issue #16): a fully-committed boundary jump is evaluated against the overview's
+state, the screen blanks, and it lands back where it started. The horizontal
+gesture therefore goes out through the *same* segmented Began → progress → Ended
+machinery as the vertical transitions, on `motion = 1`
+(`postOverviewSpaceSwitch` / `postControlledDockSwipe`). Only the sign rule
+differs by axis: horizontal keeps the desktop path's posting convention, so
+macOS 27+ inverts it (negative moves right) while everything below it does not,
+whereas vertical is `+1`/`-1` on every release. Direction is read from the first
+non-zero Changed progress exactly as on the desktop, the gesture is
+bounds-checked against `getSpaceList()`, and only the `mission-control` OS space
+qualifies — App Exposé, Show Desktop, and unreadable private state stay native.
+The desktop branch keeps the cheap fail-open layer-18 test it always had, so an
+unreadable window list cannot regress it.
+
 ### Feature interaction (suppression guard)
 
 The two features suppress each other to prevent loops. After instant-switch fires, `gLastSpaceSwitchTime` is stamped. Auto-follow checks this timestamp and skips if within 300ms. The `activeSpaceDidChangeNotification` observer in `main.swift` also stamps this time for trackpad-initiated switches (which bypass the event tap entirely).
@@ -262,9 +281,12 @@ once an action is about to happen, never per event:
   `cycleToNextSpace()`), not for every `keyDown`. For a bare-Fn binding that
   means one lookup per Fn *release*, and only once the press has qualified as
   a bare tap.
-- **Feature 3** — on the Began phase only. Standing down means *not tracking* the
-  gesture, so all later phases pass through via the existing `gSwipeTracking`
-  checks, one lookup per swipe instead of one per sample.
+- **Feature 3** — on the Began phase only. The answer picks which recipe replaces
+  the swipe (desktop jump versus overview carousel) or whether to stand down;
+  standing down means *not tracking* the gesture, so all later phases pass
+  through via the existing `gSwipeTracking` checks, one lookup per swipe instead
+  of one per sample. Only when the layer-18 marker is present does the Began also
+  resolve the exact overview state, so the desktop path still costs one lookup.
 - **Instant Mission Control** — before holding vertical Began. An absent layer-18
   marker identifies the desktop. When a marker exists, `SLSCopySpaces` and
   `SLSSpaceCopyName` must identify the `mission-control` OS space; App Exposé
@@ -395,7 +417,7 @@ documented at its declaration in `State.swift`.
 | `gIsRecordingCycleShortcut` | `Bool` | Makes the global event tap stand down while Preferences records a replacement |
 | `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
 | `gInstantMissionControlEnabled` | `Bool` | Mission Control entry/dismissal transition toggle (default **false** — opt-in) |
-| `gSwipeTracking` / `gSwipeFired` | `Bool` | Per-horizontal-gesture state of the swipe intercept (reset via `resetSwipeIntercept()`) |
+| `gSwipeTracking` / `gSwipeFired` / `gSwipeInOverview` | `Bool` | Per-horizontal-gesture state of the swipe intercept — claimed, already fired, and whether Began happened inside the Mission Control overview (reset via `resetSwipeIntercept()`) |
 | `gMissionControlSwipeTracking` / `gPendingMissionControlEvents` / `gPendingMissionControlOverviewState` | `Bool` / `[CGEvent]` / `DockOverviewState?` | Claimed vertical stream, copied prefix, and its exact desktop/Mission Control origin awaiting direction/native replay |
 | `gMissionControlAnimation` / `gMissionControlAnimationID` | `MissionControlAnimationState?` / `UInt64` | Active timed vertical transition and generation ID; accessed only on the Mission Control animation queue |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
@@ -936,10 +958,14 @@ local.env               — git-ignored; signing credentials
 - Trackpad swipe gestures animate unless the opt-in "Instant Trackpad Swipe"
   feature is enabled (they bypass the keyboard event tap; Feature 3 intercepts
   them with its own gesture tap).
-- Mission Control entry and dismissal remain native unless the independent opt-in
-  "Instant Mission Control" feature is enabled. They then follow the shared
-  transition-speed slider; unrelated in-overview gestures remain native.
-- Space switches inside a Mission Control overview are left to macOS (animated) — the overview cannot be driven by synthetic DockSwipes at all (see "Mission Control stand-down").
+- Mission Control entry, dismissal, and horizontal space navigation inside the
+  overview remain native unless the independent opt-in "Instant Mission Control"
+  feature is enabled. They then follow the shared transition-speed slider;
+  unrelated in-overview gestures remain native.
+- Keyboard space switches issued while an overview is on screen are still left to
+  macOS (animated) — only an intercepted physical swipe carries the segmented
+  stream the overview responds to (see "Mission Control stand-down").
+- Space switches inside App Exposé or Show Desktop are left to macOS (animated).
 - Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display: at the "Instant" speed setting, `switchOnOtherDisplay` warps the cursor to that display, posts the gesture, and restores the cursor after `kCursorWarpRestoreDelay` (skipping the restore if the user moved it); at animated speeds it stands down and macOS's native animated switch handles it. Direct APIs are not an option (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates. macOS 27 already did this once: it rejects bare synthetic DockSwipe events, requiring the augmented path (see "macOS 27+ gesture augmentation").
 - The macOS 27+ augmented path always posts the equivalent of an instant switch at the "Instant" slider setting; the animated velocity band (Fast/Faster/Fastest) is passed through but uncalibrated on macOS 27.

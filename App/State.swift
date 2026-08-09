@@ -126,6 +126,11 @@ var gSwipeTracking: Bool = false
 /// (fires once per gesture, on the first Changed with non-zero progress).
 var gSwipeFired: Bool = false
 
+/// Whether the intercepted horizontal swipe started inside the Mission Control
+/// overview. Captured at Began (the overview may already be sliding by the time
+/// direction resolves) and decides which posting recipe replaces the gesture.
+var gSwipeInOverview: Bool = false
+
 /// Whether a Mission Control entry/dismissal swipe has been replaced and the
 /// rest of its physical event sequence must be swallowed.
 var gMissionControlSwipeTracking: Bool = false
@@ -154,6 +159,7 @@ struct MissionControlTerminalEvents {
 /// interrupts this animation.
 struct MissionControlAnimationState {
     let id: UInt64
+    let motion: Int64
     let direction: Int
     let augmented: Bool
     let fallbackTerminal: MissionControlTerminalEvents
