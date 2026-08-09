@@ -91,7 +91,7 @@
 "settings.features.instantTrackpadSwipe" = "Deslizamiento instantáneo en el trackpad";
 "settings.features.instantMissionControl" = "Mission Control instantáneo";
 "settings.features.cycleSpaces" = "Atajo para recorrer espacios";
-"settings.features.cycleSpaces.normalWarning" = "Recorrer espacios no está disponible cuando la velocidad de transición está configurada como «Normal».";
+"settings.features.cycleSpaces.normalWarning" = "No disponible si la velocidad es «Normal»";
 "settings.features.shortcut.recording" = "Pulsa una función rápida…";
 "settings.features.shortcut.none" = "Ninguna";
 "settings.features.transitionSpeed" = "Velocidad de transición";

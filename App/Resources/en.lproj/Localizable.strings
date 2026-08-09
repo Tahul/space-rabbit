@@ -91,7 +91,7 @@
 "settings.features.instantTrackpadSwipe" = "Instant Trackpad swipe";
 "settings.features.instantMissionControl" = "Instant Mission Control";
 "settings.features.cycleSpaces" = "Cycle spaces shortcut";
-"settings.features.cycleSpaces.normalWarning" = "Unavailable when the transition speed is set to Normal";
+"settings.features.cycleSpaces.normalWarning" = "Unavailable when speed is Normal";
 "settings.features.shortcut.recording" = "Press shortcut…";
 "settings.features.shortcut.none" = "None";
 "settings.features.transitionSpeed" = "Transition speed";

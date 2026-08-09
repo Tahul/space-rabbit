@@ -89,7 +89,7 @@
 "settings.features.instantTrackpadSwipe" = "Sofortiges Trackpad-Streichen";
 "settings.features.instantMissionControl" = "Mission Control sofort öffnen";
 "settings.features.cycleSpaces" = "Kurzbefehl zum Durchlaufen der Spaces";
-"settings.features.cycleSpaces.normalWarning" = "„Spaces durchlaufen“ ist nicht verfügbar, wenn die Übergangsgeschwindigkeit auf „Normal“ eingestellt ist.";
+"settings.features.cycleSpaces.normalWarning" = "Nicht verfügbar bei Geschwindigkeit „Normal“";
 "settings.features.shortcut.recording" = "Kurzbefehl drücken…";
 "settings.features.shortcut.none" = "Keiner";
 "settings.features.transitionSpeed" = "Übergangsgeschwindigkeit";

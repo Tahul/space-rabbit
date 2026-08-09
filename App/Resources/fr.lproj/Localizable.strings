@@ -93,7 +93,7 @@
 "settings.features.instantTrackpadSwipe" = "Balayage instantané du trackpad";
 "settings.features.instantMissionControl" = "Mission Control instantané";
 "settings.features.cycleSpaces" = "Raccourci pour parcourir les Espaces";
-"settings.features.cycleSpaces.normalWarning" = "« Parcourir les Espaces » n’est pas disponible lorsque la vitesse de transition est réglée sur « Normale ».";
+"settings.features.cycleSpaces.normalWarning" = "Indisponible si la vitesse est «\U00A0Normale\U00A0»";
 "settings.features.shortcut.recording" = "Appuyez sur un raccourci…";
 "settings.features.shortcut.none" = "Aucun";
 "settings.features.transitionSpeed" = "Vitesse de transition";
