@@ -40,8 +40,9 @@ private let kInstantSwitchVelocity: Double = 400.0
 /// used by vertical DockSwipe gestures.
 private let kMissionControlEpsilon: Double = 1.0 / 65536.0
 
-/// DockSwipe motion value for the vertical Mission Control/App Exposé axis.
-private let kGestureMotionVertical: Int64 = 2
+// The DockSwipe motion values (`kGestureMotionHorizontal` /
+// `kGestureMotionVertical`) are declared once in SwipeIntercept.swift and
+// shared with the posting code here.
 
 /// IOHID swipe-mask bit identifying upward Mission Control entry.
 private let kIOHIDSwipeUp: Int64 = 1
@@ -760,8 +761,19 @@ private extension Data {
 /// Converts a double to the signed 16.16 fixed-point representation used
 /// inside IOHID event structures. Values too small to register are clamped
 /// to the smallest non-zero fixed-point value so their sign survives.
+///
+/// Some inputs are read back off a *physical* event (the macOS 27 cleanup
+/// path mirrors an intercepted Ended), so the conversion never trusts its
+/// argument: a non-finite value would trap in `Int64.init`, and an
+/// out-of-range one would wrap its sign. Both are reduced to a saturated
+/// value instead.
 private func doubleToFixed1616(_ value: Double) -> Int32 {
-    let fixed = Int32(truncatingIfNeeded: Int64(value * 65536.0))
+    guard value.isFinite else { return 0 }
+
+    let scaled  = (value * 65536.0).rounded(.towardZero)
+    let clamped = min(max(scaled, Double(Int32.min)), Double(Int32.max))
+    let fixed   = Int32(clamped)
+
     if fixed == 0 && value != 0.0 { return value > 0.0 ? 1 : -1 }
     return fixed
 }
@@ -837,10 +849,17 @@ private func generateIOHIDPayload(from event: CGEvent) -> Data {
 /// path uses it on macOS 26 and 27, so every synthetic Mission Control phase
 /// is rebuilt this way on the releases this feature supports.
 ///
-/// - Parameter event: The fully-populated dock control event.
+/// - Parameters:
+///   - event: The fully-populated dock control event.
+///   - mayCarryExistingPayload: `true` when `event` was copied from a real
+///     gesture and could already hold a field-4205 record. Such an event is
+///     only augmented if the existing record can be positively located and
+///     replaced — appending a second, contradictory payload would be worse
+///     than not augmenting at all.
 /// - Returns: A new event carrying the payload, or `nil` on failure
 ///            (including an unrecognized serialization format).
-private func augmentDockSwipeEvent(_ event: CGEvent) -> CGEvent? {
+private func augmentDockSwipeEvent(_ event: CGEvent,
+                                   mayCarryExistingPayload: Bool = false) -> CGEvent? {
     guard let cfData = event.data else { return nil }
     let bytes = cfData as Data
 
@@ -850,26 +869,64 @@ private func augmentDockSwipeEvent(_ event: CGEvent) -> CGEvent? {
           bytes[0] == 0, bytes[1] == 0, bytes[2] == 0, bytes[3] == 2
     else { return nil }
 
-    guard let augmented = replacingBinaryField(
-        kCGEventIOHIDPayloadField,
-        in: bytes,
-        with: generateIOHIDPayload(from: event)
-    ) else { return nil }
+    let payload = generateIOHIDPayload(from: event)
+    let augmented: Data
+
+    if let replaced = replacingBinaryField(kCGEventIOHIDPayloadField,
+                                           in: bytes, with: payload) {
+        augmented = replaced
+    } else if mayCarryExistingPayload {
+        return nil
+    } else {
+        // The blob holds a record shape the walker does not recognize. A
+        // freshly built event carries no payload of its own, so appending
+        // one is unambiguous — and is exactly the behavior that shipped
+        // before the walker existed, which keeps an unknown record from
+        // silently disabling the macOS 27 horizontal path.
+        guard let appended = appendingBinaryField(kCGEventIOHIDPayloadField,
+                                                  to: bytes, with: payload)
+        else { return nil }
+        augmented = appended
+    }
 
     return CGEvent(withDataAllocator: kCFAllocatorDefault, data: augmented as CFData)
 }
 
+/// Appends one binary field record to CGEvent's version-2 serialization.
+///
+/// - Returns: The extended bytes, or `nil` if the payload cannot be framed.
+private func appendingBinaryField(_ fieldID: UInt16, to bytes: Data,
+                                  with payload: Data) -> Data? {
+    guard payload.count <= Int(UInt16.max) else { return nil }
+
+    var result = bytes
+    result.append(UInt8(payload.count >> 8))                  // payload length (BE)
+    result.append(UInt8(payload.count & 0xFF))
+    result.append(UInt8(fieldID >> 8))                        // binary tag is zero
+    result.append(UInt8(fieldID & 0xFF))
+    result.append(payload)
+    return result
+}
+
 /// Replaces one binary field in CGEvent's version-2 serialization while
 /// preserving all other records byte-for-byte.
+///
+/// - Returns: The rewritten bytes, or `nil` when a record cannot be walked
+///            (an unknown tag, a truncated blob, or an unframeable payload).
 private func replacingBinaryField(_ fieldID: UInt16, in bytes: Data,
                                   with payload: Data) -> Data? {
-    guard bytes.count >= 4, payload.count <= Int(UInt16.max) else { return nil }
+    // `bytes` normally starts at zero, but indexing off `startIndex` keeps
+    // this correct if it is ever handed a slice.
+    let base = bytes.startIndex
+    let end  = bytes.endIndex
+
+    guard bytes.count >= 4 else { return nil }
 
     var result = Data(bytes.prefix(4))
-    var offset = 4
+    var offset = base + 4
 
-    while offset < bytes.count {
-        guard offset + 4 <= bytes.count else { return nil }
+    while offset < end {
+        guard offset + 4 <= end else { return nil }
 
         let elementSize = (UInt16(bytes[offset]) << 8) | UInt16(bytes[offset + 1])
         let tagAndField = (UInt16(bytes[offset + 2]) << 8) | UInt16(bytes[offset + 3])
@@ -887,19 +944,14 @@ private func replacingBinaryField(_ fieldID: UInt16, in bytes: Data,
         }
 
         let recordEnd = offset + 4 + valueSize
-        guard recordEnd <= bytes.count else { return nil }
+        guard recordEnd <= end else { return nil }
         if currentFieldID != fieldID {
             result.append(bytes.subdata(in: offset..<recordEnd))
         }
         offset = recordEnd
     }
 
-    result.append(UInt8(payload.count >> 8))                  // payload length (BE)
-    result.append(UInt8(payload.count & 0xFF))
-    result.append(UInt8(fieldID >> 8))                        // binary tag is zero
-    result.append(UInt8(fieldID & 0xFF))
-    result.append(payload)
-    return result
+    return appendingBinaryField(fieldID, to: result, with: payload)
 }
 
 // MARK: - Mission Control Transition
@@ -1223,7 +1275,7 @@ func makeMissionControlCleanupEvent(from physicalEvent: CGEvent) -> CGEvent? {
     cleanup.setDoubleValueField(kCGEventGestureSwipeProgress, value: 0)
     cleanup.setDoubleValueField(kCGEventGestureSwipeVelocityX, value: 0)
     cleanup.setDoubleValueField(kCGEventGestureSwipeVelocityY, value: 0)
-    return augmentDockSwipeEvent(cleanup)
+    return augmentDockSwipeEvent(cleanup, mayCarryExistingPayload: true)
 }
 
 /// Creates one phase of the macOS 27 dock swipe, with the extra fields
@@ -1244,7 +1296,7 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
     ev.setIntegerValueField(kCGEventGestureHIDType,      value: kIOHIDEventTypeDockSwipe)
     ev.setIntegerValueField(kCGEventGesturePhase,        value: phase)
     ev.setDoubleValueField(kCGEventGestureSwipeProgress, value: isRight ? -1.0 : 1.0)
-    ev.setIntegerValueField(kCGEventGestureSwipeMotion,  value: 1)
+    ev.setIntegerValueField(kCGEventGestureSwipeMotion,  value: kGestureMotionHorizontal)
     ev.setIntegerValueField(kCGEventGesturePhase2,       value: phase)
     ev.setDoubleValueField(kCGEventGestureFlavor,        value: Double(kIOHIDGestureFlavorDockPrimary))
     ev.setDoubleValueField(kCGEventGestureTimestamp,     value: Double(mach_absolute_time()))
@@ -1344,7 +1396,7 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
     dockEvent.setIntegerValueField(kCGEventGestureHIDType,        value: kIOHIDEventTypeDockSwipe)
     dockEvent.setIntegerValueField(kCGEventGesturePhase,          value: phase)
     dockEvent.setIntegerValueField(kCGEventScrollGestureFlagBits, value: flagDirection)
-    dockEvent.setIntegerValueField(kCGEventGestureSwipeMotion,    value: 1)
+    dockEvent.setIntegerValueField(kCGEventGestureSwipeMotion,    value: kGestureMotionHorizontal)
     dockEvent.setDoubleValueField(kCGEventGestureScrollY,          value: 0)
 
     // A non-zero epsilon in the zoom delta field prevents the Dock from

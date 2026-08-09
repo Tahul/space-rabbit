@@ -47,12 +47,15 @@ import Foundation
 
 // MARK: - Constants
 
+// Both motion values are read here and written by the posting code in
+// SpaceSwitching.swift, so they are declared once, module-wide.
+
 /// Value of `kCGEventGestureSwipeMotion` identifying a horizontal swipe.
-private let kGestureMotionHorizontal: Int64 = 1
+let kGestureMotionHorizontal: Int64 = 1
 
 /// Value identifying the vertical DockSwipe family used by Mission Control
 /// and App Exposé.
-private let kGestureMotionVertical: Int64 = 2
+let kGestureMotionVertical: Int64 = 2
 
 // MARK: - Tap Lifecycle
 
@@ -138,13 +141,15 @@ private func replayPendingMissionControlEvents(proxy: CGEventTapProxy) {
 
 /// Rechecks whether the shared tap is still needed after a deferred Mission
 /// Control gesture finishes.
+///
+/// `updateSwipeTap()` is asked unconditionally rather than re-deriving the
+/// teardown condition here: it already no-ops when the tap matches the
+/// current state, and a second copy of that condition would be free to
+/// drift out of sync with the real one and strand the tap.
 private func finishMissionControlInterception() {
     gMissionControlSwipeTracking = false
     gPendingMissionControlOverviewState = nil
-    if !gEnabled || (!gTrackpadSwipeEnabled
-        && (!gInstantMissionControlEnabled || isNativeSwitchSpeed())) {
-        DispatchQueue.main.async { updateSwipeTap() }
-    }
+    DispatchQueue.main.async { updateSwipeTap() }
 }
 
 /// Resolves a non-zero physical vertical sign against the overview state that
@@ -175,6 +180,26 @@ private func clearGestureMotion(_ event: CGEvent) {
     event.setDoubleValueField(kCGEventGestureSwipeVelocityX, value: 0)
     event.setDoubleValueField(kCGEventGestureSwipeVelocityY, value: 0)
     event.setDoubleValueField(kCGEventGestureSwipeProgress, value: 0)
+}
+
+/// Terminal handling for a claimed vertical gesture on macOS 27+: Dock still
+/// needs to see the physical Ended, with the motion stripped from both the
+/// ordinary fields and the mirrored field-4205 payload.
+///
+/// Should the payload rebuild fail, the ordinary fields are zeroed in place
+/// and the event goes through regardless — the same contract the horizontal
+/// interceptor has always used. Swallowing the Ended outright would leave
+/// Dock's gesture state open, which is the worse of the two failures.
+///
+/// - Parameter event: The intercepted terminal DockSwipe event.
+/// - Returns: The event Dock should receive.
+private func missionControlCleanupResult(for event: CGEvent) -> Unmanaged<CGEvent>? {
+    if let cleanup = makeMissionControlCleanupEvent(from: event) {
+        return Unmanaged.passRetained(cleanup)
+    }
+
+    clearGestureMotion(event)
+    return Unmanaged.passUnretained(event)
 }
 
 // MARK: - Synthetic Event Marking
@@ -257,9 +282,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                 finishMissionControlInterception()
             }
             if phase == kCGSGesturePhaseEnded, requiresEventAugmentation() {
-                guard let cleanup = makeMissionControlCleanupEvent(from: event)
-                else { return nil }
-                return Unmanaged.passRetained(cleanup)
+                return missionControlCleanupResult(for: event)
             }
             return nil
         }
@@ -349,9 +372,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
                     finishMissionControlInterception()
                     if requiresEventAugmentation() {
-                        guard let cleanup = makeMissionControlCleanupEvent(from: event)
-                        else { return nil }
-                        return Unmanaged.passRetained(cleanup)
+                        return missionControlCleanupResult(for: event)
                     }
                     return nil
                 }
