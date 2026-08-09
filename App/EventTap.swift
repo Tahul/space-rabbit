@@ -100,6 +100,22 @@ private func cycleToNextSpace() -> Bool {
 
 // MARK: - Keyboard Mission Control
 
+/// Whether Space Rabbit may drive the Mission Control overview's space
+/// carousel in place of a matched one-step Space shortcut.
+///
+/// Called only once `isMissionControlActive()` has reported an overview, so
+/// this resolves the exact state: App Exposé, Show Desktop and unreadable
+/// private state keep macOS's native handling, the same rule the intercepted
+/// in-overview swipe follows.
+///
+/// - Returns: `true` when the overview is Mission Control and the feature is
+///   available.
+private func canDriveOverviewSpaceSwitch() -> Bool {
+    gInstantMissionControlEnabled
+        && supportsInstantMissionControlInterception()
+        && currentDockOverviewState() == .missionControl
+}
+
 /// Whether this key press asks macOS for Mission Control — either the
 /// dedicated function-row key or the "Mission Control" system hotkey.
 ///
@@ -369,8 +385,15 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     else if let b = gBindingRight, keycode == b.keycode, eventMods == b.mods { direction = +1 }
     else                                                                     { return passthrough }
 
-    // Same stand-down as above, for the left/right shortcuts
-    guard !isMissionControlActive() else { return passthrough }
+    // Same lookup as above, for the left/right shortcuts — but these are the
+    // one-step shortcuts the overview's own carousel navigates, so with Instant
+    // Mission Control on they are driven rather than handed back to macOS.
+    // Anything else on screen (App Exposé, Show Desktop, unreadable state)
+    // still stands down.
+    let inOverview = isMissionControlActive()
+    if inOverview {
+        guard canDriveOverviewSpaceSwitch() else { return passthrough }
+    }
 
     // Bounds check: don't switch past the first or last space
     let (spaceIDs, currentIdx) = getSpaceList()
@@ -387,8 +410,16 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         return nil
     }
 
-    // Post the synthetic gesture and record the switch for statistics
-    if postSwitchGesture(direction: direction) {
+    // Post the synthetic gesture and record the switch for statistics. Inside
+    // the overview the desktop's fully-committed boundary jump cannot be
+    // reused — it is evaluated against the overview's own state and lands back
+    // where it started (issue #16) — so the segmented carousel stream goes out
+    // instead, exactly as the intercepted in-overview swipe does.
+    let posted = inOverview
+        ? postOverviewSpaceSwitch(proxy: proxy, direction: direction)
+        : postSwitchGesture(direction: direction)
+
+    if posted {
         gLastSpaceSwitchTime = Date()
         gMenu?.recordSwitch()
     }

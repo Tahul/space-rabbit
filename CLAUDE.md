@@ -258,6 +258,15 @@ qualifies — App Exposé, Show Desktop, and unreadable private state stay nativ
 The desktop branch keeps the cheap fail-open layer-18 test it always had, so an
 unreadable window list cannot regress it.
 
+**Space shortcuts inside the overview.** The system "Move left/right a space"
+bindings navigate the same carousel, so Feature 1 hands them to
+`postOverviewSpaceSwitch` too rather than standing down, gated on the identical
+condition (`canDriveOverviewSpaceSwitch()` in `EventTap.swift`). Only these two
+one-step bindings are converted. "Switch to Desktop N" and the cycle shortcut
+are multi-step and still stand down — one segmented stream moves the carousel by
+exactly one space, so those would need a chained sequence to be correct, and an
+animated native jump is better than a wrong instant one.
+
 ### Feature interaction (suppression guard)
 
 The two features suppress each other to prevent loops. After instant-switch fires, `gLastSpaceSwitchTime` is stamped. Auto-follow checks this timestamp and skips if within 300ms. The `activeSpaceDidChangeNotification` observer in `main.swift` also stamps this time for trackpad-initiated switches (which bypass the event tap entirely).
@@ -299,7 +308,10 @@ once an action is about to happen, never per event:
   "Switch to Desktop N" loop, and the cycle shortcut inside
   `cycleToNextSpace()`), not for every `keyDown`. For a bare-Fn binding that
   means one lookup per Fn *release*, and only once the press has qualified as
-  a bare tap.
+  a bare tap. The left/right bindings do not stand down on a positive answer:
+  the cheap layer-18 test picks the recipe (desktop jump versus overview
+  carousel) and only then is the exact state resolved, so the common desktop
+  case still costs one lookup — the same two-tier shape Feature 3 uses.
 - **Feature 3** — on the Began phase only. The answer picks which recipe replaces
   the swipe (desktop jump versus overview carousel) or whether to stand down;
   standing down means *not tracking* the gesture, so all later phases pass
@@ -988,9 +1000,10 @@ local.env               — git-ignored; signing credentials
   unrelated in-overview gestures remain native. That toggle covers the trackpad
   gesture, the dedicated Mission Control key, and the "Mission Control" system
   hotkey — but not App Exposé or Show Desktop, by either trigger.
-- Keyboard space switches issued while an overview is on screen are still left to
-  macOS (animated) — only an intercepted physical swipe carries the segmented
-  stream the overview responds to (see "Mission Control stand-down").
+- Inside the Mission Control overview, only the one-step "Move left/right a
+  space" bindings are converted to the segmented carousel stream. "Switch to
+  Desktop N" and the cycle shortcut are multi-step and still stand down to
+  macOS (animated) — see "Space shortcuts inside the overview".
 - Space switches inside App Exposé or Show Desktop are left to macOS (animated).
 - Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display: at the "Instant" speed setting, `switchOnOtherDisplay` warps the cursor to that display, posts the gesture, and restores the cursor after `kCursorWarpRestoreDelay` (skipping the restore if the user moved it); at animated speeds it stands down and macOS's native animated switch handles it. Direct APIs are not an option (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates. macOS 27 already did this once: it rejects bare synthetic DockSwipe events, requiring the augmented path (see "macOS 27+ gesture augmentation").
