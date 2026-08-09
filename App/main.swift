@@ -224,6 +224,7 @@ NotificationCenter.default.addObserver(
     CGEvent.tapEnable(tap: tap, enable: false)
     CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
     if let swipeTap = gSwipeTap { CGEvent.tapEnable(tap: swipeTap, enable: false) }
+    if let envelopeTap = gGestureEnvelopeTap { CGEvent.tapEnable(tap: envelopeTap, enable: false) }
 }
 
 // MARK: - Signal Handling

@@ -37,9 +37,22 @@
  * synthetic Ended is then read as a real swipe — firing a second switch
  * from its ±kInstantSwitchVelocity sign.)
  *
- * Unlike the keyboard tap (installed once at startup), this tap is created
+ * Unlike the keyboard tap (installed once at startup), these taps are created
  * and torn down on demand: gesture events are high-frequency while fingers
- * touch the pad, so the tap only exists while either feature is active.
+ * touch the pad, so they only exist while either feature is active.
+ *
+ * There are two of them, split by event type for the same reason. Every event
+ * a `.defaultTap` subscribes to costs a synchronous round-trip through this
+ * process before macOS may deliver it, so the split keeps the high-rate type
+ * off the tap while there is nothing to intercept:
+ *
+ *   - DockControl (30) — the events that actually carry a DockSwipe, and the
+ *     only ones that can *open* a gesture. Rare (a couple of hundred per
+ *     swipe, none at all otherwise), so this tap stays enabled throughout.
+ *   - Gesture (29) — the generic envelopes, emitted continuously for any
+ *     finger on the trackpad, including plain cursor movement. They are only
+ *     ever acted on while a gesture is already claimed, so this tap is enabled
+ *     on Began and disabled again as soon as tracking ends.
  */
 
 import CoreGraphics
@@ -73,26 +86,28 @@ func updateSwipeTap() {
         && (gTrackpadSwipeEnabled || missionControlEnabled)
 
     if shouldRun, gSwipeTap == nil {
-        let mask = CGEventMask((1 << UInt64(kCGSEventGesture))
-                             | (1 << UInt64(kCGSEventDockControl)))
-
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: swipeTapCallback,
-            userInfo: nil
-        ), let source = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
+        // Two taps rather than one with a combined mask: DockControl is rare
+        // enough to listen for continuously, while the envelope type fires on
+        // every trackpad touch sample and is only ever acted on mid-gesture.
+        guard let dockTap = makeGestureTap(subtype: kCGSEventDockControl) else {
             fputs("Space Rabbit: failed to create swipe intercept tap\n", stderr)
             return
         }
+        guard let envelopeTap = makeGestureTap(subtype: kCGSEventGesture) else {
+            fputs("Space Rabbit: failed to create gesture envelope tap\n", stderr)
+            destroyGestureTap(dockTap.tap, source: dockTap.source)
+            return
+        }
 
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        CGEvent.tapEnable(tap: dockTap.tap, enable: true)
+        // Left disabled until a gesture is claimed.
+        CGEvent.tapEnable(tap: envelopeTap.tap, enable: false)
 
-        gSwipeTap       = tap
-        gSwipeTapSource = source
+        gSwipeTap                   = dockTap.tap
+        gSwipeTapSource             = dockTap.source
+        gGestureEnvelopeTap         = envelopeTap.tap
+        gGestureEnvelopeTapSource   = envelopeTap.source
+        gGestureEnvelopeTapEnabled  = false
         resetSwipeIntercept()
     } else if !shouldRun, let tap = gSwipeTap {
         // A held/claimed Mission Control gesture must reach its terminal
@@ -103,15 +118,70 @@ func updateSwipeTap() {
             return
         }
 
-        CGEvent.tapEnable(tap: tap, enable: false)
-        if let source = gSwipeTapSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-        }
+        destroyGestureTap(tap, source: gSwipeTapSource)
+        destroyGestureTap(gGestureEnvelopeTap, source: gGestureEnvelopeTapSource)
 
-        gSwipeTap       = nil
-        gSwipeTapSource = nil
+        gSwipeTap                  = nil
+        gSwipeTapSource            = nil
+        gGestureEnvelopeTap        = nil
+        gGestureEnvelopeTapSource  = nil
+        gGestureEnvelopeTapEnabled = false
         resetSwipeIntercept()
     }
+}
+
+/// Creates one session tap listening for a single private gesture event type.
+///
+/// - Parameter subtype: `kCGSEventGesture` or `kCGSEventDockControl` — which
+///   double as the `CGEventType` raw values these events arrive as.
+/// - Returns: The tap and its run loop source, already added to the main run
+///   loop but not yet enabled, or `nil` if the tap could not be created.
+private func makeGestureTap(subtype: Int64) -> (tap: CFMachPort, source: CFRunLoopSource)? {
+    guard let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap,
+        place: .headInsertEventTap,
+        options: .defaultTap,
+        eventsOfInterest: CGEventMask(1 << UInt64(subtype)),
+        callback: swipeTapCallback,
+        userInfo: nil
+    ), let source = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
+        return nil
+    }
+
+    CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+    return (tap, source)
+}
+
+/// Disables a gesture tap and unhooks its source from the run loop.
+///
+/// - Parameters:
+///   - tap: The tap to disable, if it exists.
+///   - source: Its run loop source, if it exists.
+private func destroyGestureTap(_ tap: CFMachPort?, source: CFRunLoopSource?) {
+    if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+    if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+}
+
+/// Enables the envelope tap for exactly as long as a gesture is claimed, and
+/// disables it again the moment nothing is being tracked.
+///
+/// Called from a `defer` covering every exit of `swipeTapCallback`, so the
+/// enabled state always matches the tracking state no matter which branch
+/// returned. Claiming always begins on a DockControl Began, which the
+/// always-on tap sees; measured on macOS 26, that Began's own companion
+/// envelope arrives just *before* it and is therefore already past — but the
+/// interceptor never swallowed that one either (nothing is tracked yet when it
+/// arrives), and the next envelope is a full sample period later.
+private func syncGestureEnvelopeTap() {
+    guard let tap = gGestureEnvelopeTap else { return }
+
+    let shouldListen = gSwipeTracking
+        || gMissionControlSwipeTracking
+        || !gPendingMissionControlEvents.isEmpty
+    guard shouldListen != gGestureEnvelopeTapEnabled else { return }
+
+    CGEvent.tapEnable(tap: tap, enable: shouldListen)
+    gGestureEnvelopeTapEnabled = shouldListen
 }
 
 /// Clears all per-gesture tracking state. Called whenever the tap's
@@ -254,9 +324,18 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                       event: CGEvent, userInfo: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
     let passthrough = Unmanaged.passUnretained(event)
 
+    // The envelope tap is only worth its wakeups while a gesture is claimed,
+    // and every branch below can start or end a claim.
+    defer { syncGestureEnvelopeTap() }
+
     // Re-enable the tap if macOS disabled it, and drop any half-tracked
     // gesture: its remaining events were delivered while we were deaf,
     // so finishing it coherently is no longer possible.
+    //
+    // The notification does not say which of the two taps was disabled, so the
+    // always-on one is re-enabled unconditionally (a redundant enable is
+    // harmless) and the envelope tap is left to the `defer` above, which now
+    // resolves to "disabled" because the reset dropped every claim.
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         replayPendingMissionControlEvents(proxy: proxy)
         resetSwipeIntercept()

@@ -23,11 +23,34 @@ var gTap: CFMachPort?
 /// The gesture-intercept CGEvent tap. Unlike `gTap`, this one is created and
 /// torn down on demand: it only exists while the master switch and at least
 /// one gesture-interception feature are enabled (see `updateSwipeTap()`).
+///
+/// It listens for `kCGSEventDockControl` only — the low-rate event type that
+/// actually carries a DockSwipe. The generic envelopes that accompany them
+/// have their own tap, below.
 var gSwipeTap: CFMachPort?
 
 /// Run loop source backing `gSwipeTap`, kept so the source can be removed
 /// from the run loop when the tap is torn down.
 var gSwipeTapSource: CFRunLoopSource?
+
+/// Companion tap for the generic `kCGSEventGesture` envelopes, created and
+/// destroyed alongside `gSwipeTap` but kept *disabled* unless a gesture is
+/// actually claimed (see `syncGestureEnvelopeTap()`).
+///
+/// Those envelopes are emitted for any finger resting on or moving across the
+/// trackpad — roughly 20-60 per second of ordinary cursor movement, versus a
+/// handful of DockControl events in the same span. A `.defaultTap` is a
+/// synchronous IPC round-trip, so subscribing to them full-time woke the
+/// process on every touch sample for events it only ever needs while a swipe
+/// is in progress.
+var gGestureEnvelopeTap: CFMachPort?
+
+/// Run loop source backing `gGestureEnvelopeTap`.
+var gGestureEnvelopeTapSource: CFRunLoopSource?
+
+/// Whether `gGestureEnvelopeTap` is currently enabled, so the state is only
+/// pushed to the window server when it actually changes.
+var gGestureEnvelopeTapEnabled: Bool = false
 
 // MARK: - Feature Toggles
 

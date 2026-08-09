@@ -35,7 +35,7 @@ Exact initialization order — getting this wrong causes subtle bugs:
 6. `checkForUpdatesAutomatically()` — owns its own 5-second delay, and applies it only when it is actually going to make a network request (a throttled launch restores the update banner from UserDefaults immediately). Must run after step 5, which creates `gMenu`, the banner's host
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
 8. **Event tap creation** — listens for `keyDown`, `keyUp`, `flagsChanged`, and `systemDefined`; these support the configurable cycle shortcut (including bare Fn) as well as the system Space bindings, then `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`
-9. **Gesture-intercept tap** — `updateSwipeTap()` installs the shared tap if either persisted gesture toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
+9. **Gesture-intercept tap** — `updateSwipeTap()` installs the shared tap pair if either persisted gesture toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
 10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
 11. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
 12. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
@@ -147,12 +147,31 @@ synthetic events arrived. The leftover synthetic Ended was then read as a real s
 and fired a second switch from its `±kInstantSwitchVelocity` sign — a cascade that
 looks exactly like a direction bug.
 
-**Tap lifecycle** — unlike the keyboard tap (installed once at startup), this tap is
-created/torn down on demand by `updateSwipeTap()` so it only exists while `gEnabled`
+**Tap lifecycle** — unlike the keyboard tap (installed once at startup), these taps are
+created/torn down on demand by `updateSwipeTap()` so they only exist while `gEnabled`
 and either opt-in gesture feature is enabled. Called from startup,
 `SwoopMenu.setEnabled`, both gesture toggles (menu + settings), and the speed
 slider. The "Normal" speed tick gates both horizontal Space swipes and Mission
 Control transitions.
+
+**Two taps, split by event type.** A `.defaultTap` is a synchronous IPC round-trip —
+macOS cannot deliver the event until this process has woken, run the callback and
+replied — so what the taps subscribe to is a direct CPU cost. The generic gesture
+envelopes (29) fire continuously for *any* finger on the trackpad, including plain
+cursor movement (measured on macOS 26: ~20–60/s while moving, versus a handful of
+DockControl events), and a bare do-nothing tap on them costs ~0.5% CPU on its own.
+They are only ever acted on while a gesture is already claimed, so they get their own
+tap (`gGestureEnvelopeTap`), created alongside the main one but kept **disabled**
+until Began and re-disabled the moment tracking ends. `syncGestureEnvelopeTap()`
+derives that from the tracking flags and runs from a `defer` covering every exit of
+`swipeTapCallback`, so no branch can strand it enabled.
+
+This is behavior-preserving, not a trade-off: the envelope paired with a DockControl
+event arrives just *before* it (same millisecond, measured), so the Began's own
+companion envelope is already past by the time the tap could be enabled — but the
+interceptor never swallowed that one either, since nothing is tracked yet when it
+arrives. Every envelope the code does swallow belongs to a later phase, a full sample
+period (~8 ms) away. Do **not** merge the two masks back into one tap.
 
 **Global speed contract** — `gSwitchSpeed` is the sole speed preference for
 keyboard Space shortcuts, Cmd+Tab auto-follow, physical Space swipes, and Mission
@@ -442,7 +461,8 @@ documented at its declaration in `State.swift`.
 | Variable | Type | Purpose |
 |---|---|---|
 | `gTap` | `CFMachPort?` | The active CGEvent tap (keyboard, Feature 1) |
-| `gSwipeTap` / `gSwipeTapSource` | `CFMachPort?` / `CFRunLoopSource?` | Shared gesture-intercept tap — exists only while at least one gesture feature is active (`updateSwipeTap()`) |
+| `gSwipeTap` / `gSwipeTapSource` | `CFMachPort?` / `CFRunLoopSource?` | Shared gesture-intercept tap, DockControl (30) only — exists while at least one gesture feature is active (`updateSwipeTap()`) |
+| `gGestureEnvelopeTap` / `gGestureEnvelopeTapSource` / `gGestureEnvelopeTapEnabled` | `CFMachPort?` / `CFRunLoopSource?` / `Bool` | Companion tap for the high-rate gesture envelopes (29) — created with `gSwipeTap` but enabled only while a gesture is claimed (`syncGestureEnvelopeTap()`) |
 | `gEnabled` | `Bool` | Master on/off toggle |
 | `gInstantSwitchEnabled` | `Bool` | Feature 1 toggle |
 | `gAutoFollowEnabled` | `Bool` | Feature 2 toggle |
