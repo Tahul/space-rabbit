@@ -335,6 +335,12 @@ var gBindingRight: KeyBinding? = (keycode: 124, mods: .maskControl)
 /// `nil` means the slot is not bound or disabled in System Settings.
 var gSpaceKeys: [KeyBinding?] = Array(repeating: nil, count: 10)
 
+/// Binding for the "Mission Control" system hotkey (default: Control + Up
+/// Arrow). `nil` when the hotkey is disabled in System Settings. The dedicated
+/// Mission Control key in the function row is matched separately — it is
+/// hardware, not a configurable hotkey.
+var gBindingMissionControl: KeyBinding? = (keycode: 126, mods: .maskControl)
+
 // MARK: - UI References
 
 /// The menu bar status item instance (created at startup in `main.swift`).

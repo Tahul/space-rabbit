@@ -169,13 +169,32 @@ The persisted slider value is normalized at launch to the supported
 preventing invalid velocities or animation durations from reaching either
 gesture path.
 
-### Optional Instant Mission Control (`SwipeIntercept.swift`)
+### Optional Instant Mission Control (`SwipeIntercept.swift`, `EventTap.swift`)
 
 Off by default and independent from Instant Trackpad Swipe. Upward entry,
 downward dismissal, and horizontal space navigation *inside* the overview all
 follow the shared transition-speed slider: Normal leaves the physical gesture
 native, Fast/Faster/Fastest use progressively shorter timed progress streams,
 and Instant removes the transition.
+
+**Keyboard triggers.** The same toggle also owns the two keyboard ways into
+Mission Control, handled by the *keyboard* tap in `EventTap.swift`, not the
+gesture tap: the dedicated function-row Mission Control key
+(`kMissionControlKeycode` = 160, a distinct keycode rather than F3 with a
+modifier, so the top-row-mode setting is irrelevant) and the "Mission Control"
+system hotkey (`gBindingMissionControl`, default Control+Up). Both are swallowed
+and replaced with the same controlled vertical stream the gesture uses, so they
+follow the shared slider too. The key press is a *toggle* and carries no
+direction, so `triggerMissionControlTransition` reads it from what is on screen
+— `.desktop` enters, `.missionControl` dismisses — and stands down otherwise
+(see "Mission Control stand-down"). Standing down passes the key through, and
+leaves no active keycode so its `keyUp` passes through too; a claimed press
+swallows its `keyUp` as well, since the hardware key gives no way to tell which
+of the two edges Dock acts on. Autorepeat while the key is held is swallowed
+without re-firing. The key is independent of the Instant Space switch toggle.
+Pressing it produces no DockSwipe of its own — Dock runs its animated
+transition internally — which is why the key event itself has to be
+intercepted.
 
 Mission Control uses vertical DockSwipes (`motion = 2`). Because physical Began
 does not reliably carry direction, the tap copies and holds Began (plus companion
@@ -287,11 +306,13 @@ once an action is about to happen, never per event:
   through via the existing `gSwipeTracking` checks, one lookup per swipe instead
   of one per sample. Only when the layer-18 marker is present does the Began also
   resolve the exact overview state, so the desktop path still costs one lookup.
-- **Instant Mission Control** — before holding vertical Began. An absent layer-18
-  marker identifies the desktop. When a marker exists, `SLSCopySpaces` and
-  `SLSSpaceCopyName` must identify the `mission-control` OS space; App Exposé
-  (`show-front`), Show Desktop, conflicts, and failed private-state reads remain
-  native.
+- **Instant Mission Control** — before holding vertical Began, and (for the
+  keyboard triggers) only after the Mission Control key or hotkey has matched.
+  An absent layer-18 marker identifies the desktop. When a marker exists,
+  `SLSCopySpaces` and `SLSSpaceCopyName` must identify the `mission-control` OS
+  space; App Exposé (`show-front`), Show Desktop, conflicts, and failed
+  private-state reads remain native. The keyboard path needs the same answer for
+  a second reason: the press is a toggle, so the state *is* its direction.
 - **Feature 2** — after the speed and suppression-window guards, before the
   window-to-space lookups.
 
@@ -378,6 +399,7 @@ Read from `CFPreferencesCopyAppValue("AppleSymbolicHotKeys", "com.apple.symbolic
 
 | Hotkey ID | Meaning | Constant |
 |---|---|---|
+| `"32"` | Mission Control | `kHotkeyMissionControl` |
 | `"79"` | Move left a space | `kHotkeyMoveLeftSpace` |
 | `"81"` | Move right a space | `kHotkeyMoveRightSpace` |
 
@@ -473,6 +495,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kCursorWarpRestoreDelay` | SpaceSwitching | `0.15` (TimeInterval) | How long the cursor stays parked on the target display after a cross-display warp switch (the Dock samples the cursor asynchronously) |
 | `kRelevantModifiers` | EventTap | Control/Cmd/Alt/Shift | Modifier keys checked when matching shortcuts |
 | `kFnKeycode` | State | `63` | Virtual keycode used for the recordable bare-Fn/Globe binding |
+| `kMissionControlKeycode` | EventTap | `160` | Virtual keycode of the dedicated Mission Control key in the function row |
 | `kCycleShortcutModifiers` | State | Control/Cmd/Alt/Shift/Fn | Exact modifier set checked for recorded cycle shortcuts. The automatic function flag on special/F-keys is normalized; a physically held Fn is still rejected as an unrecorded extra except for F-key bindings, where it is allowed to support either macOS top-row mode. |
 | `kUpdateCheckInterval` | UpdateCheck | `3600` (TimeInterval) | Minimum gap between two *automatic* update checks; a launch inside the window reads the remembered release instead of the network |
 | `kUpdateCheckLaunchDelay` | UpdateCheck | `5` (TimeInterval) | Settle time before the automatic check hits the network — skipped entirely on the cached path |
@@ -483,6 +506,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `CarbonModifier.*` | Shortcuts | hex bitmasks | Legacy Carbon modifier flag values |
 | `kHotkeyMoveLeftSpace` | Shortcuts | `"79"` | System hotkey ID for left-space |
 | `kHotkeyMoveRightSpace` | Shortcuts | `"81"` | System hotkey ID for right-space |
+| `kHotkeyMissionControl` | Shortcuts | `"32"` | System hotkey ID for Mission Control |
 
 ## Update flow (`UpdateCheck.swift` + `UpdateInstall.swift`)
 
@@ -961,7 +985,9 @@ local.env               — git-ignored; signing credentials
 - Mission Control entry, dismissal, and horizontal space navigation inside the
   overview remain native unless the independent opt-in "Instant Mission Control"
   feature is enabled. They then follow the shared transition-speed slider;
-  unrelated in-overview gestures remain native.
+  unrelated in-overview gestures remain native. That toggle covers the trackpad
+  gesture, the dedicated Mission Control key, and the "Mission Control" system
+  hotkey — but not App Exposé or Show Desktop, by either trigger.
 - Keyboard space switches issued while an overview is on screen are still left to
   macOS (animated) — only an intercepted physical swipe carries the segmented
   stream the overview responds to (see "Mission Control stand-down").

@@ -12,6 +12,11 @@
  *   2. A synthetic DockSwipe gesture pair is posted (see SpaceSwitching.swift)
  *   3. The Dock handles the gesture and switches spaces instantly
  *
+ * The same tap owns the keyboard triggers for Instant Mission Control —
+ * the dedicated function-row key and the "Mission Control" system hotkey.
+ * Those are swallowed too, and replaced with the controlled vertical
+ * DockSwipe stream the trackpad gesture already uses.
+ *
  * The tap also re-enables itself if macOS disables it due to timeout
  * or user input (a safety measure built into CGEvent taps).
  */
@@ -36,6 +41,19 @@ private var gFnPressState: BareFnPressState = .idle
 /// is swallowed too so the frontmost app never receives an orphan release.
 private var gCycleShortcutActiveKeycode: Int64?
 
+/// Key-down swallowed for a Mission Control trigger. Its key-up is swallowed
+/// too, so Dock never sees a release whose press it never received — the
+/// dedicated hardware key gives no way to tell which of the two it acts on.
+private var gMissionControlActiveKeycode: Int64?
+
+/// Virtual keycode reported by the dedicated Mission Control key on Apple
+/// keyboards (function row, F3 in its default top-row mode). It is a distinct
+/// keycode, not F3 with a modifier, so it arrives the same way whichever way
+/// "Use F1, F2, etc. as standard function keys" is set. Measured on macOS 26:
+/// a plain key-down/key-up pair carrying only the automatic Fn flag, with no
+/// DockSwipe of its own — Dock runs its animated transition internally.
+private let kMissionControlKeycode: Int64 = 160
+
 // MARK: - Configurable Space Cycling
 
 /// Clears the in-progress bare-Fn candidate.
@@ -43,10 +61,11 @@ private func resetFnPressTracking() {
     gFnPressState.reset()
 }
 
-/// Clears all state associated with an in-progress cycle shortcut.
-private func resetCycleShortcutTracking() {
+/// Clears all state tied to a key press Space Rabbit swallowed.
+private func resetKeyTracking() {
     resetFnPressTracking()
-    gCycleShortcutActiveKeycode = nil
+    gCycleShortcutActiveKeycode  = nil
+    gMissionControlActiveKeycode = nil
 }
 
 /// Moves to the next space on the display under the cursor, wrapping from
@@ -79,6 +98,60 @@ private func cycleToNextSpace() -> Bool {
     return true
 }
 
+// MARK: - Keyboard Mission Control
+
+/// Whether this key press asks macOS for Mission Control — either the
+/// dedicated function-row key or the "Mission Control" system hotkey.
+///
+/// - Parameters:
+///   - keycode: The pressed key's virtual keycode.
+///   - flags: The event's modifier flags.
+/// - Returns: `true` when the press is a Mission Control trigger.
+private func isMissionControlTrigger(keycode: Int64, flags: CGEventFlags) -> Bool {
+    let mods = flags.intersection(kRelevantModifiers)
+
+    // The hardware key carries the automatic Fn flag, which is outside
+    // kRelevantModifiers — any real modifier makes it a different chord.
+    if keycode == kMissionControlKeycode { return mods.isEmpty }
+
+    guard let binding = gBindingMissionControl else { return false }
+    return keycode == binding.keycode && mods == binding.mods
+}
+
+/// Replaces a keyboard-triggered Mission Control transition with the same
+/// controlled DockSwipe stream the trackpad interception posts, so the
+/// keyboard follows the transition-speed slider like every other path.
+///
+/// Pressing the key is a toggle, so the direction comes from what is on
+/// screen: the desktop enters, Mission Control dismisses. App Exposé, Show
+/// Desktop and unreadable private state stay native — the same stand-down the
+/// vertical gesture path applies, and for the same reason (the overview owns
+/// input we cannot positively identify).
+///
+/// Only called once a trigger has matched: the state lookup scans the window
+/// list, too heavy to run for every keystroke passing through the tap.
+///
+/// - Parameter proxy: The active event tap proxy, used to inject the
+///   replacement gesture in order ahead of the swallowed key event.
+/// - Returns: `true` when a transition was posted. `false` means Space Rabbit
+///   stood down and the caller should let macOS handle the key natively.
+private func triggerMissionControlTransition(proxy: CGEventTapProxy) -> Bool {
+    guard supportsInstantMissionControlInterception() else { return false }
+
+    let direction: Int
+    switch currentDockOverviewState() {
+    case .desktop:        direction = 1
+    case .missionControl: direction = -1
+    case .appExpose, nil: return false
+    }
+
+    guard postMissionControlTransition(proxy: proxy, direction: direction)
+    else { return false }
+
+    gMenu?.recordSwitch()
+    return true
+}
+
 // MARK: - Event Tap Callback
 //
 // This is a C-compatible global function used as the CGEvent tap callback.
@@ -105,7 +178,7 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // macOS may disable our tap if it takes too long to process an event
     // or if it suspects misbehavior. Re-enable it immediately to stay alive.
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        resetCycleShortcutTracking()
+        resetKeyTracking()
         if let tap = gTap { CGEvent.tapEnable(tap: tap, enable: true) }
         return passthrough
     }
@@ -113,7 +186,7 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // While Preferences records a replacement shortcut, let AppKit receive
     // every candidate event without the existing global binding firing.
     if gIsRecordingCycleShortcut {
-        resetCycleShortcutTracking()
+        resetKeyTracking()
         return passthrough
     }
 
@@ -121,7 +194,7 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     guard type == .keyDown || type == .keyUp || type == .flagsChanged
             || type == kCGEventTypeSystemDefined,
           gEnabled else {
-        resetCycleShortcutTracking()
+        resetKeyTracking()
         return passthrough
     }
 
@@ -129,7 +202,7 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // animated switch — let every shortcut through untouched so the OS
     // handles it exactly as if Space Rabbit weren't running.
     guard !isNativeSwitchSpeed() else {
-        resetCycleShortcutTracking()
+        resetKeyTracking()
         return passthrough
     }
 
@@ -176,8 +249,12 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // net for hardware whose modified key does not expose a matching keyDown.
     gFnPressState.markChorded()
 
-    // Swallow the release paired with an ordinary configured shortcut.
+    // Swallow the release paired with a key press we already claimed.
     if type == .keyUp {
+        if gMissionControlActiveKeycode == keycode {
+            gMissionControlActiveKeycode = nil
+            return nil
+        }
         guard gCycleShortcutActiveKeycode == keycode else { return passthrough }
         gCycleShortcutActiveKeycode = nil
         return nil
@@ -186,6 +263,26 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // systemDefined is observed only for bare-Fn chord detection. Shortcut
     // matching itself applies to ordinary keyDown events.
     guard type == .keyDown else { return passthrough }
+
+    // Keyboard-triggered Mission Control. Matched before the Space shortcuts
+    // and independent of the Instant Space switch toggle — this is the Instant
+    // Mission Control feature's third trigger, alongside the vertical trackpad
+    // gesture the swipe tap owns.
+    if gInstantMissionControlEnabled,
+       isMissionControlTrigger(keycode: keycode, flags: flags) {
+        // One transition per physical press: a repeat is swallowed only when
+        // the press it belongs to was ours to begin with.
+        guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else {
+            return gMissionControlActiveKeycode == keycode ? nil : passthrough
+        }
+
+        // Standing down hands the key back to macOS, and leaves no active
+        // keycode, so the paired key-up passes through as well.
+        guard triggerMissionControlTransition(proxy: proxy) else { return passthrough }
+
+        gMissionControlActiveKeycode = keycode
+        return nil
+    }
 
     // Match the user-recorded cycle shortcut before the macOS Space bindings.
     // This feature is independent of the Instant Space switch toggle.

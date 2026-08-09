@@ -2,9 +2,10 @@
  * Shortcuts.swift — System keyboard shortcut reading
  *
  * macOS stores the user's configured keyboard shortcuts for
- * "Move left/right a space" in the com.apple.symbolichotkeys
- * preference domain. The hotkey IDs are:
+ * "Move left/right a space" and "Mission Control" in the
+ * com.apple.symbolichotkeys preference domain. The hotkey IDs are:
  *
+ *   32 = Mission Control
  *   79 = Move left a space
  *   81 = Move right a space
  *
@@ -20,6 +21,9 @@ import CoreFoundation
 import Foundation
 
 // MARK: - Hotkey IDs
+
+/// Symbolic hotkey ID for "Mission Control" in System Settings.
+private let kHotkeyMissionControl  = "32"
 
 /// Symbolic hotkey ID for "Move left a space" in System Settings.
 private let kHotkeyMoveLeftSpace  = "79"
@@ -61,6 +65,7 @@ private func carbonToCGFlags(_ carbon: Int64) -> CGEventFlags {
 /// is absent from the preferences (the system falls back to these too).
 private let kDefaultBindingLeft:  KeyBinding = (keycode: 123, mods: .maskControl)
 private let kDefaultBindingRight: KeyBinding = (keycode: 124, mods: .maskControl)
+private let kDefaultBindingMissionControl: KeyBinding = (keycode: 126, mods: .maskControl)
 
 // MARK: - Hotkey Parsing
 
@@ -122,9 +127,9 @@ private func readHotkey(from hotkeys: NSDictionary, key: String) -> HotkeyState 
 
 // MARK: - Public Interface
 
-/// Reads the user's configured space-switch shortcuts from macOS system
-/// preferences and updates the global bindings (`gBindingLeft`,
-/// `gBindingRight`, `gSpaceKeys`).
+/// Reads the user's configured space-switch and Mission Control shortcuts from
+/// macOS system preferences and updates the global bindings (`gBindingLeft`,
+/// `gBindingRight`, `gSpaceKeys`, `gBindingMissionControl`).
 ///
 /// Every global is reset on each call, so this can also *reload* after
 /// the user edits shortcuts in System Settings: disabled hotkeys become
@@ -142,9 +147,10 @@ func loadSpaceSwitchShortcuts() {
         "AppleSymbolicHotKeys" as CFString,
         "com.apple.symbolichotkeys" as CFString
     ) as? NSDictionary else {
-        gBindingLeft  = kDefaultBindingLeft
-        gBindingRight = kDefaultBindingRight
-        gSpaceKeys    = Array(repeating: nil, count: 10)
+        gBindingLeft           = kDefaultBindingLeft
+        gBindingRight          = kDefaultBindingRight
+        gBindingMissionControl = kDefaultBindingMissionControl
+        gSpaceKeys             = Array(repeating: nil, count: 10)
         return
     }
 
@@ -159,6 +165,9 @@ func loadSpaceSwitchShortcuts() {
 
     gBindingLeft  = binding(for: kHotkeyMoveLeftSpace,  default: kDefaultBindingLeft)
     gBindingRight = binding(for: kHotkeyMoveRightSpace, default: kDefaultBindingRight)
+
+    gBindingMissionControl = binding(for: kHotkeyMissionControl,
+                                     default: kDefaultBindingMissionControl)
 
     // Hotkeys 118..127 = "Switch to Desktop 1".."Switch to Desktop 10".
     // These have no enabled-by-default system binding, and bare number
