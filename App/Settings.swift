@@ -1041,15 +1041,15 @@ final class FeaturesPaneController: SettingsPaneViewController {
             settingsRow(label: L("settings.features.instantTrackpadSwipe"),
                         control: trackpadSwipeControl),
         ])
+        // The cycle shortcut is purely optional, so it stands on its own
+        // rather than reading as part of either neighbouring group
+        let cycleGroup = groupBox([cycleShortcutRow])
         let speedGroup = groupBox([
             settingsRow(label: L("settings.features.transitionSpeed"),
                         control: makeSpeedControl()),
         ])
-        // The cycle shortcut is purely optional, so it stands on its own below
-        // the speed group rather than reading as part of it
-        let cycleGroup = groupBox([cycleShortcutRow])
         updateCycleShortcutAvailability()
-        return [togglesGroup, speedGroup, cycleGroup]
+        return [togglesGroup, cycleGroup, speedGroup]
     }
 
     override func syncFromGlobals() {

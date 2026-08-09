@@ -496,11 +496,11 @@ SettingsWindowController (singleton, NSWindowDelegate)
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
        │    + Launch at Login (SMAppService)
        ├─ FeaturesPaneController — three groups: Instant switch + Auto-follow +
-       │    Instant trackpad swipe toggles, then Transition speed slider
-       │    (5 ticks, snapping: Normal = native macOS animation / Fast / Faster /
-       │    Fastest / right end cap = "Instant", the default), then a group of
-       │    its own for the optional "Cycle spaces shortcut" recorder + enable
-       │    switch
+       │    Instant trackpad swipe toggles, then a group of its own for the
+       │    optional "Cycle spaces shortcut" recorder + enable switch, then
+       │    Transition speed slider (5 ticks, snapping: Normal = native macOS
+       │    animation / Fast / Faster / Fastest / right end cap = "Instant",
+       │    the default)
        ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
        │    autohide-time-modifier, killall Dock) + Show menu bar icon toggle
        │    (statusItem.isVisible; when hidden, relaunching the app reopens
