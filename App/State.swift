@@ -2,9 +2,10 @@
  * State.swift — Global runtime state and persistence
  *
  * All mutable runtime state lives here as module-level globals.
- * This is intentional: the app is a single-process menu bar utility
- * with no concurrency beyond the main thread, so global state is
- * simpler and more appropriate than a singleton class.
+ * This is intentional: the app is a single-process menu bar utility, so
+ * global state is simpler and more appropriate than a singleton class.
+ * State is main-thread-owned unless its declaration documents a dedicated
+ * serial queue (the Mission Control animator is the only exception).
  *
  * Persisted values are backed by UserDefaults under the "spacerabbit." prefix.
  */
@@ -19,10 +20,9 @@ import Foundation
 /// and re-enabled automatically if macOS disables it.
 var gTap: CFMachPort?
 
-/// The swipe-intercept CGEvent tap (Feature 3). Unlike `gTap`, this one is
-/// created and torn down on demand: it only exists while both the master
-/// switch and the trackpad-swipe feature are enabled (see `updateSwipeTap()`
-/// in SwipeIntercept.swift).
+/// The gesture-intercept CGEvent tap. Unlike `gTap`, this one is created and
+/// torn down on demand: it only exists while the master switch and at least
+/// one gesture-interception feature are enabled (see `updateSwipeTap()`).
 var gSwipeTap: CFMachPort?
 
 /// Run loop source backing `gSwipeTap`, kept so the source can be removed
@@ -54,13 +54,32 @@ var gCycleShortcutEnabled: Bool = false
 /// purely additive features above. Only effective when `gEnabled` is `true`.
 var gTrackpadSwipeEnabled: Bool = false
 
-/// Space-switch transition speed as a slider tick position (0.0–1.0 in
-/// steps of 0.25). 1.0 (the end cap) means instant — no animation at all.
+/// Optional Mission Control transition interception. Replaces upward entry and
+/// downward dismissal with vertical DockSwipes governed by the shared
+/// transition-speed control. Off by default because it swallows physical
+/// gestures and relies on private event fields. Independent from Feature 3.
+var gInstantMissionControlEnabled: Bool = false
+
+/// Global transition speed as a slider tick position (0.0–1.0 in steps of
+/// 0.25), shared by keyboard Space switches, app auto-follow, physical Space
+/// swipes, and Mission Control entry/dismissal. 1.0 (the end cap) means
+/// instant — no animation at all.
 /// 0.0 ("Normal") means macOS's native animation: Space Rabbit posts no
 /// gestures and lets the OS switch on its own (see `isNativeSwitchSpeed()`).
-/// The ticks in between post gestures at increasing animated velocities
-/// (see `currentSwitchVelocity()`).
+/// The ticks in between post progressively faster animated gestures. Horizontal
+/// switches use increasing terminal velocities (`currentSwitchVelocity()`),
+/// while Mission Control uses equivalent timed progress durations.
 var gSwitchSpeed: Double = 1.0
+
+/// Clamps and snaps an externally supplied transition speed to one of the
+/// slider's five supported tick values. Corrupt or non-finite preferences use
+/// the safe default (Instant) instead of leaking invalid timing values into
+/// gesture construction.
+func normalizedSwitchSpeed(_ value: Double) -> Double {
+    guard value.isFinite else { return 1.0 }
+    let clamped = min(max(value, 0), 1)
+    return (clamped * 4).rounded() / 4
+}
 
 // MARK: - Space Switch Timing
 
@@ -93,9 +112,10 @@ var gAutoFollowTargetSpace: CGSSpaceID = 0
 
 // MARK: - Swipe Intercept State
 //
-// Tracking state for the swipe-intercept tap (Feature 3). One physical
-// swipe produces a Began → Changed… → Ended/Cancelled event sequence;
-// these flags carry the decision "we own this gesture" across it.
+// Tracking state for the shared gesture-intercept tap. One physical swipe
+// produces a Began → Changed… → Ended/Cancelled event sequence; these
+// values carry an unresolved prefix or the decision "we own this gesture"
+// across it.
 // Reset together via resetSwipeIntercept() in SwipeIntercept.swift.
 
 /// Whether a real trackpad dock swipe is currently being intercepted
@@ -105,6 +125,46 @@ var gSwipeTracking: Bool = false
 /// Whether the intercepted swipe already fired its instant switch
 /// (fires once per gesture, on the first Changed with non-zero progress).
 var gSwipeFired: Bool = false
+
+/// Whether a Mission Control entry/dismissal swipe has been replaced and the
+/// rest of its physical event sequence must be swallowed.
+var gMissionControlSwipeTracking: Bool = false
+
+/// A vertical gesture prefix held until the first non-zero progress sample
+/// identifies the direction. Copied events are replayed through the tap proxy
+/// when Space Rabbit does not claim the gesture.
+var gPendingMissionControlEvents: [CGEvent] = []
+
+/// Exact overview state captured with the pending vertical Began. The live
+/// state may already be transitioning by the time Changed reveals direction.
+var gPendingMissionControlOverviewState: DockOverviewState?
+
+// MARK: - Mission Control Animation State
+
+/// A fully constructed terminal pair retained before an animated gesture
+/// begins. If constructing a later sample fails, posting this pair guarantees
+/// that the Dock never receives an unterminated synthetic gesture.
+struct MissionControlTerminalEvents {
+    let changed: CGEvent
+    let ended: CGEvent
+}
+
+/// Queue-owned state for the one Mission Control animation that may be active.
+/// The fallback terminal pair is also used when a newer physical gesture
+/// interrupts this animation.
+struct MissionControlAnimationState {
+    let id: UInt64
+    let direction: Int
+    let augmented: Bool
+    let fallbackTerminal: MissionControlTerminalEvents
+}
+
+/// These two globals are accessed only on
+/// `kMissionControlAnimationQueue` in SpaceSwitching.swift. Keeping them here
+/// preserves the repository's single state-module convention while making the
+/// queue-ownership exception explicit.
+var gMissionControlAnimation: MissionControlAnimationState?
+var gMissionControlAnimationID: UInt64 = 0
 
 // MARK: - Statistics
 
@@ -289,6 +349,7 @@ enum Defaults {
     /// purpose — the feature was renamed to "Instant Trackpad Swipe", and
     /// renaming the key would silently reset the opt-in for existing users.
     static let trackpadSwipe    = "spacerabbit.threeFingerSwipe"
+    static let instantMissionControl  = "spacerabbit.instantMissionControl"
     static let cycleShortcutEnabled   = "spacerabbit.cycleShortcut.enabled"
     static let cycleShortcutKeycode   = "spacerabbit.cycleShortcut.keycode"
     static let cycleShortcutModifiers = "spacerabbit.cycleShortcut.modifiers"

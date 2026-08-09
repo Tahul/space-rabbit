@@ -148,10 +148,10 @@ guard let runLoopSource = CFMachPortCreateRunLoopSource(nil, tap, 0) else {
 CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)
 
-// Install the swipe-intercept tap (Feature 3) if the feature is enabled.
+// Install the shared gesture-intercept tap if either opt-in feature is enabled.
 // Must come after gMenu is created — it reads the persisted toggles.
 // Unlike the keyboard tap above, this one is torn down and re-created as
-// the feature is toggled, so a creation failure here is not fatal.
+// the gesture features are toggled, so a creation failure here is not fatal.
 updateSwipeTap()
 
 // MARK: - App Activation Observer (Auto-Follow)

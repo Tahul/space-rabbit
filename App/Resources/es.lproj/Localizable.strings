@@ -35,6 +35,7 @@
 /* Feature 3 toggle: replaces the animated trackpad swipe (3 or 4 fingers).
    No trailing glyph — the gesture it replaces has no keyboard shortcut. */
 "menu.instantTrackpadSwipe" = "Deslizamiento instantáneo en el trackpad";
+"menu.instantMissionControl" = "Mission Control instantáneo";
 
 /* Small grey section headings */
 "menu.section.configure" = "Configurar:";
@@ -88,6 +89,7 @@
 "settings.features.instantSpaceSwitch" = "Cambio de espacio instantáneo";
 "settings.features.instantAppSwitch" = "Cambio de app instantáneo";
 "settings.features.instantTrackpadSwipe" = "Deslizamiento instantáneo en el trackpad";
+"settings.features.instantMissionControl" = "Mission Control instantáneo";
 "settings.features.cycleSpaces" = "Atajo para recorrer espacios";
 "settings.features.cycleSpaces.normalWarning" = "Recorrer espacios no está disponible cuando la velocidad de transición está configurada como «Normal».";
 "settings.features.shortcut.recording" = "Pulsa una función rápida…";

@@ -6,7 +6,7 @@
  * the left selects one of five panes shown on the right:
  *
  *   Auto-Start — Launch at Login toggle (+ warning banner)
- *   Features   — Instant space switch, Auto-follow, Transition speed
+ *   Features   — Instant space switch, Auto-follow, gestures, Transition speed
  *   Advanced   — Dock instant-hide, menu bar icon visibility
  *   Updates    — Manual update check + manual-update notice
  *   About      — App icon, version, authors
@@ -979,26 +979,31 @@ final class AutoStartPaneController: SettingsPaneViewController {
 
 // MARK: - Features Pane
 
-/// The "Features" pane: instant space switch, auto-follow, configurable
-/// cycle shortcut, and transition speed.
+/// The "Features" pane: instant switching features, the configurable cycle
+/// shortcut, and transition speed.
 final class FeaturesPaneController: SettingsPaneViewController {
 
     override var paneTitle: String { SettingsPane.features.title }
 
-    private var instantSwitchControl: NSSwitch!
-    private var autoFollowControl:    NSSwitch!
-    private var trackpadSwipeControl: NSSwitch!
-    private var cycleShortcutControl: NSSwitch!
-    private var shortcutRecorder:     ShortcutRecorderButton!
-    private var cycleShortcutRow:     SettingsRowView!
-    private var speedSlider:          NSSlider!
-    private var speedValueLabel:      NSTextField!
-    private var speedBoltIcon:        NSImageView!
+    private var instantSwitchControl:  NSSwitch!
+    private var autoFollowControl:     NSSwitch!
+    private var trackpadSwipeControl:  NSSwitch!
+    private var missionControlControl: NSSwitch!
+    private var cycleShortcutControl:  NSSwitch!
+    private var shortcutRecorder:      ShortcutRecorderButton!
+    private var cycleShortcutRow:      SettingsRowView!
+    private var speedSlider:           NSSlider!
+    private var speedValueLabel:       NSTextField!
+    private var speedBoltIcon:         NSImageView!
 
     override func buildContent() -> [NSView] {
-        instantSwitchControl = makeSwitch(gInstantSwitchEnabled, #selector(toggleInstantSwitch))
-        autoFollowControl    = makeSwitch(gAutoFollowEnabled,    #selector(toggleAutoFollow))
-        trackpadSwipeControl = makeSwitch(gTrackpadSwipeEnabled, #selector(toggleTrackpadSwipe))
+        instantSwitchControl  = makeSwitch(gInstantSwitchEnabled, #selector(toggleInstantSwitch))
+        autoFollowControl     = makeSwitch(gAutoFollowEnabled,    #selector(toggleAutoFollow))
+        trackpadSwipeControl  = makeSwitch(gTrackpadSwipeEnabled, #selector(toggleTrackpadSwipe))
+        missionControlControl = makeSwitch(
+            gInstantMissionControlEnabled,
+            #selector(toggleInstantMissionControl)
+        )
         cycleShortcutControl = makeSwitch(
             gCycleShortcutEnabled,
             #selector(toggleCycleShortcut)
@@ -1040,6 +1045,9 @@ final class FeaturesPaneController: SettingsPaneViewController {
             rowDivider(),
             settingsRow(label: L("settings.features.instantTrackpadSwipe"),
                         control: trackpadSwipeControl),
+            rowDivider(),
+            settingsRow(label: L("settings.features.instantMissionControl"),
+                        control: missionControlControl),
         ])
         // The cycle shortcut is purely optional, so it stands on its own
         // rather than reading as part of either neighbouring group
@@ -1058,6 +1066,7 @@ final class FeaturesPaneController: SettingsPaneViewController {
         instantSwitchControl.state    = gInstantSwitchEnabled    ? .on : .off
         autoFollowControl.state       = gAutoFollowEnabled       ? .on : .off
         trackpadSwipeControl.state    = gTrackpadSwipeEnabled    ? .on : .off
+        missionControlControl.state   = gInstantMissionControlEnabled ? .on : .off
         cycleShortcutControl.state    = gCycleShortcutEnabled    ? .on : .off
         shortcutRecorder.setShortcut(gCycleShortcut)
         speedSlider.doubleValue       = gSwitchSpeed
@@ -1250,10 +1259,20 @@ final class FeaturesPaneController: SettingsPaneViewController {
         gMenu?.syncMenuItems()
     }
 
+    @objc private func toggleInstantMissionControl() {
+        gInstantMissionControlEnabled = missionControlControl.state == .on
+        UserDefaults.standard.set(gInstantMissionControlEnabled,
+                                  forKey: Defaults.instantMissionControl)
+        updateSwipeTap()
+        gMenu?.syncMenuItems()
+    }
+
     @objc private func speedChanged() {
-        gSwitchSpeed = speedSlider.doubleValue
+        gSwitchSpeed = normalizedSwitchSpeed(speedSlider.doubleValue)
+        speedSlider.doubleValue = gSwitchSpeed
         UserDefaults.standard.set(gSwitchSpeed, forKey: Defaults.switchSpeed)
         updateSpeedDisplay()
+        updateSwipeTap()
         updateCycleShortcutAvailability(resize: true)
     }
 }
