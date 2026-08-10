@@ -54,6 +54,100 @@ private var gMissionControlActiveKeycode: Int64?
 /// DockSwipe of its own — Dock runs its animated transition internally.
 private let kMissionControlKeycode: Int64 = 160
 
+// MARK: - Primary Tap Lifecycle
+
+/// Creates the session-level keyDown tap, attaches it to the main run loop
+/// and enables it. Stores the tap and its source in `gTap` / `gTapSource`.
+///
+/// Called once at startup (main.swift, where a failure is fatal) and again
+/// by `reviveKeyboardTapsIfNeeded()` when the tap has to be rebuilt.
+///
+/// - Returns: `false` when the tap could not be created (e.g. Accessibility
+///   permission missing or revoked).
+func installEventTap() -> Bool {
+    let keyDownMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+    guard let primary = makeKeyboardTap(mask: keyDownMask) else { return false }
+
+    CGEvent.tapEnable(tap: primary.tap, enable: true)
+    gTap       = primary.tap
+    gTapSource = primary.source
+    return true
+}
+
+/// Brings dead keyboard taps back to life after system sleep or screen lock.
+///
+/// The self-re-enable in `eventTapCallback` only works while the callback is
+/// still being invoked: macOS delivers `tapDisabledByTimeout` /
+/// `tapDisabledByUserInput` *through the tap itself*. A tap disabled — or its
+/// Mach port invalidated outright — while the process is suspended around
+/// sleep or lock never receives that notice and stays dead until relaunch.
+/// Runs from the wake/unlock observers and the periodic flush timer in
+/// main.swift; a healthy tap set makes this a cheap no-op.
+func reviveKeyboardTapsIfNeeded() {
+    // Primary keyDown tap: always-on, so any disable found here is a system
+    // disable that the callback never got to see.
+    if let tap = gTap, CFMachPortIsValid(tap) {
+        if !CGEvent.tapIsEnabled(tap: tap) {
+            fputs("Space Rabbit: keyboard tap was disabled — re-enabling after wake/unlock\n", stderr)
+            resetKeyTracking()
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+    } else {
+        // Port invalidated — its run loop source died with it; rebuild.
+        fputs("Space Rabbit: keyboard tap port died — rebuilding after wake/unlock\n", stderr)
+        resetKeyTracking()
+        if let source = gTapSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        gTap       = nil
+        gTapSource = nil
+        if !installEventTap() {
+            fputs("Space Rabbit: failed to rebuild keyboard tap\n", stderr)
+        }
+    }
+
+    // Auxiliary taps. Rebuild both when either port died; otherwise refresh
+    // the cached enabled flags from reality — a system disable during the
+    // suspension leaves them stale, and setKeyboardTap only pushes state to
+    // the window server on a flag change, so a stale flag pins the tap dead.
+    let claimedPortDied  = gClaimedKeyTap.map { !CFMachPortIsValid($0) } ?? false
+    let modifierPortDied = gModifierKeyTap.map { !CFMachPortIsValid($0) } ?? false
+
+    if claimedPortDied || modifierPortDied {
+        fputs("Space Rabbit: auxiliary keyboard tap port died — rebuilding after wake/unlock\n", stderr)
+        resetKeyTracking()
+        for tap in [gClaimedKeyTap, gModifierKeyTap] {
+            if let tap, CFMachPortIsValid(tap) { CGEvent.tapEnable(tap: tap, enable: false) }
+        }
+        for source in [gClaimedKeyTapSource, gModifierKeyTapSource] {
+            if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        }
+        gClaimedKeyTap         = nil
+        gClaimedKeyTapSource   = nil
+        gClaimedKeyTapEnabled  = false
+        gModifierKeyTap        = nil
+        gModifierKeyTapSource  = nil
+        gModifierKeyTapEnabled = false
+        installAuxiliaryKeyboardTaps()
+    } else {
+        var cacheWasStale = false
+        if let tap = gClaimedKeyTap {
+            let actual = CGEvent.tapIsEnabled(tap: tap)
+            if actual != gClaimedKeyTapEnabled { gClaimedKeyTapEnabled = actual; cacheWasStale = true }
+        }
+        if let tap = gModifierKeyTap {
+            let actual = CGEvent.tapIsEnabled(tap: tap)
+            if actual != gModifierKeyTapEnabled { gModifierKeyTapEnabled = actual; cacheWasStale = true }
+        }
+        if cacheWasStale {
+            // Any claim from before the suspension is stale; drop it so the
+            // sync below resolves each tap to the state it should be in now.
+            resetKeyTracking()
+            syncKeyboardAuxiliaryTaps()
+        }
+    }
+}
+
 // MARK: - Auxiliary Tap Lifecycle
 
 /// Creates the two on-demand companions to `gTap`, both left disabled.
