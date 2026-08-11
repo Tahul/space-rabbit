@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/ba73cabe-2443-4cf2-87aa-f1f7841e6c21
 
 - Download Space Rabbit from our [website](https://space-rabbit.app) (_recommended_).
 - Download the latest release from [GitHub Releases](https://github.com/Tahul/space-rabbit/releases) (_same outcome as downloading from our website_).
-- Install the latest version from [Homebrew](https://brew.sh): `brew install space-rabbit` (_advanced_).
+- Install the latest version from [Homebrew](https://brew.sh): `brew install space-rabbit` (_more technical_).
 
 👉 **Grant Accessibility access when prompted** (System Settings → Privacy & Security → Accessibility).
 
