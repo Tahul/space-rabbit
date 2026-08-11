@@ -1268,8 +1268,8 @@ func postMissionControlTransition(proxy: CGEventTapProxy,
                             direction: direction)
 }
 
-/// Posts a controlled horizontal gesture that moves the Mission Control
-/// overview's space carousel.
+/// Posts a controlled horizontal gesture that moves an overview's space
+/// carousel — Mission Control's or App Exposé's, which behave alike here.
 ///
 /// The desktop's horizontal recipe (`postSwitchGesture`) cannot be reused here:
 /// the overview evaluates a fully-committed boundary jump against its own state,
