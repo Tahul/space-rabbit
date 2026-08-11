@@ -1248,11 +1248,18 @@ private func finishAnimatedMissionControlTransitionIfNeeded(
     }
 }
 
-/// Posts a complete controlled gesture that enters or dismisses Mission Control.
+/// Posts a complete controlled gesture along the vertical axis Mission Control
+/// and App Exposé share.
+///
+/// The sign is the gesture, not the destination: what `+1` reaches depends on
+/// what is on screen when it lands, which is why every caller resolves the
+/// overview state first.
 ///
 /// - Parameters:
 ///   - proxy: The active swipe-intercept tap proxy.
-///   - direction: `+1` to enter Mission Control, `-1` to dismiss it.
+///   - direction: `+1` for an upward swipe (enters Mission Control from the
+///     desktop, dismisses App Exposé), `-1` for a downward one (enters App
+///     Exposé from the desktop, dismisses Mission Control).
 /// - Returns: `true` after Instant was posted or an animated sequence was
 ///            successfully started; otherwise `false` without claiming it.
 func postMissionControlTransition(proxy: CGEventTapProxy,

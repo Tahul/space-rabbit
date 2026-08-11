@@ -20,10 +20,11 @@
  *
  * Horizontal direction follows the existing flow. A vertical Began does not
  * carry direction, so it is copied and held until Changed supplies progress.
- * The overview state captured at Began disambiguates desktop→up (Mission
- * Control entry) from overview→down (dismissal). App Exposé entry, opposite
- * directions, cancellations, unsupported paths, and failures replay the held
- * prefix before passing the current event through to native macOS.
+ * The overview state captured at Began then says what that direction means:
+ * from the desktop, up enters Mission Control and down enters App Exposé;
+ * from either overview, the opposite direction dismisses it. Directions that
+ * do nothing natively, cancellations, unsupported paths, and failures replay
+ * the held prefix before passing the current event through to native macOS.
  *
  * Because Space Rabbit's own synthetic gestures are posted into the same
  * session tap, they would loop right back into this tap. Every event we
@@ -69,6 +70,24 @@ let kGestureMotionHorizontal: Int64 = 1
 /// Value identifying the vertical DockSwipe family used by Mission Control
 /// and App Exposé.
 let kGestureMotionVertical: Int64 = 2
+
+/// Smallest `kCGEventGestureSwipeProgress` magnitude whose sign is trusted to
+/// mean the user's intended direction.
+///
+/// Progress is reported as the gesture's absolute travel, so the samples right
+/// after touchdown are near zero and their sign is whichever way the fingers
+/// happened to drift first. Committing on the first non-zero sample therefore
+/// reads a wobble as intent: on the vertical path a downward swipe whose
+/// fingers rocked up by a thousandth resolves as Mission Control entry instead
+/// of App Exposé (issue #43), and on the horizontal path the same wobble
+/// switches to the wrong space. Both are irreversible once posted, because the
+/// physical gesture has already been swallowed.
+///
+/// A real swipe crosses this in a few milliseconds of finger travel, so the
+/// wait is not perceptible; a gesture that never crosses it stands down and is
+/// replayed to macOS, which is the correct answer for a gesture that carried no
+/// direction.
+private let kGestureDirectionThreshold: Double = 0.05
 
 // MARK: - Tap Lifecycle
 
@@ -223,24 +242,37 @@ private func finishMissionControlInterception() {
     DispatchQueue.main.async { updateSwipeTap() }
 }
 
-/// Resolves a non-zero physical vertical sign against the overview state that
-/// was captured at Began. Only desktop→up and overview→down are owned; App
-/// Exposé entry and any opposite-direction gesture remain native.
+/// Resolves a physical vertical sign against the overview state that was
+/// captured at Began.
+///
+/// Both vertical overviews the Dock drives from this gesture are owned, each
+/// in the one direction that means something on screen:
+///
+///   - desktop → up enters Mission Control, down enters App Exposé
+///   - Mission Control → down dismisses it
+///   - App Exposé → up dismisses it
+///
+/// The remaining two combinations do nothing natively (there is no "further
+/// up" from Mission Control, nor "further down" from App Exposé), so they stay
+/// native rather than being replaced with a transition macOS would not have
+/// performed.
 ///
 /// Physical vertical DockSwipes use screen-coordinate signs on macOS 26:
-/// finger-up is negative and finger-down is positive. Synthetic Mission
-/// Control posting uses the opposite convention, so this conversion must stay
-/// separate from `postMissionControlTransition`'s signed output.
+/// finger-up is negative and finger-down is positive. Synthetic vertical
+/// posting uses the opposite convention, so this conversion must stay separate
+/// from `postMissionControlTransition`'s signed output.
 private func pendingMissionControlDirection(forPhysicalSign sign: Double) -> Int? {
     guard sign != 0,
           let overviewState = gPendingMissionControlOverviewState
     else { return nil }
 
     let direction = sign < 0 ? 1 : -1
-    if direction > 0 {
-        return overviewState == .desktop ? direction : nil
+
+    switch overviewState {
+    case .desktop:        return direction
+    case .missionControl: return direction < 0 ? direction : nil
+    case .appExpose:      return direction > 0 ? direction : nil
     }
-    return overviewState == .missionControl ? direction : nil
 }
 
 /// Removes every ordinary progress/velocity component from a physical Ended
@@ -400,9 +432,9 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     }
 
     // Vertical Began is directionless on supported macOS releases. Hold it
-    // only after positively identifying desktop versus overview state, before
-    // Dock can animate. Changed resolves desktop→up as entry and overview→down
-    // as dismissal; App Exposé entry and opposite directions remain native.
+    // only after positively identifying which overview state is on screen,
+    // before Dock can animate. Changed then resolves the direction into a
+    // Mission Control or App Exposé transition, or stands the gesture down.
     if gInstantMissionControlEnabled,
        !isNativeSwitchSpeed(),
        supportsInstantMissionControlInterception(),
@@ -416,8 +448,11 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                 replayPendingMissionControlEvents(proxy: proxy)
             }
 
+            // Every state this resolves to is drivable in at least one
+            // direction; Show Desktop and unreadable private state come back
+            // nil and stay native. Which direction is owned is settled later,
+            // once Changed supplies one.
             guard let overviewState = currentDockOverviewState(),
-                  overviewState == .desktop || overviewState == .missionControl,
                   let beganCopy = event.copy() else { return passthrough }
 
             gPendingMissionControlEvents = [beganCopy]
@@ -428,7 +463,8 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         if !gPendingMissionControlEvents.isEmpty {
             let progress = event.getDoubleValueField(kCGEventGestureSwipeProgress)
 
-            if phase == kCGSGesturePhaseChanged, progress != 0 {
+            if phase == kCGSGesturePhaseChanged,
+               abs(progress) >= kGestureDirectionThreshold {
                 if let direction = pendingMissionControlDirection(forPhysicalSign: progress),
                    postMissionControlTransition(proxy: proxy,
                                                 direction: direction) {
@@ -444,8 +480,13 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
             }
 
             if phase == kCGSGesturePhaseEnded {
+                // Travel that never crossed the trust threshold says nothing
+                // about intent, so a flick short enough to end there falls back
+                // to its terminal velocity exactly as one carrying no progress
+                // at all does.
                 let velocity = event.getDoubleValueField(kCGEventGestureSwipeVelocityX)
-                let sign = progress != 0 ? progress : velocity
+                let sign = abs(progress) >= kGestureDirectionThreshold
+                    ? progress : velocity
 
                 if let direction = pendingMissionControlDirection(forPhysicalSign: sign),
                    postMissionControlTransition(proxy: proxy,
@@ -536,10 +577,11 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         }
 
         if phase == kCGSGesturePhaseChanged, gSwipeTracking {
-            // Fire once, on the first sample that reveals the direction
+            // Fire once, on the first sample whose travel is far enough for
+            // its sign to be the user's intent rather than touchdown wobble.
             if !gSwipeFired {
                 let progress = event.getDoubleValueField(kCGEventGestureSwipeProgress)
-                if progress != 0 {
+                if abs(progress) >= kGestureDirectionThreshold {
                     gSwipeFired = true
                     performSwipeSwitch(proxy: proxy, isRight: isRightSwipe(progress))
                 }

@@ -226,10 +226,15 @@ private func isMissionControlTrigger(keycode: Int64, flags: CGEventFlags) -> Boo
 /// keyboard follows the transition-speed slider like every other path.
 ///
 /// Pressing the key is a toggle, so the direction comes from what is on
-/// screen: the desktop enters, Mission Control dismisses. App Exposé, Show
-/// Desktop and unreadable private state stay native — the same stand-down the
-/// vertical gesture path applies, and for the same reason (the overview owns
-/// input we cannot positively identify).
+/// screen: the desktop enters, Mission Control dismisses. Show Desktop and
+/// unreadable private state stay native.
+///
+/// App Exposé stays native here even though the vertical *gesture* path now
+/// drives it, because the key means something different inside it: an upward
+/// swipe from App Exposé dismisses it, while the Mission Control key from App
+/// Exposé moves across to Mission Control. There is no vertical transition
+/// that reproduces that, so the toggle's direction inference does not hold and
+/// the key is passed through.
 ///
 /// Only called once a trigger has matched: the state lookup scans the window
 /// list, too heavy to run for every keystroke passing through the tap.

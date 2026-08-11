@@ -213,11 +213,12 @@ gesture path.
 
 ### Optional Instant Mission Control (`SwipeIntercept.swift`, `EventTap.swift`)
 
-Off by default and independent from Instant Trackpad Swipe. Upward entry,
-downward dismissal, and horizontal space navigation *inside* the overview all
-follow the shared transition-speed slider: Normal leaves the physical gesture
-native, Fast/Faster/Fastest use progressively shorter timed progress streams,
-and Instant removes the transition.
+Off by default and independent from Instant Trackpad Swipe. Both vertical
+overviews the trackpad reaches — Mission Control and **App Exposé** — plus
+horizontal space navigation *inside* the Mission Control overview all follow the
+shared transition-speed slider: Normal leaves the physical gesture native,
+Fast/Faster/Fastest use progressively shorter timed progress streams, and
+Instant removes the transition.
 
 **Keyboard triggers.** The same toggle also owns the two keyboard ways into
 Mission Control, handled by the *keyboard* tap in `EventTap.swift`, not the
@@ -238,17 +239,35 @@ Pressing it produces no DockSwipe of its own — Dock runs its animated
 transition internally — which is why the key event itself has to be
 intercepted.
 
-Mission Control uses vertical DockSwipes (`motion = 2`). Because physical Began
-does not reliably carry direction, the tap copies and holds Began (plus companion
-events) only when the Dock state can positively identify the desktop or Mission
-Control itself. The first non-zero Changed progress resolves the gesture. Real
-vertical trackpad input uses screen-coordinate signs on macOS 26: negative from
-the desktop enters Mission Control; positive from an overview dismisses it. That
-physical-input convention is intentionally converted before posting because the
-synthetic vertical DockSwipe uses the opposite signs (`+1` entry, `-1` dismissal).
-App Exposé, Show Desktop, opposite directions, cancellation, copy failure, or
-synthetic construction failure replays the held prefix through the tap proxy before
-the current event continues natively. Unavailable private state also stays native.
+Mission Control and App Exposé share one vertical DockSwipe axis
+(`motion = 2`) — the same gesture reaches both, and only the direction and the
+state it lands in tell them apart. Because physical Began does not reliably
+carry direction, the tap copies and holds Began (plus companion events) once the
+Dock state resolves to any of `.desktop` / `.missionControl` / `.appExpose`; the
+direction is settled later, from Changed progress.
+
+Real vertical trackpad input uses screen-coordinate signs on macOS 26:
+finger-up is negative, finger-down positive. That physical-input convention is
+inverted before posting, because the synthetic vertical DockSwipe reads `+1` as
+up and `-1` as down. `pendingMissionControlDirection` owns the four combinations
+that do something on screen — desktop→up enters Mission Control, desktop→down
+enters App Exposé, and either overview is dismissed by the opposite direction —
+and stands down on the two that do nothing natively (no "further up" from
+Mission Control, no "further down" from App Exposé). The sign is the *gesture*,
+not the destination: `+1` enters from the desktop but dismisses from App Exposé.
+Show Desktop, cancellation, copy failure, unavailable private state, or
+synthetic construction failure replays the held prefix through the tap proxy
+before the current event continues natively.
+
+**Direction is not read from the first non-zero progress sample**
+(`kGestureDirectionThreshold`, issue #43). Progress reports absolute gesture
+travel, so samples just after touchdown are near zero and signed by whichever
+way the fingers happened to drift — a downward swipe that rocked up by a
+thousandth resolved as Mission Control entry. Both axes therefore wait for
+`|progress| >= 0.05` before committing, which a real swipe crosses within a few
+milliseconds of travel. Do not lower this back toward zero to shave latency: the
+physical gesture is already swallowed by then, so a misread sign is not
+recoverable.
 
 Both directions use the segmented vertical sequence from
 [FasterSwiper](https://github.com/mgbowen/FasterSwiper). Fast/Faster/Fastest post
@@ -363,10 +382,13 @@ once an action is about to happen, never per event:
 - **Instant Mission Control** — before holding vertical Began, and (for the
   keyboard triggers) only after the Mission Control key or hotkey has matched.
   An absent layer-18 marker identifies the desktop. When a marker exists,
-  `SLSCopySpaces` and `SLSSpaceCopyName` must identify the `mission-control` OS
-  space; App Exposé (`show-front`), Show Desktop, conflicts, and failed
-  private-state reads remain native. The keyboard path needs the same answer for
-  a second reason: the press is a toggle, so the state *is* its direction.
+  `SLSCopySpaces` and `SLSSpaceCopyName` must identify the OS space as either
+  `mission-control` or `show-front` (App Exposé) — the vertical gesture drives
+  both; Show Desktop, conflicts, and failed private-state reads remain native.
+  The keyboard path needs the same answer for a second reason: the press is a
+  toggle, so the state *is* its direction — and it keeps standing down on App
+  Exposé, where the Mission Control key crosses to Mission Control rather than
+  dismissing, which no vertical transition reproduces.
 - **Feature 2** — after the speed and suppression-window guards, before the
   window-to-space lookups.
 
@@ -546,6 +568,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the Mission Control marker |
 | `kCurrentOSSpacesMask` | SpaceSwitching | `(1 << 0) \| (1 << 3)` | Private mask used to query the active Dock-managed overview space |
 | `kGestureMotionHorizontal` / `kGestureMotionVertical` | SwipeIntercept | `1` / `2` (Int64) | `kCGEventGestureSwipeMotion` values for Space and Mission Control swipes |
+| `kGestureDirectionThreshold` | SwipeIntercept | `0.05` | Smallest `kCGEventGestureSwipeProgress` magnitude whose sign is trusted as the user's intended direction, on both axes. Below it the sample is touchdown wobble (issue #43) |
 | `kSyntheticGestureMarker` | SwipeIntercept | `0x53504152` ('SPAR') | Stamped into `.eventSourceUserData` on every gesture Space Rabbit posts, so the swipe tap passes its own events through |
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
 | `kCGEventTypeSystemDefined` | PrivateAPI | `14` (CGEventType) | `NX_SYSDEFINED`, which CoreGraphics exposes no named case for. In the keyboard tap's mask so media keys cancel a bare-Fn candidate |
@@ -1039,12 +1062,14 @@ local.env               — git-ignored; signing credentials
 - Trackpad swipe gestures animate unless the opt-in "Instant Trackpad Swipe"
   feature is enabled (they bypass the keyboard event tap; Feature 3 intercepts
   them with its own gesture tap).
-- Mission Control entry, dismissal, and horizontal space navigation inside the
-  overview remain native unless the independent opt-in "Instant Mission Control"
-  feature is enabled. They then follow the shared transition-speed slider;
-  unrelated in-overview gestures remain native. That toggle covers the trackpad
-  gesture, the dedicated Mission Control key, and the "Mission Control" system
-  hotkey — but not App Exposé or Show Desktop, by either trigger.
+- Mission Control entry and dismissal, App Exposé entry and dismissal, and
+  horizontal space navigation inside the Mission Control overview remain native
+  unless the independent opt-in "Instant Mission Control" feature is enabled.
+  They then follow the shared transition-speed slider; unrelated in-overview
+  gestures remain native. That toggle covers the trackpad gesture for all of
+  them, plus the dedicated Mission Control key and the "Mission Control" system
+  hotkey — but not Show Desktop by any trigger, and not App Exposé by keyboard
+  (only by trackpad; see the keyboard-trigger note above).
 - Inside the Mission Control overview, only the one-step "Move left/right a
   space" bindings are converted to the segmented carousel stream. "Switch to
   Desktop N" and the cycle shortcut are multi-step and still stand down to
