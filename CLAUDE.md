@@ -34,12 +34,13 @@ Exact initialization order — getting this wrong causes subtle bugs:
 5. `gMenu = SwoopMenu()` — creates status item (hidden via `statusItem.isVisible` if so configured), loads persisted state from UserDefaults into globals
 6. `checkForUpdatesAutomatically()` — owns its own 5-second delay, and applies it only when it is actually going to make a network request (a throttled launch restores the update banner from UserDefaults immediately). Must run after step 5, which creates `gMenu`, the banner's host
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
-8. **Event tap creation** — `gTap` listens for `keyDown` only, then `CFMachPortCreateRunLoopSource` → `CFRunLoopAddSource`. `installAuxiliaryKeyboardTaps()` immediately adds the two on-demand companions carrying the other three event forms the cycle shortcut (including bare Fn) and the system Space bindings need — see "Three keyboard taps" under Feature 1. Failure of the primary tap is fatal; failure of an auxiliary one is logged and tolerated
+8. **Event tap creation** — `installEventTap()` (EventTap.swift) creates `gTap` (listens for `keyDown` only, source stored in `gTapSource`). `installAuxiliaryKeyboardTaps()` immediately adds the two on-demand companions carrying the other three event forms the cycle shortcut (including bare Fn) and the system Space bindings need — see "Three keyboard taps" under Feature 1. Failure of the primary tap is fatal; failure of an auxiliary one is logged and tolerated
 9. **Gesture-intercept tap** — `updateSwipeTap()` installs the shared tap pair if either persisted gesture toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
 10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
-11. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
-12. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
-13. `app.run()` — enter run loop
+11. **Tap revival observers** — `NSWorkspace.didWakeNotification` + distributed `com.apple.screenIsUnlocked` → `reviveKeyboardTapsIfNeeded()` + `reviveSwipeTapIfNeeded()` (see "Event tap lifetime" under Feature 1); the step 7 timer runs the same checks as a safety net
+12. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
+13. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
+14. `app.run()` — enter run loop
 
 ## Core features
 
@@ -53,7 +54,7 @@ A `CGEvent` tap at `.cgSessionEventTap` / `.headInsertEventTap` listens for `key
 3. The Dock handles the gesture at the selected speed (with no animation at
    the Instant tick).
 
-The tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to stay alive.
+**Event tap lifetime:** the tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to stay alive — but those notices arrive *through the tap callback itself*, so a tap disabled (or its Mach port invalidated) while the process is suspended around system sleep or screen lock never self-heals. `reviveKeyboardTapsIfNeeded()` (EventTap.swift) and `reviveSwipeTapIfNeeded()` (SwipeIntercept.swift) cover that hole for all five taps: re-enable a valid-but-disabled tap, rebuild on an invalidated Mach port, and refresh the cached `g*TapEnabled` flags of the on-demand taps (a stale cache pins them dead, because the sync helpers only push state on a flag change). They run on `NSWorkspace.didWakeNotification`, on the distributed `com.apple.screenIsUnlocked` notification, and from the 300 s flush timer as a safety net; each revival logs a diagnostic line to stderr.
 
 **Three keyboard taps.** The feature needs four event forms, but only `keyDown`
 can ever *match* a shortcut; the other three exist to close out a press that

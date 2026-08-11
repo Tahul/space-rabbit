@@ -149,6 +149,68 @@ func updateSwipeTap() {
     }
 }
 
+/// Brings dead gesture taps back to life after system sleep or screen lock.
+///
+/// Same failure mode as the keyboard taps (see `reviveKeyboardTapsIfNeeded()`
+/// in EventTap.swift): the self-re-enable in `swipeTapCallback` never runs
+/// when a tap is disabled — or its Mach port invalidated — while the process
+/// is suspended. `updateSwipeTap()` alone can't recover either: it no-ops
+/// while `gSwipeTap` is non-nil, even when that port is dead. Runs from the
+/// wake/unlock observers and the periodic flush timer in main.swift.
+func reviveSwipeTapIfNeeded() {
+    guard let tap = gSwipeTap else { return }  // features off — nothing installed
+
+    let envelopePortDied = gGestureEnvelopeTap.map { !CFMachPortIsValid($0) } ?? false
+
+    if !CFMachPortIsValid(tap) || envelopePortDied {
+        // A port was invalidated — its run loop source died with it. Clear
+        // out the corpses so updateSwipeTap() sees "not installed" and
+        // rebuilds the pair for the still-enabled features.
+        fputs("Space Rabbit: gesture tap port died — rebuilding after wake/unlock\n", stderr)
+        for deadTap in [gSwipeTap, gGestureEnvelopeTap] {
+            if let deadTap, CFMachPortIsValid(deadTap) { CGEvent.tapEnable(tap: deadTap, enable: false) }
+        }
+        for source in [gSwipeTapSource, gGestureEnvelopeTapSource] {
+            if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        }
+        gSwipeTap                  = nil
+        gSwipeTapSource            = nil
+        gGestureEnvelopeTap        = nil
+        gGestureEnvelopeTapSource  = nil
+        gGestureEnvelopeTapEnabled = false
+        resetSwipeIntercept()
+        updateSwipeTap()
+        return
+    }
+
+    // Ports valid — recover from a system disable delivered while suspended.
+    // The DockControl tap is enabled for as long as it is installed, so any
+    // disable found here is one the callback never saw.
+    if !CGEvent.tapIsEnabled(tap: tap) {
+        fputs("Space Rabbit: gesture tap was disabled — re-enabling after wake/unlock\n", stderr)
+        resetSwipeIntercept()
+        CGEvent.tapEnable(tap: tap, enable: true)
+        if let envelopeTap = gGestureEnvelopeTap {
+            gGestureEnvelopeTapEnabled = CGEvent.tapIsEnabled(tap: envelopeTap)
+            syncGestureEnvelopeTap()
+        }
+        return
+    }
+
+    // The envelope tap's cached flag can also go stale on its own (it is the
+    // only gesture tap enabled mid-gesture, exactly when a suspension would
+    // catch it). Refresh the cache and let the sync settle it — nothing is
+    // tracked after the reset, so a stuck-on tap gets switched off.
+    if let envelopeTap = gGestureEnvelopeTap {
+        let actual = CGEvent.tapIsEnabled(tap: envelopeTap)
+        if actual != gGestureEnvelopeTapEnabled {
+            gGestureEnvelopeTapEnabled = actual
+            resetSwipeIntercept()
+            syncGestureEnvelopeTap()
+        }
+    }
+}
+
 /// Creates one session tap listening for a single private gesture event type.
 ///
 /// - Parameter subtype: `kCGSEventGesture` or `kCGSEventDockControl` — which
