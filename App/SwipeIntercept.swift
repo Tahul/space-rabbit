@@ -12,8 +12,10 @@
  * progress sample, and re-posts it as an instant switch:
  *
  *   1. Began   — start tracking, swallow (the animated switch never starts)
- *   2. Changed — first non-zero progress reveals the direction; fire the
- *                instant switch once, keep swallowing
+ *   2. Changed — the first sample with enough travel reveals the direction and
+ *                fires the switch; later samples keep being read so that
+ *                reversing the fingers, without lifting them, undoes it (the
+ *                same take-it-back macOS allows on its own animated swipe)
  *   3. Ended   — fallback: if nothing fired yet (a very quick flick can
  *                skip Changed), use the final velocity's sign; reset
  *   4. Cancelled — reset without firing
@@ -24,7 +26,10 @@
  * from the desktop, up enters Mission Control and down enters App Exposé;
  * from either overview, the opposite direction dismisses it. Directions that
  * do nothing natively, cancellations, unsupported paths, and failures replay
- * the held prefix before passing the current event through to native macOS.
+ * the held prefix before passing the current event through to native macOS. A
+ * claimed vertical gesture is reversible on the same terms as a horizontal one:
+ * the inverse of whatever was posted always undoes it, because every posted
+ * direction toggles between the desktop and one overview.
  *
  * Because Space Rabbit's own synthetic gestures are posted into the same
  * session tap, they would loop right back into this tap. Every event we
@@ -88,6 +93,24 @@ let kGestureMotionVertical: Int64 = 2
 /// replayed to macOS, which is the correct answer for a gesture that carried no
 /// direction.
 private let kGestureDirectionThreshold: Double = 0.05
+
+/// How far the fingers must travel back from the furthest point of a still-open
+/// gesture before Space Rabbit undoes what that gesture already committed.
+///
+/// macOS lets an in-progress swipe be taken back without lifting the fingers:
+/// peek at the next space, reverse the motion, and land back where you started.
+/// Replacing the physical gesture with a single committed jump removed that,
+/// because every remaining sample of the swallowed gesture was ignored. Progress
+/// keeps reporting travel relative to touchdown for as long as the fingers stay
+/// down, so a reversal is recoverable — as the inverse transition, posted while
+/// the same gesture is still open.
+///
+/// It is measured from the extreme rather than from touchdown so it behaves the
+/// same for a short peek and a long swipe, and it is deliberately well above
+/// `kGestureDirectionThreshold`: the fingers naturally drift back a little as
+/// they settle or lift, and each threshold crossing is a real, visible
+/// transition rather than a wobble in an animation that has not committed yet.
+private let kGestureReversalThreshold: Double = 0.2
 
 // MARK: - Tap Lifecycle
 
@@ -283,10 +306,13 @@ private func syncGestureEnvelopeTap() {
 /// disable) — stale state from before the break must not leak into the
 /// next gesture.
 func resetSwipeIntercept() {
-    gSwipeTracking               = false
-    gSwipeFired                  = false
-    gSwipeInOverview             = false
-    gMissionControlSwipeTracking = false
+    gSwipeTracking                = false
+    gSwipeIntentDirection         = 0
+    gSwipeIntentProgress          = 0
+    gSwipeInOverview              = false
+    gMissionControlSwipeTracking  = false
+    gMissionControlIntentSign     = 0
+    gMissionControlIntentProgress = 0
     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
     gPendingMissionControlOverviewState = nil
 }
@@ -312,9 +338,21 @@ private func replayPendingMissionControlEvents(proxy: CGEventTapProxy) {
 /// current state, and a second copy of that condition would be free to
 /// drift out of sync with the real one and strand the tap.
 private func finishMissionControlInterception() {
-    gMissionControlSwipeTracking = false
+    gMissionControlSwipeTracking  = false
+    gMissionControlIntentSign     = 0
+    gMissionControlIntentProgress = 0
     gPendingMissionControlOverviewState = nil
     DispatchQueue.main.async { updateSwipeTap() }
+}
+
+/// Converts a physical vertical travel sign into the direction to post for it.
+///
+/// Physical vertical DockSwipes use screen-coordinate signs on macOS 26:
+/// finger-up is negative and finger-down is positive. Synthetic vertical
+/// posting uses the opposite convention, so this conversion must stay separate
+/// from `postMissionControlTransition`'s signed output.
+private func verticalDirection(forPhysicalSign sign: Double) -> Int {
+    sign < 0 ? 1 : -1
 }
 
 /// Resolves a physical vertical sign against the overview state that was
@@ -332,16 +370,16 @@ private func finishMissionControlInterception() {
 /// native rather than being replaced with a transition macOS would not have
 /// performed.
 ///
-/// Physical vertical DockSwipes use screen-coordinate signs on macOS 26:
-/// finger-up is negative and finger-down is positive. Synthetic vertical
-/// posting uses the opposite convention, so this conversion must stay separate
-/// from `postMissionControlTransition`'s signed output.
+/// This is the *opening* decision only. Once a direction has been posted, a
+/// reversal of the same gesture is resolved by
+/// `reverseMissionControlTransitionIfNeeded` without consulting the state
+/// again — the inverse of a posted direction always undoes it.
 private func pendingMissionControlDirection(forPhysicalSign sign: Double) -> Int? {
     guard sign != 0,
           let overviewState = gPendingMissionControlOverviewState
     else { return nil }
 
-    let direction = sign < 0 ? 1 : -1
+    let direction = verticalDirection(forPhysicalSign: sign)
 
     switch overviewState {
     case .desktop:        return direction
@@ -465,6 +503,20 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     if gMissionControlSwipeTracking {
         if subtype == kCGSEventDockControl {
             let phase = event.getIntegerValueField(kCGEventGesturePhase)
+
+            // The physical gesture is swallowed but still open, so its later
+            // samples remain the user's only way to take the transition back
+            // without lifting the fingers, exactly as macOS allows natively.
+            if phase == kCGSGesturePhaseChanged,
+               event.getIntegerValueField(kCGEventGestureSwipeMotion)
+                   == kGestureMotionVertical {
+                reverseMissionControlTransitionIfNeeded(
+                    proxy: proxy,
+                    progress: event.getDoubleValueField(kCGEventGestureSwipeProgress)
+                )
+                return nil
+            }
+
             if phase == kCGSGesturePhaseEnded || phase == kCGSGesturePhaseCancelled {
                 finishMissionControlInterception()
             }
@@ -546,6 +598,11 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                     gPendingMissionControlEvents.removeAll(keepingCapacity: true)
                     gPendingMissionControlOverviewState = nil
                     gMissionControlSwipeTracking = true
+                    // The fingers are still down, so this gesture can still be
+                    // taken back — remember what it did and how far it had
+                    // travelled when it did it.
+                    gMissionControlIntentSign     = progress > 0 ? 1 : -1
+                    gMissionControlIntentProgress = progress
                     gMenu?.recordSwitch()
                     return nil
                 }
@@ -608,9 +665,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         && supportsInstantMissionControlInterception()
 
     guard desktopSwipeEnabled || overviewSwipeEnabled else {
-        gSwipeTracking   = false
-        gSwipeFired      = false
-        gSwipeInOverview = false
+        endHorizontalSwipeTracking()
         return passthrough
     }
 
@@ -646,20 +701,34 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
                 gSwipeInOverview = false
             }
 
-            gSwipeTracking = true
-            gSwipeFired    = false
+            gSwipeTracking        = true
+            gSwipeIntentDirection = 0
+            gSwipeIntentProgress  = 0
             return nil
         }
 
         if phase == kCGSGesturePhaseChanged, gSwipeTracking {
-            // Fire once, on the first sample whose travel is far enough for
-            // its sign to be the user's intent rather than touchdown wobble.
-            if !gSwipeFired {
-                let progress = event.getDoubleValueField(kCGEventGestureSwipeProgress)
-                if abs(progress) >= kGestureDirectionThreshold {
-                    gSwipeFired = true
-                    performSwipeSwitch(proxy: proxy, isRight: isRightSwipe(progress))
-                }
+            // The first sample whose travel is far enough for its sign to be
+            // intent rather than touchdown wobble switches space. Later samples
+            // keep being read for a reversal: the fingers are still down, and
+            // coming back far enough undoes the switch just as macOS's own
+            // uncommitted swipe does.
+            let progress = event.getDoubleValueField(kCGEventGestureSwipeProgress)
+            extendGestureExtreme(&gSwipeIntentProgress, towards: progress,
+                                 sign: gSwipeIntentDirection)
+
+            if let travelSign = requestedTravelSign(progress: progress,
+                                                    lastSign: gSwipeIntentDirection,
+                                                    extreme: gSwipeIntentProgress) {
+                // Latched whether or not the switch was actually posted: a
+                // declined one (an edge, or an unreadable layout) must not be
+                // retried on every remaining sample of the gesture — but a
+                // later reversal is still measured from here, so reversing out
+                // of an edge that refused to move works.
+                gSwipeIntentDirection = travelSign
+                gSwipeIntentProgress  = progress
+                performSwipeSwitch(proxy: proxy,
+                                   isRight: isRightSwipe(Double(travelSign)))
             }
             return nil
         }
@@ -667,15 +736,13 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         if phase == kCGSGesturePhaseEnded, gSwipeTracking {
             // A very quick flick can end before any Changed sample carried
             // progress — fall back to the final velocity's sign.
-            if !gSwipeFired {
+            if gSwipeIntentDirection == 0 {
                 let velocity = event.getDoubleValueField(kCGEventGestureSwipeVelocityX)
                 if velocity != 0 {
                     performSwipeSwitch(proxy: proxy, isRight: isRightSwipe(velocity))
                 }
             }
-            gSwipeTracking   = false
-            gSwipeFired      = false
-            gSwipeInOverview = false
+            endHorizontalSwipeTracking()
 
             // macOS 27's Dock needs to see the gesture close to keep its
             // internal state consistent — pass the Ended event through
@@ -688,9 +755,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         }
 
         if phase == kCGSGesturePhaseCancelled {
-            gSwipeTracking   = false
-            gSwipeFired      = false
-            gSwipeInOverview = false
+            endHorizontalSwipeTracking()
             return nil
         }
 
@@ -703,6 +768,98 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     if subtype == kCGSEventGesture, gSwipeTracking { return nil }
 
     return passthrough
+}
+
+// MARK: - Gesture Intent Tracking
+
+/// Which way a still-open gesture is asking to move *now*, in the sign
+/// convention of the raw progress samples (each axis maps that sign to a posted
+/// direction itself — the two conventions differ, see `isRightSwipe` and
+/// `pendingMissionControlDirection`).
+///
+/// One physical gesture can ask more than once. The first answer is the initial
+/// direction, taken once travel is far enough to be intent rather than touchdown
+/// wobble. Every answer after that is a reversal: the fingers have come back
+/// `kGestureReversalThreshold` from the furthest point they reached since the
+/// last one, which is how macOS's own uncommitted swipe is taken back.
+///
+/// - Parameters:
+///   - progress: The latest progress sample.
+///   - lastSign: Travel sign already acted on for this gesture, `0` if none.
+///   - extreme: Furthest progress reached in `lastSign` since then.
+/// - Returns: The travel sign to act on, or `nil` while this sample asks for
+///            nothing new.
+private func requestedTravelSign(progress: Double,
+                                 lastSign: Int,
+                                 extreme: Double) -> Int? {
+    guard lastSign != 0 else {
+        guard abs(progress) >= kGestureDirectionThreshold else { return nil }
+        return progress > 0 ? 1 : -1
+    }
+
+    let travelBack = (extreme - progress) * Double(lastSign)
+    guard travelBack >= kGestureReversalThreshold else { return nil }
+    return -lastSign
+}
+
+/// Drops every per-gesture value of the horizontal interceptor, once the
+/// physical gesture it belonged to is over (ended, cancelled, or disowned
+/// because a toggle changed mid-swipe).
+private func endHorizontalSwipeTracking() {
+    gSwipeTracking        = false
+    gSwipeIntentDirection = 0
+    gSwipeIntentProgress  = 0
+    gSwipeInOverview      = false
+}
+
+/// Extends a recorded extreme when the fingers travel further the same way.
+///
+/// - Parameters:
+///   - extreme: The furthest progress recorded so far, updated in place.
+///   - progress: The latest progress sample.
+///   - sign: The travel sign the extreme is measured along; `0` leaves it alone
+///     (nothing has been acted on, so there is no reversal to measure from).
+private func extendGestureExtreme(_ extreme: inout Double,
+                                  towards progress: Double,
+                                  sign: Int) {
+    guard sign != 0, (progress - extreme) * Double(sign) > 0 else { return }
+    extreme = progress
+}
+
+/// Undoes a claimed vertical transition when the same gesture reverses.
+///
+/// The inverse of what was posted always undoes it — each posted direction
+/// toggles between the desktop and one overview — so the overview state captured
+/// at Began is not consulted again. The feature gates are rechecked because a
+/// toggle or a speed change can land mid-gesture, in which case the rest of the
+/// swallowed gesture simply does nothing more.
+///
+/// - Parameters:
+///   - proxy: The active swipe-intercept tap proxy.
+///   - progress: Physical vertical progress of the current sample.
+private func reverseMissionControlTransitionIfNeeded(proxy: CGEventTapProxy,
+                                                    progress: Double) {
+    guard gInstantMissionControlEnabled,
+          !isNativeSwitchSpeed(),
+          supportsInstantMissionControlInterception() else { return }
+
+    extendGestureExtreme(&gMissionControlIntentProgress, towards: progress,
+                         sign: gMissionControlIntentSign)
+
+    guard let travelSign = requestedTravelSign(
+              progress: progress,
+              lastSign: gMissionControlIntentSign,
+              extreme: gMissionControlIntentProgress
+          ),
+          postMissionControlTransition(
+              proxy: proxy,
+              direction: verticalDirection(forPhysicalSign: Double(travelSign))
+          )
+    else { return }
+
+    gMissionControlIntentSign     = travelSign
+    gMissionControlIntentProgress = progress
+    gMenu?.recordSwitch()
 }
 
 // MARK: - Direction & Firing

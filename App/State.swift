@@ -191,9 +191,17 @@ var gAutoFollowTargetSpace: CGSSpaceID = 0
 /// (its Began phase was swallowed, so we must handle the rest too).
 var gSwipeTracking: Bool = false
 
-/// Whether the intercepted swipe already fired its instant switch
-/// (fires once per gesture, on the first Changed with non-zero progress).
-var gSwipeFired: Bool = false
+/// Direction the intercepted horizontal swipe has most recently acted on
+/// (`+1` right, `-1` left, `0` while the gesture has carried no trusted
+/// direction yet). A non-zero value both stands in for "already fired" and
+/// says which way, so a reversal of the same physical gesture can undo it.
+var gSwipeIntentDirection: Int = 0
+
+/// Furthest `kCGEventGestureSwipeProgress` reached in `gSwipeIntentDirection`
+/// since it was last acted on. Reversal is measured as travel back from this
+/// extreme, not from the touchdown origin, so it works the same whether the
+/// fingers reversed early or after a long swipe.
+var gSwipeIntentProgress: Double = 0
 
 /// Whether the intercepted horizontal swipe started inside the Mission Control
 /// overview. Captured at Began (the overview may already be sliding by the time
@@ -203,6 +211,16 @@ var gSwipeInOverview: Bool = false
 /// Whether a Mission Control entry/dismissal swipe has been replaced and the
 /// rest of its physical event sequence must be swallowed.
 var gMissionControlSwipeTracking: Bool = false
+
+/// Sign of the *physical* vertical travel the claimed gesture last acted on
+/// (`0` when none). The transition posted for it toggles between the desktop
+/// and one overview, so the opposite travel always undoes it and a reversal
+/// needs no further state resolution.
+var gMissionControlIntentSign: Int = 0
+
+/// Furthest physical vertical progress reached since `gMissionControlIntentSign`
+/// was last acted on. Same reversal measure as `gSwipeIntentProgress`.
+var gMissionControlIntentProgress: Double = 0
 
 /// A vertical gesture prefix held until the first non-zero progress sample
 /// identifies the direction. Copied events are replayed through the tap proxy

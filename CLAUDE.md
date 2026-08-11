@@ -137,13 +137,42 @@ types and intercepts the *real* horizontal 3-finger (or 4-finger) trackpad swipe
 
 1. **Began** → start tracking, swallow (the native animated switch never starts)
 2. **Changed** → first non-zero `kCGEventGestureSwipeProgress` reveals the direction;
-   fire `postSwitchGesture` once (bounds-checked via `getSpaceList()`, stands down when
-   the layout is unknown), keep swallowing
+   fire `postSwitchGesture` (bounds-checked via `getSpaceList()`, stands down when
+   the layout is unknown), keep swallowing — and keep reading progress for a
+   **reversal** (see below)
 3. **Ended** → fallback: if nothing fired yet (very quick flick), use the final
    `kCGEventGestureSwipeVelocityX` sign. On macOS 27+ the Ended event is passed through
    with progress/velocity zeroed (the Dock needs to see the gesture close); pre-27 it
    is swallowed. **Cancelled** (phase 8) → reset without firing
 4. Companion gesture (29) envelopes are swallowed while a swipe is tracked
+
+**Mid-gesture reversal.** macOS lets an in-progress swipe be taken back without
+lifting the fingers — peek at the next space, reverse the motion, land back where
+you started. Committing a single instant jump and ignoring the rest of the
+swallowed gesture removed that; the interceptor now keeps reading progress for as
+long as the fingers are down and posts the **inverse** transition when they
+travel back `kGestureReversalThreshold` (0.2) from the furthest point reached
+since the last thing it acted on. Both axes share that logic
+(`requestedTravelSign` / `extendGestureExtreme` in `SwipeIntercept.swift`), so it
+covers horizontal Space swipes, the Mission Control overview's carousel, and
+vertical Mission Control / App Exposé entry and dismissal. A gesture can reverse
+any number of times.
+
+Three properties worth keeping:
+- **Measured from the extreme, not from touchdown**, so a short peek and a long
+  swipe reverse on the same amount of finger travel.
+- **Well above `kGestureDirectionThreshold`** (0.05). Fingers drift back as they
+  settle or lift, and unlike a native animation that has not committed yet, every
+  crossing here is a real visible transition — so the reversal threshold is a
+  deliberate motion, not a wobble.
+- **The intent is latched even when the switch is declined** (an edge, or an
+  unreadable layout), so a refused switch is not retried on every one of the
+  remaining samples — but the reversal is still measured from there, which is what
+  makes reversing *out of* an edge work.
+
+For the vertical axis the reversal needs no state lookup: each posted direction
+toggles between the desktop and one overview, so the inverse always undoes it.
+`pendingMissionControlDirection` is therefore the *opening* decision only.
 
 **Direction sign of real trackpad events** (independent of the posting-side
 convention): right-space iff sign `> 0` on macOS ≤ 26, but `< 0` on macOS 27+, whose
@@ -535,8 +564,10 @@ documented at its declaration in `State.swift`.
 | `gIsRecordingCycleShortcut` | `Bool` | Makes the global event tap stand down while Preferences records a replacement |
 | `gTrackpadSwipeEnabled` | `Bool` | Feature 3 toggle (default **false** — opt-in) |
 | `gInstantMissionControlEnabled` | `Bool` | Mission Control entry/dismissal transition toggle (default **false** — opt-in) |
-| `gSwipeTracking` / `gSwipeFired` / `gSwipeInOverview` | `Bool` | Per-horizontal-gesture state of the swipe intercept — claimed, already fired, and whether Began happened inside the Mission Control overview (reset via `resetSwipeIntercept()`) |
+| `gSwipeTracking` / `gSwipeInOverview` | `Bool` | Per-horizontal-gesture state of the swipe intercept — claimed, and whether Began happened inside the Mission Control overview (reset via `resetSwipeIntercept()`) |
+| `gSwipeIntentDirection` / `gSwipeIntentProgress` | `Int` / `Double` | Direction the current horizontal gesture last acted on (`0` = none, so it doubles as "already fired") and the furthest progress reached since — the reversal reference |
 | `gMissionControlSwipeTracking` / `gPendingMissionControlEvents` / `gPendingMissionControlOverviewState` | `Bool` / `[CGEvent]` / `DockOverviewState?` | Claimed vertical stream, copied prefix, and its exact desktop/Mission Control origin awaiting direction/native replay |
+| `gMissionControlIntentSign` / `gMissionControlIntentProgress` | `Int` / `Double` | Same reversal pair for the claimed vertical gesture, on the *physical* sign convention |
 | `gMissionControlAnimation` / `gMissionControlAnimationID` | `MissionControlAnimationState?` / `UInt64` | Active timed vertical transition and generation ID; accessed only on the Mission Control animation queue |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`). Stamped by Features 1/3 and by non-auto-follow space changes |
@@ -586,6 +617,7 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kCurrentOSSpacesMask` | SpaceSwitching | `(1 << 0) \| (1 << 3)` | Private mask used to query the active Dock-managed overview space |
 | `kGestureMotionHorizontal` / `kGestureMotionVertical` | SwipeIntercept | `1` / `2` (Int64) | `kCGEventGestureSwipeMotion` values for Space and Mission Control swipes |
 | `kGestureDirectionThreshold` | SwipeIntercept | `0.05` | Smallest `kCGEventGestureSwipeProgress` magnitude whose sign is trusted as the user's intended direction, on both axes. Below it the sample is touchdown wobble (issue #43) |
+| `kGestureReversalThreshold` | SwipeIntercept | `0.2` | Travel back from a still-open gesture's furthest point that undoes what it already committed, on both axes — see "Mid-gesture reversal" |
 | `kSyntheticGestureMarker` | SwipeIntercept | `0x53504152` ('SPAR') | Stamped into `.eventSourceUserData` on every gesture Space Rabbit posts, so the swipe tap passes its own events through |
 | `kCGSGesturePhaseCancelled` | PrivateAPI | `8` (Int64) | Gesture phase seen only by the swipe-intercept tap |
 | `kCGEventTypeSystemDefined` | PrivateAPI | `14` (CGEventType) | `NX_SYSDEFINED`, which CoreGraphics exposes no named case for. In the keyboard tap's mask so media keys cancel a bare-Fn candidate |
@@ -1092,6 +1124,11 @@ local.env               — git-ignored; signing credentials
   Desktop N" and the cycle shortcut are multi-step and still stand down to
   macOS (animated) — see "Space shortcuts inside the overview".
 - Space switches inside App Exposé or Show Desktop are left to macOS (animated).
+- A reversed gesture is undone by posting the inverse transition, not by
+  scrubbing the replacement backwards under the fingers: the transition is
+  already committed by then, so there is nothing left to follow. A reversal
+  therefore reads as a second transition at the slider's speed rather than as
+  macOS's continuous rubber-banding.
 - Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display: at the "Instant" speed setting, `switchOnOtherDisplay` warps the cursor to that display, posts the gesture, and restores the cursor after `kCursorWarpRestoreDelay` (skipping the restore if the user moved it); at animated speeds it stands down and macOS's native animated switch handles it. Direct APIs are not an option (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates. macOS 27 already did this once: it rejects bare synthetic DockSwipe events, requiring the augmented path (see "macOS 27+ gesture augmentation").
 - The macOS 27+ augmented path always posts the equivalent of an instant switch at the "Instant" slider setting; the animated velocity band (Fast/Faster/Fastest) is passed through but uncalibrated on macOS 27.
