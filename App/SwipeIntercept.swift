@@ -166,6 +166,19 @@ func reviveSwipeTapIfNeeded() {
         // A port was invalidated — its run loop source died with it. Clear
         // out the corpses so updateSwipeTap() sees "not installed" and
         // rebuilds the pair for the still-enabled features.
+        //
+        // The resetSwipeIntercept() below discards any held vertical prefix
+        // without replaying it, which is the only option: replay goes through
+        // the tap proxy, and the tap that owned it no longer exists. It costs
+        // the user one swallowed gesture (swipe again), not a half-open Dock
+        // gesture — a held prefix is the *physical* Began that never reached
+        // Dock, so dropping it leaves Dock's state clean. A synthetic stream
+        // already in flight is unaffected: the animator posts its own terminal
+        // pair from its serial queue straight to the session tap, never
+        // through this tap.
+        //
+        // It must also run *before* updateSwipeTap(), whose teardown branch
+        // returns early while a gesture is still tracked or pending.
         fputs("Space Rabbit: gesture tap port died — rebuilding after wake/unlock\n", stderr)
         for deadTap in [gSwipeTap, gGestureEnvelopeTap] {
             if let deadTap, CFMachPortIsValid(deadTap) { CGEvent.tapEnable(tap: deadTap, enable: false) }

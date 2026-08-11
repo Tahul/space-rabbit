@@ -21,6 +21,7 @@
  * or user input (a safety measure built into CGEvent taps).
  */
 
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
@@ -55,6 +56,14 @@ private var gMissionControlActiveKeycode: Int64?
 private let kMissionControlKeycode: Int64 = 160
 
 // MARK: - Primary Tap Lifecycle
+
+/// Whether the last `installEventTap()` attempted by
+/// `reviveKeyboardTapsIfNeeded()` failed.
+///
+/// The health check retries every 300 seconds, so the failure diagnostic is
+/// logged on the transition into that state only — otherwise a Mac left with
+/// Accessibility revoked writes the same line to stderr twelve times an hour.
+private var gKeyboardTapRebuildFailed = false
 
 /// Creates the session-level keyDown tap, attaches it to the main run loop
 /// and enables it. Stores the tap and its source in `gTap` / `gTapSource`.
@@ -101,8 +110,21 @@ func reviveKeyboardTapsIfNeeded() {
         }
         gTap       = nil
         gTapSource = nil
-        if !installEventTap() {
-            fputs("Space Rabbit: failed to rebuild keyboard tap\n", stderr)
+
+        if installEventTap() {
+            gKeyboardTapRebuildFailed = false
+        } else if !gKeyboardTapRebuildFailed {
+            // The same failure is fatal at startup, but not here: quitting a
+            // menu bar app out from under the user is worse than staying up
+            // and retrying. Revoked Accessibility permission is the one cause
+            // the user can act on, and this line is the only signal they get,
+            // so name it explicitly rather than logging a bare failure.
+            gKeyboardTapRebuildFailed = true
+            let trust = AXIsProcessTrusted()
+                ? "still trusted"
+                : "NOT trusted — re-grant it in System Settings > Privacy & Security > Accessibility"
+            fputs("Space Rabbit: failed to rebuild keyboard tap; "
+                + "Accessibility permission \(trust). Retrying on the next wake/unlock or health check\n", stderr)
         }
     }
 
@@ -142,6 +164,13 @@ func reviveKeyboardTapsIfNeeded() {
         if cacheWasStale {
             // Any claim from before the suspension is stale; drop it so the
             // sync below resolves each tap to the state it should be in now.
+            //
+            // Dropping a claim releases the `keyUp` Space Rabbit still owed
+            // macOS, so the frontmost app sees a release whose press it never
+            // got. That is the safe direction — the alternative is a modifier
+            // the app believes is still held — and it is unreachable in
+            // healthy operation, since a claim only outlives one keystroke
+            // when the tap it belonged to is already dead.
             resetKeyTracking()
             syncKeyboardAuxiliaryTaps()
         }

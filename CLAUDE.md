@@ -38,7 +38,7 @@ Exact initialization order — getting this wrong causes subtle bugs:
 9. **Gesture-intercept tap** — `updateSwipeTap()` installs the shared tap pair if either persisted gesture toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
 10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
 11. **Tap revival observers** — `NSWorkspace.didWakeNotification` + distributed `com.apple.screenIsUnlocked` → `reviveKeyboardTapsIfNeeded()` + `reviveSwipeTapIfNeeded()` (see "Event tap lifetime" under Feature 1); the step 7 timer runs the same checks as a safety net
-12. **Cleanup handler** — `willTerminateNotification`: flush stats, remove observer, disable both taps
+12. **Cleanup handler** — `willTerminateNotification`: flush stats, remove the three observers (`SwoopObserver`'s, plus the two revival ones from step 11 — the wake one via `NSWorkspace`, the unlock one via `DistributedNotificationCenter`), disable both taps
 13. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`
 14. `app.run()` — enter run loop
 
@@ -55,6 +55,10 @@ A `CGEvent` tap at `.cgSessionEventTap` / `.headInsertEventTap` listens for `key
    the Instant tick).
 
 **Event tap lifetime:** the tap is re-enabled on `tapDisabledByTimeout` / `tapDisabledByUserInput` to stay alive — but those notices arrive *through the tap callback itself*, so a tap disabled (or its Mach port invalidated) while the process is suspended around system sleep or screen lock never self-heals. `reviveKeyboardTapsIfNeeded()` (EventTap.swift) and `reviveSwipeTapIfNeeded()` (SwipeIntercept.swift) cover that hole for all five taps: re-enable a valid-but-disabled tap, rebuild on an invalidated Mach port, and refresh the cached `g*TapEnabled` flags of the on-demand taps (a stale cache pins them dead, because the sync helpers only push state on a flag change). They run on `NSWorkspace.didWakeNotification`, on the distributed `com.apple.screenIsUnlocked` notification, and from the 300 s flush timer as a safety net; each revival logs a diagnostic line to stderr.
+
+A failed *rebuild* is deliberately **not** fatal, unlike the same failure at startup — quitting a menu bar app out from under the user is worse than staying up and retrying on the next wake, unlock or health check. Revoked Accessibility permission is the one cause the user can act on and the stderr line is their only signal, so the diagnostic names it explicitly (`AXIsProcessTrusted()`), and logs only on the transition into the failed state so a permanently-revoked Mac doesn't write the same line twelve times an hour.
+
+**Recovery discards in-flight gesture state**, on purpose. Both revival helpers reset their per-gesture tracking before touching a tap, because state from before the break must not leak into the next gesture — and in the keyboard case, a claim only ever outlives one keystroke when its tap is already dead. Two consequences worth knowing: dropping a claimed press releases the `keyUp` Space Rabbit still owed macOS, so the frontmost app sees a release with no press (the safe direction — the alternative is a modifier it believes is still held); and a held vertical prefix is discarded without replay, since replay goes through the tap proxy of a tap that no longer exists. The latter costs one swallowed gesture, not a half-open Dock gesture — a held prefix is the *physical* Began that never reached Dock. A synthetic stream already in flight is unaffected either way: the animator posts its terminal pair from its own serial queue straight to the session tap, never through these taps.
 
 **Three keyboard taps.** The feature needs four event forms, but only `keyDown`
 can ever *match* a shortcut; the other three exist to close out a press that

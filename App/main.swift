@@ -211,7 +211,7 @@ NSWorkspace.shared.notificationCenter.addObserver(
 // (see reviveKeyboardTapsIfNeeded in EventTap.swift). Check tap health on
 // every wake and unlock, and rebuild whatever died.
 
-NSWorkspace.shared.notificationCenter.addObserver(
+let wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.didWakeNotification,
     object: nil, queue: .main
 ) { _ in
@@ -224,7 +224,7 @@ NSWorkspace.shared.notificationCenter.addObserver(
 // (where didWakeNotification never comes) and doubles as a second, later
 // chance after wake — the window server is guaranteed up again once the
 // user has unlocked.
-DistributedNotificationCenter.default().addObserver(
+let unlockObserver = DistributedNotificationCenter.default().addObserver(
     forName: Notification.Name("com.apple.screenIsUnlocked"),
     object: nil, queue: .main
 ) { _ in
@@ -244,6 +244,8 @@ NotificationCenter.default.addObserver(
 ) { _ in
     flushSwitchCount()
     NSWorkspace.shared.notificationCenter.removeObserver(observer)
+    NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+    DistributedNotificationCenter.default().removeObserver(unlockObserver)
     if let tap = gTap { CGEvent.tapEnable(tap: tap, enable: false) }
     if let source = gTapSource {
         CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
