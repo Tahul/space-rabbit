@@ -301,11 +301,10 @@ Dock's gesture state open, which is the worse failure.
 The interceptor is limited to the known macOS 15–27 schemas; an unknown future
 major release leaves the option inert and the physical gesture native.
 
-**Horizontal swipes inside the overviews.** Both Mission Control and App Exposé
-navigate spaces from the same horizontal 3-finger swipe the desktop uses, so
-this toggle also owns that gesture while either is up — independently of the
-Instant Trackpad Swipe toggle, which owns the desktop ones. The desktop recipe
-cannot be reused
+**Horizontal swipes inside the overview.** Mission Control navigates spaces from
+the same horizontal 3-finger swipe the desktop uses, so this toggle also owns
+that gesture while the overview is up — independently of the Instant Trackpad
+Swipe toggle, which owns the desktop ones. The desktop recipe cannot be reused
 (issue #16): a fully-committed boundary jump is evaluated against the overview's
 state, the screen blanks, and it lands back where it started. The horizontal
 gesture therefore goes out through the *same* segmented Began → progress → Ended
@@ -315,20 +314,28 @@ differs by axis: horizontal keeps the desktop path's posting convention, so
 macOS 27+ inverts it (negative moves right) while everything below it does not,
 whereas vertical is `+1`/`-1` on every release. Direction is resolved from
 Changed progress under the same `kGestureDirectionThreshold` the desktop uses,
-the gesture is bounds-checked against `getSpaceList()`, and the `mission-control`
-and `show-front` (App Exposé) OS spaces both qualify — Show Desktop and
-unreadable private state stay native. The desktop branch keeps the cheap
-fail-open layer-18 test it always had, so an unreadable window list cannot
-regress it.
+the gesture is bounds-checked against `getSpaceList()`, and only the
+`mission-control` OS space qualifies — App Exposé, Show Desktop, and unreadable
+private state stay native. The desktop branch keeps the cheap fail-open
+layer-18 test it always had, so an unreadable window list cannot regress it.
+
+**App Exposé does not accept this stream** (tried and reverted). Its overview
+navigates spaces from the same physical horizontal swipe, so admitting
+`show-front` to the branch above looks like free parity with the vertical path
+— but the segmented carousel stream that moves Mission Control moves nothing
+there. The outcome is the worst of both: the physical gesture is swallowed on
+Began and no replacement lands, so horizontal swiping inside App Exposé stops
+working altogether. Keep `show-front` out of this branch unless a recipe is
+found that the overview actually acts on — and note the desktop's
+fully-committed boundary jump is not a candidate, since that is exactly what
+issue #16 ruled out for Mission Control. This concerns only the *horizontal*
+gesture; vertical entry into and dismissal of App Exposé do work and ship.
 
 **Space shortcuts inside the overview.** The system "Move left/right a space"
 bindings navigate the same carousel, so Feature 1 hands them to
-`postOverviewSpaceSwitch` too rather than standing down
-(`canDriveOverviewSpaceSwitch()` in `EventTap.swift`). That condition is
-deliberately narrower than the swipe's: it is still Mission Control only, so
-these bindings stand down inside App Exposé, which the swipe now drives. Only
-these two one-step bindings are converted. "Switch to Desktop N" and the cycle
-shortcut
+`postOverviewSpaceSwitch` too rather than standing down, gated on the identical
+condition (`canDriveOverviewSpaceSwitch()` in `EventTap.swift`). Only these two
+one-step bindings are converted. "Switch to Desktop N" and the cycle shortcut
 are multi-step and still stand down — one segmented stream moves the carousel by
 exactly one space, so those would need a chained sequence to be correct, and an
 animated native jump is better than a wrong instant one.
@@ -1068,7 +1075,7 @@ local.env               — git-ignored; signing credentials
   feature is enabled (they bypass the keyboard event tap; Feature 3 intercepts
   them with its own gesture tap).
 - Mission Control entry and dismissal, App Exposé entry and dismissal, and
-  horizontal space navigation inside either overview remain native
+  horizontal space navigation inside the Mission Control overview remain native
   unless the independent opt-in "Instant Mission Control" feature is enabled.
   They then follow the shared transition-speed slider; unrelated in-overview
   gestures remain native. That toggle covers the trackpad gesture for all of
@@ -1079,9 +1086,7 @@ local.env               — git-ignored; signing credentials
   space" bindings are converted to the segmented carousel stream. "Switch to
   Desktop N" and the cycle shortcut are multi-step and still stand down to
   macOS (animated) — see "Space shortcuts inside the overview".
-- Keyboard space switches inside App Exposé, and every space switch inside Show
-  Desktop, are left to macOS (animated). Only the horizontal *swipe* is
-  converted inside App Exposé.
+- Space switches inside App Exposé or Show Desktop are left to macOS (animated).
 - Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display: at the "Instant" speed setting, `switchOnOtherDisplay` warps the cursor to that display, posts the gesture, and restores the cursor after `kCursorWarpRestoreDelay` (skipping the restore if the user moved it); at animated speeds it stands down and macOS's native animated switch handles it. Direct APIs are not an option (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates. macOS 27 already did this once: it rejects bare synthetic DockSwipe events, requiring the augmented path (see "macOS 27+ gesture augmentation").
 - The macOS 27+ augmented path always posts the equivalent of an instant switch at the "Instant" slider setting; the animated velocity band (Fast/Faster/Fastest) is passed through but uncalibrated on macOS 27.

@@ -525,9 +525,8 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 
     // Horizontal feature gates. Two independent features reach this path: the
     // trackpad-Space toggle owns swipes on the desktop, and the Mission Control
-    // toggle additionally owns the ones that navigate the space carousel from
-    // inside either overview it drives. Both follow the shared
-    // transition-speed slider.
+    // toggle additionally owns the ones that navigate its overview's carousel.
+    // Both follow the shared transition-speed slider.
     let desktopSwipeEnabled  = gTrackpadSwipeEnabled && !isNativeSwitchSpeed()
     let overviewSwipeEnabled = gInstantMissionControlEnabled
         && !isNativeSwitchSpeed()
@@ -557,17 +556,12 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
             // Off the desktop this stays the cheap layer-18 test, whose
             // fail-open answer keeps the long-standing desktop path working
             // when the window list cannot be read. Only once an overview is
-            // known to be up is the exact state resolved: both vertical
-            // overviews navigate the space carousel with this gesture and take
-            // the same replacement stream, while Show Desktop, the desktop
-            // itself (a state change racing the layer test) and unreadable
-            // private state stay native.
+            // known to be up is the exact state resolved: Mission Control
+            // navigates spaces with this gesture and can be driven, while App
+            // Exposé, Show Desktop and unreadable private state stay native.
             if isMissionControlActive() {
-                let overviewState = currentDockOverviewState()
-
                 guard overviewSwipeEnabled,
-                      overviewState == .missionControl
-                        || overviewState == .appExpose
+                      currentDockOverviewState() == .missionControl
                 else { return passthrough }
 
                 gSwipeInOverview = true
@@ -669,9 +663,9 @@ private func isRightSwipe(_ sign: Double) -> Bool {
 /// already swallowed, so there is no bounce either way). Speed follows the
 /// transition-speed slider on both recipes, exactly like the keyboard feature.
 ///
-/// A gesture that began inside an overview is replaced with the segmented
-/// carousel stream instead of the desktop's boundary jump, which the overview
-/// cannot act on (issue #16).
+/// A gesture that began inside the Mission Control overview is replaced with
+/// the segmented carousel stream instead of the desktop's boundary jump, which
+/// the overview cannot act on (issue #16).
 ///
 /// - Parameters:
 ///   - proxy: The active swipe-intercept tap proxy, used by the overview
