@@ -31,13 +31,9 @@ https://github.com/user-attachments/assets/ba73cabe-2443-4cf2-87aa-f1f7841e6c21
 
 ## Install
 
-* Download the latest release from [GitHub Releases](https://github.com/Tahul/space-rabbit/releases) and drag **Space Rabbit.app** into your Applications folder.
-
-* Install the latest version from [Homebrew](https://brew.sh):
-
-`brew install space-rabbit`
-
-* You can also download Space Rabbit from our [website](https://space-rabbit.app).
+- Download Space Rabbit from our [website](https://space-rabbit.app) (_recommended_).
+- Download the latest release from [GitHub Releases](https://github.com/Tahul/space-rabbit/releases) (_same outcome as downloading from our website_).
+- Install the latest version from [Homebrew](https://brew.sh): `brew install space-rabbit` (_advanced_).
 
 👉 **Grant Accessibility access when prompted** (System Settings → Privacy & Security → Accessibility).
 
