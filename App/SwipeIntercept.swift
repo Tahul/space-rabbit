@@ -345,14 +345,46 @@ private func finishMissionControlInterception() {
     DispatchQueue.main.async { updateSwipeTap() }
 }
 
+/// Reads "Natural scrolling" (`com.apple.swipescrolldirection`, unset meaning
+/// on) with the process-wide preference cache flushed first.
+///
+/// The flush is not optional: `CFPreferencesCopyAppValue` answers from an
+/// in-process cache that a change made by System Settings does not invalidate,
+/// so without it a user who flips the setting keeps the old gesture mapping
+/// until Space Rabbit is relaunched. Called once per gesture, never per event.
+private func naturalScrollingEnabled() -> Bool {
+    CFPreferencesSynchronize(kCFPreferencesAnyApplication,
+                             kCFPreferencesCurrentUser,
+                             kCFPreferencesCurrentHost)
+    return CFPreferencesCopyAppValue("com.apple.swipescrolldirection" as CFString,
+                                     kCFPreferencesAnyApplication) as? Bool ?? true
+}
+
 /// Converts a physical vertical travel sign into the direction to post for it.
 ///
-/// Physical vertical DockSwipes use screen-coordinate signs on macOS 26:
-/// finger-up is negative and finger-down is positive. Synthetic vertical
-/// posting uses the opposite convention, so this conversion must stay separate
-/// from `postMissionControlTransition`'s signed output.
+/// Physical vertical DockSwipes are reported in the orientation "Natural
+/// scrolling" selects: finger-up is negative while it is on (the default, and
+/// the configuration every earlier measurement was taken in), and positive
+/// while it is off. Measured on macOS 15.6.1 by swiping up in both modes —
+/// `-0.012` with it on, `+0.008` with it off.
+///
+/// The Dock's own meaning for the gesture does *not* move with the setting:
+/// macOS 15's Trackpad pane offers Mission Control only as "Swipe Up" and App
+/// Exposé only as "Swipe Down", in both modes. So the sign must be corrected
+/// back to physical travel before it is read, otherwise every user with the
+/// setting off gets Mission Control and App Exposé swapped (a swipe up opens
+/// App Exposé). This is the counterpart of the horizontal axis's `isRightSwipe`,
+/// whose separate rule is unaffected by this correction.
+///
+/// Synthetic vertical posting uses the opposite convention again, so this
+/// conversion must stay separate from `postMissionControlTransition`'s signed
+/// output.
+///
+/// - Parameter sign: A non-zero vertical progress or velocity sample.
+/// - Returns: `1` for a swipe up, `-1` for a swipe down.
 private func verticalDirection(forPhysicalSign sign: Double) -> Int {
-    sign < 0 ? 1 : -1
+    let isSwipeUp = gMissionControlNaturalScrolling ? sign < 0 : sign > 0
+    return isSwipeUp ? 1 : -1
 }
 
 /// Resolves a physical vertical sign against the overview state that was
@@ -584,6 +616,9 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 
             gPendingMissionControlEvents = [beganCopy]
             gPendingMissionControlOverviewState = overviewState
+            // Sampled here so the opening decision and any later reversal of
+            // this gesture read the same orientation.
+            gMissionControlNaturalScrolling = naturalScrollingEnabled()
             return nil
         }
 

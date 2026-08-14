@@ -231,6 +231,17 @@ var gPendingMissionControlEvents: [CGEvent] = []
 /// state may already be transitioning by the time Changed reveals direction.
 var gPendingMissionControlOverviewState: DockOverviewState?
 
+/// "Natural scrolling" as it read when the claimed vertical gesture began.
+///
+/// The window server reports vertical gesture travel in the orientation this
+/// setting selects, but the Dock's own meaning for the gesture does not move
+/// with it, so the sign has to be corrected before it is trusted (see
+/// `verticalDirection(forPhysicalSign:)`). It is sampled once per gesture
+/// rather than per event: a toggle landing mid-gesture would otherwise let the
+/// reversal disagree with the opening decision and post a transition that
+/// compounds instead of undoing.
+var gMissionControlNaturalScrolling: Bool = true
+
 // MARK: - Mission Control Animation State
 
 /// A fully constructed terminal pair retained before an animated gesture
