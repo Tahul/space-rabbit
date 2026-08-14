@@ -181,13 +181,17 @@ augmented path inverted the reported sign (checked first, via
 match 27+ — mirroring iss's build-time `ISS_SWIPE_DIRECTION_REVERSED` — but users on
 those releases reported every swipe going the wrong way, so the rule is now the same
 for everything below 27.
-**"Natural scrolling" needs no handling** and reading
-`com.apple.swipescrolldirection` is a trap (PR #22, reverted): the window server
+**"Natural scrolling" needs no handling *on this axis*** and reading
+`com.apple.swipescrolldirection` here is a trap (PR #22, reverted): the window server
 already flips the reported sign when the setting is off, so the table above holds in
 both modes and any correction on top of it double-flips the result. Measured on macOS
 26 with natural scrolling OFF: a left-to-right swipe reports progress `+0.045` and must
 move right — the same rule as ON. A direction complaint is far more likely to be the
 synthetic-echo bug below than a scrolling-preference bug.
+
+Do **not** generalize that to the vertical axis, which behaves the opposite way and
+*does* need the correction — see "Instant Mission Control" below. The two axes were
+measured independently; neither result implies the other.
 
 **Synthetic-event marker (`kSyntheticGestureMarker`)** — Space Rabbit's own synthetic
 gestures post into the same session tap and would loop right back into this tap.
@@ -280,8 +284,22 @@ carry direction, the tap copies and holds Began (plus companion events) once the
 Dock state resolves to any of `.desktop` / `.missionControl` / `.appExpose`; the
 direction is settled later, from Changed progress.
 
-Real vertical trackpad input uses screen-coordinate signs on macOS 26:
-finger-up is negative, finger-down positive. That physical-input convention is
+Real vertical trackpad input is reported in the orientation **"Natural
+scrolling"** selects: finger-up is negative while it is on (the default), and
+positive while it is off. Measured on macOS 15.6.1 by swiping up in both modes —
+`-0.012` on, `+0.008` off. The Dock's meaning for the gesture does *not* move
+with the setting (macOS 15's Trackpad pane offers Mission Control only as "Swipe
+Up" and App Exposé only as "Swipe Down", in both modes), so
+`verticalDirection(forPhysicalSign:)` corrects the sign back to physical travel
+before reading it. Without that correction every user with the setting off gets
+the two overviews swapped — a swipe up opens App Exposé. The setting is sampled
+once per gesture into `gMissionControlNaturalScrolling` at Began, not per event,
+so a toggle landing mid-gesture cannot make a reversal disagree with the opening
+decision; the read flushes the CFPreferences cache first, which otherwise pins
+the old value until relaunch. This is the *opposite* of the horizontal rule —
+see the natural-scrolling note under Feature 3.
+
+That physical-input convention is
 inverted before posting, because the synthetic vertical DockSwipe reads `+1` as
 up and `-1` as down. `pendingMissionControlDirection` owns the four combinations
 that do something on screen — desktop→up enters Mission Control, desktop→down
@@ -568,6 +586,7 @@ documented at its declaration in `State.swift`.
 | `gSwipeIntentDirection` / `gSwipeIntentProgress` | `Int` / `Double` | Direction the current horizontal gesture last acted on (`0` = none, so it doubles as "already fired") and the furthest progress reached since — the reversal reference |
 | `gMissionControlSwipeTracking` / `gPendingMissionControlEvents` / `gPendingMissionControlOverviewState` | `Bool` / `[CGEvent]` / `DockOverviewState?` | Claimed vertical stream, copied prefix, and its exact desktop/Mission Control origin awaiting direction/native replay |
 | `gMissionControlIntentSign` / `gMissionControlIntentProgress` | `Int` / `Double` | Same reversal pair for the claimed vertical gesture, on the *physical* sign convention |
+| `gMissionControlNaturalScrolling` | `Bool` | "Natural scrolling" as it read at the claimed vertical gesture's Began — the orientation its progress signs must be corrected against |
 | `gMissionControlAnimation` / `gMissionControlAnimationID` | `MissionControlAnimationState?` / `UInt64` | Active timed vertical transition and generation ID; accessed only on the Mission Control animation queue |
 | `gSwitchSpeed` | `Double` | Transition speed slider tick (0.0–1.0 in 0.25 steps; 0.0 = native macOS animation, 1.0 = instant) |
 | `gLastSpaceSwitchTime` | `Date` | For auto-follow suppression (initialized to `.distantPast`). Stamped by Features 1/3 and by non-auto-follow space changes |
