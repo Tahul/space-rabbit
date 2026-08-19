@@ -97,6 +97,9 @@
 "settings.features.cycleSpaces.normalWarning" = "速度为“正常”时不可用";
 "settings.features.shortcut.recording" = "按下快捷键…";
 "settings.features.shortcut.none" = "无";
+"settings.features.autoFollowIgnored" = "要忽略的弹窗快捷键";
+"settings.features.autoFollowIgnored.record" = "录制快捷键…";
+"settings.features.autoFollowIgnored.remove" = "移除";
 "settings.features.transitionSpeed" = "过渡速度";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

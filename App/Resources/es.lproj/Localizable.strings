@@ -94,6 +94,9 @@
 "settings.features.cycleSpaces.normalWarning" = "No disponible si la velocidad es «Normal»";
 "settings.features.shortcut.recording" = "Pulsa una función rápida…";
 "settings.features.shortcut.none" = "Ninguna";
+"settings.features.autoFollowIgnored" = "Atajos de ventana emergente a ignorar";
+"settings.features.autoFollowIgnored.record" = "Grabar atajo…";
+"settings.features.autoFollowIgnored.remove" = "Eliminar";
 "settings.features.transitionSpeed" = "Velocidad de transición";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own
