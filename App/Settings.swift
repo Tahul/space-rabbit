@@ -672,6 +672,11 @@ class SettingsPaneViewController: NSViewController {
     /// stretched to the pane's full content width.
     func buildContent() -> [NSView] { [] }
 
+    /// Subclasses build and return views pinned to the *bottom* edge of the
+    /// pane rather than stacked under the header. Any slack left when the
+    /// window is taller than the content opens up above them.
+    func buildBottomContent() -> [NSView] { [] }
+
     /// Subclasses override to refresh their controls from the global state.
     ///
     /// Called when the pane is about to appear and whenever the same setting
@@ -720,6 +725,38 @@ class SettingsPaneViewController: NSViewController {
         constraints += contentViews.map {
             $0.trailingAnchor.constraint(equalTo: outerStack.trailingAnchor)
         }
+
+        let bottomViews = buildBottomContent()
+        if !bottomViews.isEmpty {
+            let bottomStack = NSStackView()
+            bottomStack.orientation = .vertical
+            bottomStack.alignment   = .leading
+            bottomStack.spacing     = Layout.groupGapSpacing
+            bottomStack.translatesAutoresizingMaskIntoConstraints = false
+
+            for content in bottomViews {
+                content.translatesAutoresizingMaskIntoConstraints = false
+                bottomStack.addArrangedSubview(content)
+            }
+            view.addSubview(bottomStack)
+
+            constraints += [
+                bottomStack.leadingAnchor.constraint(equalTo: view.leadingAnchor,
+                                                     constant: Layout.outerPadding),
+                bottomStack.trailingAnchor.constraint(equalTo: view.trailingAnchor,
+                                                      constant: -Layout.outerPadding),
+                bottomStack.bottomAnchor.constraint(equalTo: view.bottomAnchor,
+                                                    constant: -Layout.bottomPadding),
+                // Keeps the pane's fitting height correct (and the two stacks
+                // apart) while letting the gap grow with the window
+                bottomStack.topAnchor.constraint(greaterThanOrEqualTo: outerStack.bottomAnchor,
+                                                 constant: Layout.groupGapSpacing),
+            ]
+            constraints += bottomViews.map {
+                $0.trailingAnchor.constraint(equalTo: bottomStack.trailingAnchor)
+            }
+        }
+
         NSLayoutConstraint.activate(constraints)
     }
 
@@ -824,7 +861,8 @@ class SettingsPaneViewController: NSViewController {
 
 // MARK: - Auto-Start Pane
 
-/// The "Auto-Start" pane: Launch at Login toggle and its warning banner.
+/// The "Auto-Start" pane: Launch at Login toggle, its warning banner, and
+/// the Quit button (the only way out for users who hid the menu bar icon).
 final class AutoStartPaneController: SettingsPaneViewController {
 
     /// When `true`, the launch warning banner will flash on next appearance.
@@ -856,6 +894,36 @@ final class AutoStartPaneController: SettingsPaneViewController {
             subtitle: launchStatusLabel
         )])
         return [launchWarningBanner, group]
+    }
+
+    /// The Quit group sits on the pane's bottom edge, away from the settings.
+    override func buildBottomContent() -> [NSView] {
+        [buildQuitGroup()]
+    }
+
+    /// Builds the group holding the Quit button.
+    ///
+    /// The menu bar icon can be hidden from the Advanced pane, which also
+    /// removes the dropdown's "Quit Space Rabbit" item — this is then the only
+    /// in-app way to stop the app.
+    private func buildQuitGroup() -> NSView {
+        let quitButton = NSButton(title: L("settings.autoStart.quitNow"),
+                                  target: self, action: #selector(quitApp))
+        quitButton.bezelStyle = .rounded
+
+        if let icon = NSImage(systemSymbolName: "power", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11,
+                                                                 weight: .medium)) {
+            icon.isTemplate           = true
+            quitButton.image          = icon
+            quitButton.imagePosition  = .imageLeading
+            quitButton.imageHugsTitle = true
+        }
+
+        return groupBox([settingsRow(
+            label:   L("settings.autoStart.quit"),
+            control: quitButton
+        )])
     }
 
     override func viewDidLoad() {
@@ -974,6 +1042,12 @@ final class AutoStartPaneController: SettingsPaneViewController {
             fputs("Space Rabbit: launch at login: \(error)\n", stderr)
             updateLaunchAtLoginUI(errorMessage: msg)
         }
+    }
+
+    /// Quits the app, the same way the menu bar's Quit item does (the
+    /// termination handler flushes statistics and tears the taps down).
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
     }
 }
 

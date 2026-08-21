@@ -776,7 +776,8 @@ SettingsWindowController (singleton, NSWindowDelegate)
        │    hidden/transparent title bar; panes swapped lazily and cached;
        │    window resizes per pane
        ├─ AutoStartPaneController — Launch warning banner (orange, hidden when OK)
-       │    + Launch at Login (SMAppService)
+       │    + Launch at Login (SMAppService) + a Quit group (NSApp.terminate —
+       │    the only in-app way out once the menu bar icon is hidden)
        ├─ FeaturesPaneController — three groups: Instant switch + Auto-follow +
        │    Instant trackpad swipe + Instant Mission Control toggles, then a
        │    group of its own for the optional "Cycle spaces shortcut" recorder

@@ -83,6 +83,11 @@
 /* %@ is a system error message, itself localized by macOS */
 "settings.autoStart.error" = "Could not update login item: %@";
 
+/* Quit row. The only way to quit when the menu bar icon is hidden.
+   settings.autoStart.quit is the row label, quitNow the button title. */
+"settings.autoStart.quit" = "Quit Space Rabbit";
+"settings.autoStart.quitNow" = "Quit Now";
+
 
 /* --- Settings · Features ------------------------------------------------ */
 
