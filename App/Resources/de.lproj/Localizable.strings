@@ -97,6 +97,9 @@
 "settings.features.cycleSpaces.normalWarning" = "Nicht verfügbar bei Geschwindigkeit „Normal“";
 "settings.features.shortcut.recording" = "Kurzbefehl drücken…";
 "settings.features.shortcut.none" = "Keiner";
+"settings.features.autoFollowIgnored" = "Zu ignorierende Popup-Kurzbefehle";
+"settings.features.autoFollowIgnored.record" = "Kurzbefehl aufzeichnen…";
+"settings.features.autoFollowIgnored.remove" = "Entfernen";
 "settings.features.transitionSpeed" = "Übergangsgeschwindigkeit";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

@@ -48,6 +48,15 @@ private let kAutoFollowEchoWindow: TimeInterval = 0.3
 /// silently swallow the stamp for an unrelated space change much later.
 let kAutoFollowSelfChangeWindow: TimeInterval = 1.5
 
+/// How long after a key-down matching the auto-follow ignore list an app
+/// activation is attributed to that hotkey (see `gLastHotkeyChordTime`).
+///
+/// Hotkey handlers activate their app within a few tens of milliseconds
+/// of the key-down; 300ms covers scheduling delay under load while
+/// staying well below the time between pressing a hotkey and separately
+/// reaching for Cmd+Tab or the Dock.
+private let kAutoFollowIgnoredHotkeyWindow: TimeInterval = 0.3
+
 // MARK: - App Activation Observer
 
 /// Watches for `NSWorkspace.didActivateApplicationNotification` and
@@ -83,6 +92,16 @@ final class SwoopObserver: NSObject {
         // Suppress auto-follow when the user just navigated spaces themselves
         // (see kAutoFollowSuppressionWindow documentation above)
         guard Date().timeIntervalSince(gLastSpaceSwitchTime) > kAutoFollowSuppressionWindow
+        else { return }
+
+        // A hotkey from the user's ignore list just went by: this
+        // activation is that hotkey's doing — an app summoned to open a
+        // popup on the *current* space (Arc's Little Arc). The popup
+        // window does not exist yet at notification time, so
+        // findSpaceForPid would chase the app's main window on another
+        // space and yank the user away from the popup they just summoned.
+        // Stand down and let macOS's native handling take over.
+        guard Date().timeIntervalSince(gLastHotkeyChordTime) > kAutoFollowIgnoredHotkeyWindow
         else { return }
 
         // A Mission Control overview handles navigation itself and our

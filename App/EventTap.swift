@@ -241,6 +241,8 @@ func syncKeyboardAuxiliaryTaps() {
     let claimedKeyListening = gCycleShortcutActiveKeycode != nil
         || gMissionControlActiveKeycode != nil
         || gFnPressState.isDown
+        || gIsRecordingIgnoredHotkey
+        || gIgnoredRecordingClaimedKeycode != nil
 
     // Physical Fn tracking only exists to serve a configured cycle shortcut.
     let modifierListening = gCycleShortcutEnabled
@@ -274,8 +276,9 @@ private func resetFnPressTracking() {
 /// Clears all state tied to a key press Space Rabbit swallowed.
 private func resetKeyTracking() {
     resetFnPressTracking()
-    gCycleShortcutActiveKeycode  = nil
-    gMissionControlActiveKeycode = nil
+    gCycleShortcutActiveKeycode     = nil
+    gMissionControlActiveKeycode    = nil
+    gIgnoredRecordingClaimedKeycode = nil
 }
 
 /// Moves to the next space on the display under the cursor, wrapping from
@@ -423,6 +426,38 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         return passthrough
     }
 
+    // While Preferences records a hotkey for the auto-follow ignore list,
+    // the tap itself is the recorder. The chords being recorded are, by
+    // definition, other apps' registered global hotkeys: the system
+    // delivers them to their registrant, never to our windows, so the
+    // local-monitor recording the cycle shortcut uses would miss the event
+    // entirely — and the hotkey would fire, opening the very popup being
+    // recorded. Swallowing here keeps the other app quiet; the capture is
+    // handed to the recorder control (gIgnoredHotkeyCaptureHandler), which
+    // owns validation and cancellation. The key-up paired with a swallowed
+    // key-down is swallowed too, so no app receives an orphan release.
+    if gIsRecordingIgnoredHotkey || gIgnoredRecordingClaimedKeycode != nil {
+        let captureKeycode = event.getIntegerValueField(.keyboardEventKeycode)
+
+        if type == .keyUp {
+            guard gIgnoredRecordingClaimedKeycode == captureKeycode else { return passthrough }
+            gIgnoredRecordingClaimedKeycode = nil
+            return nil
+        }
+
+        if gIsRecordingIgnoredHotkey, type == .keyDown {
+            gIgnoredRecordingClaimedKeycode = captureKeycode
+            if let capture = event.copy() {
+                DispatchQueue.main.async { gIgnoredHotkeyCaptureHandler?(capture) }
+            }
+            return nil
+        }
+
+        // flagsChanged / systemDefined during recording carry nothing to
+        // capture and nothing to swallow.
+        return passthrough
+    }
+
     // While Preferences records a replacement shortcut, let AppKit receive
     // every candidate event without the existing global binding firing.
     if gIsRecordingCycleShortcut {
@@ -503,6 +538,21 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     // systemDefined is observed only for bare-Fn chord detection. Shortcut
     // matching itself applies to ordinary keyDown events.
     guard type == .keyDown else { return passthrough }
+
+    // Auto-follow's ignore list: when this key-down matches one of the
+    // user's listed popup hotkeys, stamp the time so SwoopObserver stands
+    // down for the app activation that follows — the hotkey's app is about
+    // to open a popup on the *current* space, and chasing its other
+    // windows would yank the user away from it (see gLastHotkeyChordTime).
+    // The event always passes through: the hotkey's own app must still
+    // receive it. Matching mirrors the cycle shortcut: keycode plus exact
+    // modifiers. Free when the list is empty — the default.
+    for chord in gAutoFollowIgnoredChords
+    where keycode == chord.keycode
+        && flags.intersection(chord.matchingModifierMask) == chord.modifiers {
+        gLastHotkeyChordTime = Date()
+        break
+    }
 
     // Keyboard-triggered Mission Control. Matched before the Space shortcuts
     // and independent of the Instant Space switch toggle — this is the Instant

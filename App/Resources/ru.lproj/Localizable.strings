@@ -102,6 +102,9 @@
 "settings.features.cycleSpaces.normalWarning" = "Недоступно при скорости «Обычная»";
 "settings.features.shortcut.recording" = "Нажмите сочетание…";
 "settings.features.shortcut.none" = "Нет";
+"settings.features.autoFollowIgnored" = "Игнорируемые сочетания всплывающих окон";
+"settings.features.autoFollowIgnored.record" = "Записать сочетание…";
+"settings.features.autoFollowIgnored.remove" = "Удалить";
 "settings.features.transitionSpeed" = "Скорость перехода";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own

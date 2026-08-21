@@ -161,6 +161,18 @@ func normalizedSwitchSpeed(_ value: Double) -> Double {
 /// window on yet another space.
 var gLastSpaceSwitchTime: Date = .distantPast
 
+/// Timestamp of the last key-down matching the auto-follow ignore list
+/// (`gAutoFollowIgnoredChords`), or `.distantPast`.
+///
+/// Auto-follow stands down for the app activation that follows one of the
+/// listed hotkeys: the hotkey's app is about to open a popup on the
+/// *current* space, and the popup window does not exist yet when the
+/// activation notification arrives — chasing the app's other windows
+/// would yank the user away from the popup they just summoned. Stamped
+/// by the keyboard event tap (EventTap.swift), read by `SwoopObserver`
+/// (AutoFollow.swift).
+var gLastHotkeyChordTime: Date = .distantPast
+
 /// Process ID of the app auto-follow last chased to another space, or `-1`
 /// when no follow is pending an echo. Cleared as soon as a *different* app
 /// activates, so it only ever suppresses back-to-back notifications for the
@@ -420,6 +432,34 @@ var gCycleShortcut: CycleShortcut? = .fn
 /// tap passes keyboard events through so the field can receive them locally.
 var gIsRecordingCycleShortcut = false
 
+/// True while the Preferences ignore-list recorder is armed. Unlike the
+/// cycle-shortcut recorder — whose local monitor sees events delivered to
+/// our own windows — this recording is performed by the event tap itself,
+/// because the chords being recorded are other apps' registered global
+/// hotkeys and never reach this app through normal dispatch. While set,
+/// the tap swallows every key-down and hands it to
+/// `gIgnoredHotkeyCaptureHandler` instead (EventTap.swift).
+var gIsRecordingIgnoredHotkey = false
+
+/// Receives each key-down the tap captures while
+/// `gIsRecordingIgnoredHotkey` is set, dispatched on the main queue.
+/// Installed by the recording control (ShortcutRecorder.swift), which owns
+/// validation and cancellation.
+var gIgnoredHotkeyCaptureHandler: ((CGEvent) -> Void)?
+
+/// Keycode of a key-down swallowed by ignore-list recording whose key-up
+/// is still owed a swallow, or `nil`.
+var gIgnoredRecordingClaimedKeycode: Int64?
+
+/// Global hotkeys after which auto-follow must stand down, as recorded by
+/// the user in Settings > Features. These are hotkeys that summon an app's
+/// popup onto the *current* space — Arc's Little Arc, iTerm2's hotkey
+/// window — where chasing the app's other windows would be wrong (see
+/// `gLastHotkeyChordTime`). Empty by default, so auto-follow behaves
+/// exactly as before until the user lists something. Persisted under
+/// `Defaults.autoFollowIgnoredHotkeys`.
+var gAutoFollowIgnoredChords: [CycleShortcut] = []
+
 /// Binding for "move left a space" (default: Control + Left Arrow).
 /// `nil` when the hotkey is disabled in System Settings.
 var gBindingLeft: KeyBinding? = (keycode: 123, mods: .maskControl)
@@ -464,6 +504,9 @@ enum Defaults {
     static let cycleShortcutKeycode   = "spacerabbit.cycleShortcut.keycode"
     static let cycleShortcutModifiers = "spacerabbit.cycleShortcut.modifiers"
     static let cycleShortcutLabel     = "spacerabbit.cycleShortcut.label"
+    /// Array of dictionaries (`keycode`, `modifiers`, `label`) — the
+    /// auto-follow ignore list (see `gAutoFollowIgnoredChords`).
+    static let autoFollowIgnoredHotkeys = "spacerabbit.autoFollowIgnoredHotkeys"
     static let switchSpeed      = "spacerabbit.switchSpeed"
     static let switchCount      = "spacerabbit.switchCount"
     /// When `false`, the rabbit icon is removed from the menu bar.
@@ -481,6 +524,35 @@ enum Defaults {
 }
 
 // MARK: - Persistence
+
+/// Reads the auto-follow ignore list into `gAutoFollowIgnoredChords`.
+/// Counterpart of `persistAutoFollowIgnoredChords()`. Malformed entries
+/// are skipped rather than discarding the whole list.
+func loadAutoFollowIgnoredChords() {
+    let stored = UserDefaults.standard.array(forKey: Defaults.autoFollowIgnoredHotkeys)
+        as? [[String: Any]] ?? []
+    gAutoFollowIgnoredChords = stored.compactMap { entry in
+        guard let keycode = (entry["keycode"]   as? NSNumber)?.int64Value,
+              let raw     = (entry["modifiers"] as? NSNumber)?.uint64Value,
+              let label   = entry["label"]      as? String
+        else { return nil }
+        return CycleShortcut(keycode: keycode,
+                             modifiers: CGEventFlags(rawValue: raw),
+                             keyLabel: label)
+    }
+}
+
+/// Writes the auto-follow ignore list.
+func persistAutoFollowIgnoredChords() {
+    UserDefaults.standard.set(
+        gAutoFollowIgnoredChords.map { [
+            "keycode":   NSNumber(value: $0.keycode),
+            "modifiers": NSNumber(value: $0.modifiers.rawValue),
+            "label":     $0.keyLabel,
+        ] },
+        forKey: Defaults.autoFollowIgnoredHotkeys
+    )
+}
 
 /// Reads the configurable cycle shortcut and its enabled state into the
 /// globals. Counterpart of `persistCycleShortcut()` — the negative keycode
