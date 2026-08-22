@@ -175,12 +175,14 @@ toggles between the desktop and one overview, so the inverse always undoes it.
 `pendingMissionControlDirection` is therefore the *opening* decision only.
 
 **Direction sign of real trackpad events** (independent of the posting-side
-convention): right-space iff sign `> 0` on macOS ≤ 26, but `< 0` on macOS 27+, whose
-augmented path inverted the reported sign (checked first, via
-`requiresEventAugmentation()`). Pre-Tahoe (macOS 15 and earlier) was long assumed to
-match 27+ — mirroring iss's build-time `ISS_SWIPE_DIRECTION_REVERSED` — but users on
-those releases reported every swipe going the wrong way, so the rule is now the same
-for everything below 27.
+convention): right-space iff sign `> 0`, unconditionally, on every release this app
+runs on (`isRightSwipe`). The macOS 27 inversion is a *posting-side* convention only
+— assuming it extends to real events makes `isRightSwipe` read every physical swipe
+backwards, so a left-to-right swipe switches to the previous space (issue #40, which
+removed the 27+ branch this paragraph used to describe). Pre-Tahoe (macOS 15 and
+earlier) taught the same lesson earlier: iss's build-time
+`ISS_SWIPE_DIRECTION_REVERSED` suggested those releases read inverted, but users
+reported every swipe going the wrong way there too.
 **"Natural scrolling" needs no handling *on this axis*** and reading
 `com.apple.swipescrolldirection` here is a trap (PR #22, reverted): the window server
 already flips the reported sign when the setting is off, so the table above holds in
