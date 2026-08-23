@@ -83,7 +83,7 @@
 
 /* Quit row. The only way to quit when the menu bar icon is hidden.
    settings.autoStart.quit is the row label, quitNow the button title. */
-"settings.autoStart.quit" = "Space Rabbit beenden";
+"settings.autoStart.quit" = "Space Rabbit vollständig beenden";
 "settings.autoStart.quitNow" = "Jetzt beenden";
 
 
