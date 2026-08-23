@@ -23,6 +23,12 @@ final class ShortcutRecorderButton: NSButton {
     private var shortcut: CycleShortcut?
     private let recordingTitle: String
     private let emptyTitle: String
+    /// When `true`, recording is performed by the global event tap rather
+    /// than a local monitor — required for the auto-follow ignore list,
+    /// whose chords are other apps' live global hotkeys: a local monitor
+    /// would never receive them, and the press would fire the very popup
+    /// being recorded (see `gIsRecordingIgnoredHotkey`).
+    private let capturesGlobally: Bool
     private var localMonitor: Any?
     private var recordingObservers: [NSObjectProtocol] = []
     private var isRecording = false
@@ -30,10 +36,12 @@ final class ShortcutRecorderButton: NSButton {
 
     override var acceptsFirstResponder: Bool { true }
 
-    init(shortcut: CycleShortcut?, recordingTitle: String, emptyTitle: String) {
+    init(shortcut: CycleShortcut?, recordingTitle: String, emptyTitle: String,
+         capturesGlobally: Bool = false) {
         self.shortcut = shortcut
         self.recordingTitle = recordingTitle
         self.emptyTitle = emptyTitle
+        self.capturesGlobally = capturesGlobally
         super.init(frame: .zero)
 
         bezelStyle  = .rounded
@@ -63,17 +71,26 @@ final class ShortcutRecorderButton: NSButton {
 
         isRecording = true
         recordingFnState.reset()
-        gIsRecordingCycleShortcut = true
+        if capturesGlobally {
+            gIsRecordingIgnoredHotkey = true
+            gIgnoredHotkeyCaptureHandler = { [weak self] event in
+                self?.handleGlobalCapture(event)
+            }
+        } else {
+            gIsRecordingCycleShortcut = true
+        }
         syncKeyboardAuxiliaryTaps()
         title = recordingTitle
         window?.makeFirstResponder(self)
 
-        localMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.keyDown, .flagsChanged, .systemDefined]
-        ) { [weak self] event in
-            guard let self, self.isRecording else { return event }
-            self.handleRecordingEvent(event)
-            return nil
+        if !capturesGlobally {
+            localMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.keyDown, .flagsChanged, .systemDefined]
+            ) { [weak self] event in
+                guard let self, self.isRecording else { return event }
+                self.handleRecordingEvent(event)
+                return nil
+            }
         }
 
         let center = NotificationCenter.default
@@ -154,6 +171,41 @@ final class ShortcutRecorderButton: NSButton {
         commit(CycleShortcut(keycode: keycode, modifiers: modifiers, keyLabel: label))
     }
 
+    /// Handles one key-down captured by the event tap while recording for
+    /// the auto-follow ignore list (see `gIsRecordingIgnoredHotkey`). The
+    /// tap has already swallowed the event, so the hotkey's own app stays
+    /// quiet. Validation mirrors `handleRecordingEvent` minus the Fn
+    /// special cases, which cannot occur here — bare Fn arrives as a
+    /// `flagsChanged` and is never captured.
+    private func handleGlobalCapture(_ cgEvent: CGEvent) {
+        guard isRecording, let event = NSEvent(cgEvent: cgEvent) else { return }
+
+        let keycode = Int64(event.keyCode)
+        let modifiers = cycleModifiers(from: event.modifierFlags)
+
+        // Escape cancels; an unmodified Delete commits nothing — both
+        // leave recording mode, exactly like the local path.
+        if keycode == kEscapeKeycode, modifiers.isEmpty {
+            cancelRecording()
+            return
+        }
+        if keycode == kDeleteKeycode || keycode == kForwardDeleteKeycode,
+           modifiers.isEmpty {
+            commit(nil)
+            return
+        }
+
+        guard let (label, isFunctionKey) = keyLabel(for: event),
+              isFunctionKey || !modifiers.intersection(
+                  [.maskControl, .maskAlternate, .maskCommand]).isEmpty
+        else {
+            NSSound.beep()
+            return
+        }
+
+        commit(CycleShortcut(keycode: keycode, modifiers: modifiers, keyLabel: label))
+    }
+
     /// Recognizes Fn by itself while leaving other modifier-only presses
     /// available as part of a later regular-key shortcut.
     private func handleModifierChange(_ event: NSEvent) {
@@ -221,7 +273,12 @@ final class ShortcutRecorderButton: NSButton {
         recordingObservers.removeAll()
         isRecording = false
         recordingFnState.reset()
-        gIsRecordingCycleShortcut = false
+        if capturesGlobally {
+            gIsRecordingIgnoredHotkey = false
+            gIgnoredHotkeyCaptureHandler = nil
+        } else {
+            gIsRecordingCycleShortcut = false
+        }
         syncKeyboardAuxiliaryTaps()
         updateTitle()
     }
