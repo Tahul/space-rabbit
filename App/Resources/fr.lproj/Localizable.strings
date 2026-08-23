@@ -101,9 +101,6 @@
 "settings.features.cycleSpaces.normalWarning" = "Indisponible si la vitesse est «\U00A0Normale\U00A0»";
 "settings.features.shortcut.recording" = "Appuyez sur un raccourci…";
 "settings.features.shortcut.none" = "Aucun";
-"settings.features.autoFollowIgnored" = "Raccourcis de popups à ignorer";
-"settings.features.autoFollowIgnored.record" = "Enregistrer le raccourci…";
-"settings.features.autoFollowIgnored.remove" = "Supprimer";
 "settings.features.transitionSpeed" = "Vitesse de transition";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own
@@ -128,6 +125,13 @@
    once it is off, how to reach the settings window again. */
 "settings.advanced.menuBarSubtitle.visible" = "Ceci masque l’icône de Space Rabbit.";
 "settings.advanced.menuBarSubtitle.hidden" = "Relancez Space Rabbit pour ouvrir les préférences.";
+
+/* Auto-follow ignore list: hotkeys whose popup activation must not
+   pull the user to another space. The recorder doubles as the add button. */
+"settings.advanced.autoFollowIgnored" = "Raccourcis de popups à ignorer";
+"settings.advanced.autoFollowIgnored.subtitle" = "Désactive le suivi automatique pour ces raccourcis.";
+"settings.advanced.autoFollowIgnored.record" = "Enregistrer le raccourci…";
+"settings.advanced.autoFollowIgnored.remove" = "Supprimer";
 
 /* Alert shown after changing the Dock setting (with common.later) */
 "settings.advanced.dockRestart.title" = "Redémarrer le Dock pour appliquer les changements\U00A0?";

@@ -646,6 +646,15 @@ final class SettingsGroupBox: NSBox {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Re-derives the card's height from its rows.
+    ///
+    /// Rows added or removed *inside* an arranged subview (rather than as one
+    /// of the views handed to `init`) do not go through
+    /// `onIntrinsicHeightChanged`, so the owner calls this directly.
+    func invalidateContentHeight() {
+        contentHeightChanged()
+    }
+
     private func contentHeightChanged() {
         contentStack.invalidateIntrinsicContentSize()
         contentStack.needsLayout = true
@@ -1066,8 +1075,6 @@ final class FeaturesPaneController: SettingsPaneViewController {
     private var cycleShortcutControl:  NSSwitch!
     private var shortcutRecorder:      ShortcutRecorderButton!
     private var cycleShortcutRow:      SettingsRowView!
-    private var ignoredHotkeysRecorder: ShortcutRecorderButton!
-    private var ignoredHotkeysStack:    NSStackView!
     private var speedSlider:           NSSlider!
     private var speedValueLabel:       NSTextField!
     private var speedBoltIcon:         NSImageView!
@@ -1129,42 +1136,12 @@ final class FeaturesPaneController: SettingsPaneViewController {
         // rather than reading as part of either neighbouring group
         let cycleGroup = groupBox([cycleShortcutRow])
 
-        // Auto-follow's ignore list: popup hotkeys the user records here
-        // are stamped by the event tap so auto-follow stands down for the
-        // activation they cause (see gAutoFollowIgnoredChords). The
-        // recorder doubles as the "add" control; each recorded hotkey
-        // becomes a removable row below it.
-        ignoredHotkeysRecorder = ShortcutRecorderButton(
-            shortcut: nil,
-            recordingTitle: L("settings.features.shortcut.recording"),
-            emptyTitle: L("settings.features.autoFollowIgnored.record"),
-            capturesGlobally: true
-        )
-        ignoredHotkeysRecorder.onChange = { [weak self] shortcut in
-            self?.ignoredHotkeyRecorded(shortcut)
-        }
-        ignoredHotkeysRecorder.widthAnchor.constraint(
-            greaterThanOrEqualToConstant: Layout.shortcutMinWidth
-        ).isActive = true
-
-        ignoredHotkeysStack = NSStackView()
-        ignoredHotkeysStack.orientation = .vertical
-        ignoredHotkeysStack.alignment   = .width
-        ignoredHotkeysStack.spacing     = 0
-
-        let ignoredGroup = groupBox([
-            settingsRow(label: L("settings.features.autoFollowIgnored"),
-                        control: ignoredHotkeysRecorder),
-            ignoredHotkeysStack,
-        ])
-        rebuildIgnoredHotkeyRows(resize: false)
-
         let speedGroup = groupBox([
             settingsRow(label: L("settings.features.transitionSpeed"),
                         control: makeSpeedControl()),
         ])
         updateCycleShortcutAvailability()
-        return [togglesGroup, ignoredGroup, cycleGroup, speedGroup]
+        return [togglesGroup, cycleGroup, speedGroup]
     }
 
     override func syncFromGlobals() {
@@ -1176,65 +1153,9 @@ final class FeaturesPaneController: SettingsPaneViewController {
         missionControlControl.state   = gInstantMissionControlEnabled ? .on : .off
         cycleShortcutControl.state    = gCycleShortcutEnabled    ? .on : .off
         shortcutRecorder.setShortcut(gCycleShortcut)
-        rebuildIgnoredHotkeyRows()
         speedSlider.doubleValue       = gSwitchSpeed
         updateSpeedDisplay()
         updateCycleShortcutAvailability()
-    }
-
-    /// Rebuilds the removable per-hotkey rows of the auto-follow ignore
-    /// list, one row per recorded chord, each preceded by a divider.
-    private func rebuildIgnoredHotkeyRows(resize: Bool = true) {
-        ignoredHotkeysStack.arrangedSubviews.forEach {
-            ignoredHotkeysStack.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-        for (index, chord) in gAutoFollowIgnoredChords.enumerated() {
-            let remove = NSButton(
-                image: NSImage(systemSymbolName: "minus.circle.fill",
-                               accessibilityDescription:
-                                   L("settings.features.autoFollowIgnored.remove"))!,
-                target: self,
-                action: #selector(removeIgnoredHotkey(_:))
-            )
-            remove.isBordered = false
-            remove.contentTintColor = .secondaryLabelColor
-            remove.toolTip = L("settings.features.autoFollowIgnored.remove")
-            remove.tag = index
-
-            ignoredHotkeysStack.addArrangedSubview(rowDivider())
-            ignoredHotkeysStack.addArrangedSubview(
-                settingsRow(label: chord.displayString, control: remove)
-            )
-        }
-        if resize { resizePaneToFit() }
-    }
-
-    /// A newly recorded hotkey for the ignore list. Bare Fn cannot work
-    /// here — its press is a `flagsChanged`, invisible to the key-down
-    /// match — and duplicates add nothing; both are refused with a beep.
-    /// The recorder itself is reset either way: it is an "add" button,
-    /// not a display of any one binding.
-    private func ignoredHotkeyRecorded(_ shortcut: CycleShortcut?) {
-        ignoredHotkeysRecorder.setShortcut(nil)
-        guard let shortcut, !shortcut.isBareFn,
-              !gAutoFollowIgnoredChords.contains(where: {
-                  $0.keycode == shortcut.keycode && $0.modifiers == shortcut.modifiers
-              })
-        else {
-            if shortcut != nil { NSSound.beep() }
-            return
-        }
-        gAutoFollowIgnoredChords.append(shortcut)
-        persistAutoFollowIgnoredChords()
-        rebuildIgnoredHotkeyRows()
-    }
-
-    @objc private func removeIgnoredHotkey(_ sender: NSButton) {
-        guard gAutoFollowIgnoredChords.indices.contains(sender.tag) else { return }
-        gAutoFollowIgnoredChords.remove(at: sender.tag)
-        persistAutoFollowIgnoredChords()
-        rebuildIgnoredHotkeyRows()
     }
 
     /// Builds the transition-speed control: a 5-tick slider with a trailing
@@ -1442,7 +1363,8 @@ final class FeaturesPaneController: SettingsPaneViewController {
 
 // MARK: - Advanced Pane
 
-/// The "Advanced" pane: Dock instant-hide and menu bar icon visibility.
+/// The "Advanced" pane: Dock instant-hide, menu bar icon visibility, and
+/// auto-follow's popup-hotkey ignore list.
 ///
 /// macOS supports a hidden preference `autohide-time-modifier` on com.apple.dock
 /// that controls the Dock show/hide animation speed. Setting it to 0.0 makes the
@@ -1459,6 +1381,9 @@ final class AdvancedPaneController: SettingsPaneViewController {
     private var menuBarSubtitle:        NSTextField!
     private var dockResetDivider:       NSView!
     private var dockResetRow:           NSView!
+    private var ignoredHotkeysRecorder: ShortcutRecorderButton!
+    private var ignoredHotkeysStack:    NSStackView!
+    private var ignoredHotkeysGroup:    SettingsGroupBox!
 
     /// The Dock preference key that controls autohide animation duration.
     private let dockAutohideKey = "autohide-time-modifier" as CFString
@@ -1541,7 +1466,45 @@ final class AdvancedPaneController: SettingsPaneViewController {
                 subtitle: menuBarSubtitle
             ),
         ])
-        return [dockGroup, menuBarGroup]
+
+        // Auto-follow's ignore list: popup hotkeys the user records here
+        // are stamped by the event tap so auto-follow stands down for the
+        // activation they cause (see gAutoFollowIgnoredChords). The
+        // recorder doubles as the "add" control; each recorded hotkey
+        // becomes a removable row below it.
+        ignoredHotkeysRecorder = ShortcutRecorderButton(
+            shortcut: nil,
+            recordingTitle: L("settings.features.shortcut.recording"),
+            emptyTitle: L("settings.advanced.autoFollowIgnored.record"),
+            capturesGlobally: true
+        )
+        ignoredHotkeysRecorder.onChange = { [weak self] shortcut in
+            self?.ignoredHotkeyRecorded(shortcut)
+        }
+        ignoredHotkeysRecorder.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: Layout.shortcutMinWidth
+        ).isActive = true
+
+        ignoredHotkeysStack = NSStackView()
+        ignoredHotkeysStack.orientation = .vertical
+        ignoredHotkeysStack.alignment   = .width
+        ignoredHotkeysStack.spacing     = 0
+
+        let ignoredSubtitle = NSTextField(wrappingLabelWithString:
+            L("settings.advanced.autoFollowIgnored.subtitle"))
+        ignoredSubtitle.font                    = .systemFont(ofSize: 11)
+        ignoredSubtitle.textColor               = .secondaryLabelColor
+        ignoredSubtitle.preferredMaxLayoutWidth = 240
+
+        ignoredHotkeysGroup = groupBox([
+            settingsRow(label:    L("settings.advanced.autoFollowIgnored"),
+                        control:  ignoredHotkeysRecorder,
+                        subtitle: ignoredSubtitle),
+            ignoredHotkeysStack,
+        ])
+        rebuildIgnoredHotkeyRows(resize: false)
+
+        return [dockGroup, menuBarGroup, ignoredHotkeysGroup]
     }
 
     override func syncFromGlobals() {
@@ -1550,7 +1513,72 @@ final class AdvancedPaneController: SettingsPaneViewController {
             ?? UserDefaults.standard.bool(forKey: Defaults.showMenuBarIcon)
         showMenuBarIconControl.state = menuBarVisible ? .on : .off
         updateMenuBarSubtitle()
+        rebuildIgnoredHotkeyRows(resize: false)
         updateDockResetLink()
+    }
+
+    // MARK: Auto-Follow Ignore List
+
+    /// Rebuilds the removable per-hotkey rows of the auto-follow ignore
+    /// list, one row per recorded chord, each preceded by a divider.
+    ///
+    /// The rows live *inside* an arranged subview of the card, so the card's
+    /// own height has to be invalidated by hand before the window is asked to
+    /// refit — otherwise it keeps the height it had at the previous count and
+    /// added rows are clipped (or removed ones leave a gap).
+    private func rebuildIgnoredHotkeyRows(resize: Bool = true) {
+        ignoredHotkeysStack.arrangedSubviews.forEach {
+            ignoredHotkeysStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        for (index, chord) in gAutoFollowIgnoredChords.enumerated() {
+            let remove = NSButton(
+                image: NSImage(systemSymbolName: "minus.circle.fill",
+                               accessibilityDescription:
+                                   L("settings.advanced.autoFollowIgnored.remove"))!,
+                target: self,
+                action: #selector(removeIgnoredHotkey(_:))
+            )
+            remove.isBordered = false
+            remove.contentTintColor = .secondaryLabelColor
+            remove.toolTip = L("settings.advanced.autoFollowIgnored.remove")
+            remove.tag = index
+
+            ignoredHotkeysStack.addArrangedSubview(rowDivider())
+            ignoredHotkeysStack.addArrangedSubview(
+                settingsRow(label: chord.displayString, control: remove)
+            )
+        }
+        ignoredHotkeysStack.layoutSubtreeIfNeeded()
+        ignoredHotkeysGroup.invalidateContentHeight()
+        if resize { resizePaneToFit() }
+    }
+
+    /// A newly recorded hotkey for the ignore list. Bare Fn cannot work
+    /// here — its press is a `flagsChanged`, invisible to the key-down
+    /// match — and duplicates add nothing; both are refused with a beep.
+    /// The recorder itself is reset either way: it is an "add" button,
+    /// not a display of any one binding.
+    private func ignoredHotkeyRecorded(_ shortcut: CycleShortcut?) {
+        ignoredHotkeysRecorder.setShortcut(nil)
+        guard let shortcut, !shortcut.isBareFn,
+              !gAutoFollowIgnoredChords.contains(where: {
+                  $0.keycode == shortcut.keycode && $0.modifiers == shortcut.modifiers
+              })
+        else {
+            if shortcut != nil { NSSound.beep() }
+            return
+        }
+        gAutoFollowIgnoredChords.append(shortcut)
+        persistAutoFollowIgnoredChords()
+        rebuildIgnoredHotkeyRows()
+    }
+
+    @objc private func removeIgnoredHotkey(_ sender: NSButton) {
+        guard gAutoFollowIgnoredChords.indices.contains(sender.tag) else { return }
+        gAutoFollowIgnoredChords.remove(at: sender.tag)
+        persistAutoFollowIgnoredChords()
+        rebuildIgnoredHotkeyRows()
     }
 
     /// Checks whether the Dock's autohide animation is set to instant (0.0 seconds).

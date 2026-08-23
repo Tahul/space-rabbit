@@ -102,9 +102,6 @@
 "settings.features.cycleSpaces.normalWarning" = "速度为“正常”时不可用";
 "settings.features.shortcut.recording" = "按下快捷键…";
 "settings.features.shortcut.none" = "无";
-"settings.features.autoFollowIgnored" = "要忽略的弹窗快捷键";
-"settings.features.autoFollowIgnored.record" = "录制快捷键…";
-"settings.features.autoFollowIgnored.remove" = "移除";
 "settings.features.transitionSpeed" = "过渡速度";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own
@@ -128,6 +125,13 @@
    once it is off, how to reach the settings window again. */
 "settings.advanced.menuBarSubtitle.visible" = "这会隐藏 Space Rabbit 图标。";
 "settings.advanced.menuBarSubtitle.hidden" = "再次启动 Space Rabbit 即可打开偏好设置。";
+
+/* Auto-follow ignore list: hotkeys whose popup activation must not
+   pull the user to another space. The recorder doubles as the add button. */
+"settings.advanced.autoFollowIgnored" = "要忽略的弹窗快捷键";
+"settings.advanced.autoFollowIgnored.subtitle" = "对这些快捷键停用自动跟随。";
+"settings.advanced.autoFollowIgnored.record" = "录制快捷键…";
+"settings.advanced.autoFollowIgnored.remove" = "移除";
 
 /* Alert shown after changing the Dock setting (with common.later) */
 "settings.advanced.dockRestart.title" = "要重启程序坞以应用更改吗？";

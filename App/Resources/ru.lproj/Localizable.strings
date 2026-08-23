@@ -102,9 +102,6 @@
 "settings.features.cycleSpaces.normalWarning" = "Недоступно при скорости «Обычная»";
 "settings.features.shortcut.recording" = "Нажмите сочетание…";
 "settings.features.shortcut.none" = "Нет";
-"settings.features.autoFollowIgnored" = "Игнорируемые сочетания всплывающих окон";
-"settings.features.autoFollowIgnored.record" = "Записать сочетание…";
-"settings.features.autoFollowIgnored.remove" = "Удалить";
 "settings.features.transitionSpeed" = "Скорость перехода";
 
 /* Transition-speed slider ticks, slowest to fastest. "Normal" is macOS's own
@@ -129,6 +126,13 @@
    once it is off, how to reach the settings window again. */
 "settings.advanced.menuBarSubtitle.visible" = "Это скроет значок Space Rabbit.";
 "settings.advanced.menuBarSubtitle.hidden" = "Запустите Space Rabbit снова, чтобы открыть настройки.";
+
+/* Auto-follow ignore list: hotkeys whose popup activation must not
+   pull the user to another space. The recorder doubles as the add button. */
+"settings.advanced.autoFollowIgnored" = "Игнорируемые сочетания всплывающих окон";
+"settings.advanced.autoFollowIgnored.subtitle" = "Отключает автопереход для этих сочетаний.";
+"settings.advanced.autoFollowIgnored.record" = "Записать сочетание…";
+"settings.advanced.autoFollowIgnored.remove" = "Удалить";
 
 /* Alert shown after changing the Dock setting (with common.later) */
 "settings.advanced.dockRestart.title" = "Перезапустить Dock, чтобы применить изменения?";
