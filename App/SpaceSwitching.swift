@@ -53,9 +53,10 @@ private let kIOHIDSwipeDown: Int64 = 2
 /// Hardened instant-switch velocity used by augmented horizontal gestures and
 /// the Instant vertical Mission Control gesture. macOS 27 raised the Dock's
 /// horizontal threshold; macOS 26 Mission Control dismissal also needs this
-/// extreme value to eliminate its final zoom frames. Note the inverted sign
-/// convention on the augmented horizontal path: NEGATIVE velocity and progress
-/// move right, positive move left.
+/// extreme value to eliminate its final zoom frames. The sign convention on
+/// the augmented horizontal path is build-dependent — see
+/// `requiresInvertedAugmentedSigns()` and the "macOS 27 Gesture Augmentation"
+/// section.
 private let kAugmentedInstantVelocity: Double = 9999.0
 
 /// Velocity range for animated (non-instant) switches, mapped from the
@@ -707,21 +708,27 @@ private func displayID(forIdentifier identifier: String) -> CGDirectDisplayID? {
 //   3. Post a full Began+Changed+Ended phase sequence (the pre-27 path
 //      gets away with Began+Ended only).
 //
-// The sign convention also inverted on this path: negative progress and
-// velocity move RIGHT, positive move LEFT — the opposite of the legacy
-// path, and what joshuarli/iss posts.
+// The sign convention on this path depends on the exact macOS 27 BUILD.
+// The early 27.0 developer seeds inverted it — negative progress and
+// velocity move RIGHT, positive move LEFT, the opposite of the legacy
+// path, and what joshuarli/iss posts — and later seeds restored the
+// legacy orientation. Both states have been measured directly, by
+// posting the augmented sequence and reading the resulting index back
+// from CGSCopyManagedDisplaySpaces:
 //
-// Do NOT "un-invert" these signs to match the legacy path. That was tried
-// (PR #15, reverted) on the theory that a newer beta had restored the
-// normal orientation, and it is what issue #19 reports: every Ctrl+Arrow
-// travels the wrong way, so the shortcut walks to the first/last space
-// instead of stepping, and at either edge the Dock flashes black and
-// rubber-bands back to the space it started on. Measured directly on
-// build 26A5388g by posting the augmented sequence and reading the
-// resulting index back from CGSCopyManagedDisplaySpaces:
+//   build 26A5388g:  +1.0 / +9999  ->  moves LEFT   (inverted)
+//   build 26A5416b:  +1.0 / +9999  ->  moves RIGHT  (restored)
 //
-//   progress/velocity  +1.0 / +9999  ->  moves LEFT
-//   progress/velocity  -1.0 / -9999  ->  moves RIGHT
+// On a build posting the wrong convention every switch travels the wrong
+// way: Ctrl+Arrow walks to the first/last space instead of stepping, and
+// at either edge the Dock flashes black and rubber-bands back to the
+// space it started on. That is what issue #19 reported when the signs
+// were un-inverted while 26A5388g was current (PR #15, reverted), and
+// what issue #54 reported on 26A5416b, where the Dock expects them
+// un-inverted again. `requiresInvertedAugmentedSigns()` below picks the
+// convention from the OS build string — do not replace it with a
+// hardcoded sign in either direction; Apple has flipped this twice
+// within one major version.
 //
 // This is the posting convention only. Reading the direction of a real
 // trackpad gesture is a separate question with its own rule — see
@@ -733,6 +740,61 @@ func requiresEventAugmentation() -> Bool { gAugmentationRequired }
 
 private let gAugmentationRequired: Bool =
     ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
+
+/// Whether the augmented horizontal path must post the INVERTED sign
+/// convention (negative progress/velocity = right). Only the early
+/// macOS 27.0 seeds want that; build 26A5416b restored the pre-27
+/// orientation (see the sign-convention section above).
+func requiresInvertedAugmentedSigns() -> Bool { gInvertedAugmentedSigns }
+
+/// First macOS 27 build number measured with the restored sign
+/// orientation (26A5416b). Builds between it and the last one measured
+/// inverted (26A5388g) never got a public seed to measure; if one turns
+/// up wrong, move this boundary to it.
+private let kFirstRestoredSignOSBuild = 5416
+
+/// The inverted convention existed only inside the macOS 27.0 beta train
+/// ("26A" builds below the restored boundary). Later trains (26B+), later
+/// majors, and unparseable build strings all use the restored orientation
+/// — matching the legacy path, the measured current seed, and the only
+/// safe default for builds Apple ships after this code is written.
+private let gInvertedAugmentedSigns: Bool = {
+    guard gAugmentationRequired,
+          let build = parseOSBuild(osBuildString()),
+          build.train == 26, build.letter == "A"
+    else { return false }
+    return build.number < kFirstRestoredSignOSBuild
+}()
+
+/// Returns the OS build string (e.g. "26A5416b") from `kern.osversion`,
+/// or "" if the sysctl fails.
+private func osBuildString() -> String {
+    var size = 0
+    guard sysctlbyname("kern.osversion", nil, &size, nil, 0) == 0, size > 0
+    else { return "" }
+    var buffer = [CChar](repeating: 0, count: size)
+    guard sysctlbyname("kern.osversion", &buffer, &size, nil, 0) == 0
+    else { return "" }
+    return String(cString: buffer)
+}
+
+/// Splits an Apple build string into its Darwin train number, train
+/// letter(s), and build number — "26A5416b" -> (26, "A", 5416). The
+/// trailing lowercase beta-revision suffix is ignored. Returns `nil`
+/// for anything that does not follow that shape.
+private func parseOSBuild(_ build: String)
+    -> (train: Int, letter: String, number: Int)? {
+    var rest = Substring(build)
+    let trainDigits  = rest.prefix(while: { $0.isNumber })
+    rest = rest.dropFirst(trainDigits.count)
+    let letters      = rest.prefix(while: { $0.isUppercase })
+    rest = rest.dropFirst(letters.count)
+    let numberDigits = rest.prefix(while: { $0.isNumber })
+
+    guard let train = Int(trainDigits), !letters.isEmpty,
+          let number = Int(numberDigits) else { return nil }
+    return (train, String(letters), number)
+}
 
 /// Whether this release uses a vertical DockSwipe schema known to the Instant
 /// Mission Control interceptor. Unknown future private schemas stay native.
@@ -985,9 +1047,9 @@ private func missionControlAnimationDuration(for velocity: Double) -> TimeInterv
 /// Signed progress/velocity multiplier for one axis of a controlled DockSwipe.
 ///
 /// Vertical is straightforward: `+1` enters Mission Control, `-1` dismisses it,
-/// on every release. Horizontal inherits the posting-side inversion documented
-/// in the "macOS 27 Gesture Augmentation" section — negative moves right there,
-/// positive moves right everywhere below it.
+/// on every release. Horizontal inherits the augmented path's build-dependent
+/// posting convention documented in the "macOS 27 Gesture Augmentation"
+/// section; below macOS 27 positive always moves right.
 ///
 /// - Parameters:
 ///   - motion: `kGestureMotionVertical` or `kGestureMotionHorizontal`.
@@ -996,9 +1058,10 @@ private func missionControlAnimationDuration(for velocity: Double) -> TimeInterv
 /// - Returns: `+1.0` or `-1.0`.
 private func controlledDockSwipeSign(motion: Int64, direction: Int,
                                      augmented: Bool) -> Double {
-    let forward = direction > 0
-    if motion == kGestureMotionHorizontal, augmented { return forward ? -1.0 : 1.0 }
-    return forward ? 1.0 : -1.0
+    if motion == kGestureMotionHorizontal, augmented {
+        return augmentedHorizontalSign(isRight: direction > 0)
+    }
+    return direction > 0 ? 1.0 : -1.0
 }
 
 /// Creates one phase of a controlled Mission Control-family DockSwipe.
@@ -1364,10 +1427,21 @@ func makeMissionControlCleanupEvent(from physicalEvent: CGEvent) -> CGEvent? {
     return augmentDockSwipeEvent(cleanup, mayCarryExistingPayload: true)
 }
 
+/// Signed multiplier the augmented horizontal path applies to progress and
+/// velocity. Which sign moves right depends on the macOS 27 build — see the
+/// "macOS 27 Gesture Augmentation" section.
+///
+/// - Parameter isRight: `true` to move to the next space (right).
+/// - Returns: `+1.0` or `-1.0`.
+private func augmentedHorizontalSign(isRight: Bool) -> Double {
+    requiresInvertedAugmentedSigns() ? (isRight ? -1.0 : 1.0)
+                                     : (isRight ? 1.0 : -1.0)
+}
+
 /// Creates one phase of the macOS 27 dock swipe, with the extra fields
 /// the 27 Dock validates (phase mirror, flavor, timestamp, non-zero
-/// position). Progress/velocity signs are INVERTED relative to the
-/// legacy path: negative moves right, positive moves left.
+/// position). Progress/velocity signs follow the build-dependent
+/// convention of `augmentedHorizontalSign(isRight:)`.
 ///
 /// - Parameters:
 ///   - phase: `kCGSGesturePhaseBegan`, `...Changed`, or `...Ended`.
@@ -1378,10 +1452,12 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
                                     velocity: Double) -> CGEvent? {
     guard let ev = CGEvent(source: nil) else { return nil }
 
+    let sign = augmentedHorizontalSign(isRight: isRight)
+
     ev.setIntegerValueField(kCGSEventTypeField,          value: kCGSEventDockControl)
     ev.setIntegerValueField(kCGEventGestureHIDType,      value: kIOHIDEventTypeDockSwipe)
     ev.setIntegerValueField(kCGEventGesturePhase,        value: phase)
-    ev.setDoubleValueField(kCGEventGestureSwipeProgress, value: isRight ? -1.0 : 1.0)
+    ev.setDoubleValueField(kCGEventGestureSwipeProgress, value: sign)
     ev.setIntegerValueField(kCGEventGestureSwipeMotion,  value: kGestureMotionHorizontal)
     ev.setIntegerValueField(kCGEventGesturePhase2,       value: phase)
     ev.setDoubleValueField(kCGEventGestureFlavor,        value: Double(kIOHIDGestureFlavorDockPrimary))
@@ -1390,7 +1466,7 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
 
     if phase == kCGSGesturePhaseEnded {
         ev.setDoubleValueField(kCGEventGestureSwipeVelocityX,
-                               value: isRight ? -velocity : velocity)
+                               value: sign * velocity)
     }
     return ev
 }
