@@ -352,7 +352,11 @@ private func finishMissionControlInterception() {
 /// in-process cache that a change made by System Settings does not invalidate,
 /// so without it a user who flips the setting keeps the old gesture mapping
 /// until Space Rabbit is relaunched. Called once per gesture, never per event.
-private func naturalScrollingEnabled() -> Bool {
+///
+/// Also consulted by `requiresInvertedAugmentedSigns()` (SpaceSwitching.swift):
+/// from macOS 27 build 26A5416 the Dock's interpretation of the SYNTHETIC
+/// horizontal DockSwipe sign follows this preference too.
+func naturalScrollingEnabled() -> Bool {
     CFPreferencesSynchronize(kCFPreferencesAnyApplication,
                              kCFPreferencesCurrentUser,
                              kCFPreferencesCurrentHost)
