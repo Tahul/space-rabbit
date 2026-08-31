@@ -108,6 +108,27 @@ final class SwoopObserver: NSObject {
         // gestures land back where they started — see isMissionControlActive()
         guard !isMissionControlActive() else { return }
 
+        // The visible space changed since auto-follow last looked, and no
+        // guard above claimed the change: the user just *arrived* here via
+        // a native transition (a Mission Control desktop click, or a
+        // native swipe / keyboard switch with the corresponding instant
+        // feature off — Space Rabbit posted nothing, so nothing stamped
+        // gLastSpaceSwitchTime, and the space-change notification that
+        // would have has not landed yet). This activation is the arrival's
+        // fallout — macOS focusing whatever lives on the new space,
+        // typically Finder on an empty desktop — not the user switching
+        // apps. Chasing it would yank the user straight back out of the
+        // space they just chose: on an empty desktop the only Finder
+        // window to chase is the desktop-icons window, anchored to another
+        // space entirely (issue #49). Remember the new spaces and stand
+        // down; a genuine app switch arrives with the spaces unchanged
+        // since this look.
+        let currentSpaces = Set(getAllCurrentSpaces())
+        if currentSpaces != gLastSeenCurrentSpaces {
+            gLastSeenCurrentSpaces = currentSpaces
+            return
+        }
+
         // Find which space the app's windows are on.
         // Returns 0 if the app is already on a visible space (no switch needed).
         let targetSpace = findSpaceForPid(pid)

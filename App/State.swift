@@ -191,6 +191,23 @@ var gLastFollowedTime: Date = .distantPast
 /// the user's next rapid Cmd+Tab back to macOS's animated switch (issue #24).
 var gAutoFollowTargetSpace: CGSSpaceID = 0
 
+/// The space IDs that were visible the last time auto-follow (or the
+/// space-change observer) looked — used to recognize activations that are
+/// the fallout of *arriving* on a space rather than the user switching
+/// apps.
+///
+/// A native transition — a Mission Control desktop click, or a native
+/// swipe / keyboard switch when the corresponding instant feature is off —
+/// changes the visible space without Space Rabbit posting anything, and
+/// the arrival activates whatever lives there (Finder, on an empty
+/// desktop) *before* `activeSpaceDidChangeNotification` delivers the
+/// `gLastSpaceSwitchTime` stamp. Comparing the actual current spaces
+/// against this cache catches those arrivals synchronously, independent
+/// of notification ordering (issue #49). Seeded at launch, refreshed by
+/// the space-change observer (main.swift) and by the arrival check itself
+/// (AutoFollow.swift).
+var gLastSeenCurrentSpaces: Set<CGSSpaceID> = []
+
 // MARK: - Swipe Intercept State
 //
 // Tracking state for the shared gesture-intercept tap. One physical swipe

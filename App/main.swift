@@ -160,6 +160,11 @@ NSWorkspace.shared.notificationCenter.addObserver(
     object: nil
 )
 
+// Seed the arrival cache with the spaces visible at launch (see
+// gLastSeenCurrentSpaces) so the first activation is not misread as an
+// arrival.
+gLastSeenCurrentSpaces = Set(getAllCurrentSpaces())
+
 // Also stamp the switch time on any space change (covers trackpad swipes,
 // which bypass the event tap entirely). This notification arrives before
 // the app activation notification, so the auto-follow suppression guard
@@ -174,6 +179,11 @@ NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.activeSpaceDidChangeNotification,
     object: nil, queue: .main
 ) { _ in
+    // Whatever caused this change, the spaces on screen are now current —
+    // refresh the arrival cache so it only ever flags changes auto-follow
+    // has not yet seen (see gLastSeenCurrentSpaces).
+    gLastSeenCurrentSpaces = Set(getAllCurrentSpaces())
+
     // A multi-step follow reports intermediate spaces first; only the
     // notification that actually lands on the destination counts as ours
     // and retires the record. Anything older than the grace window is
