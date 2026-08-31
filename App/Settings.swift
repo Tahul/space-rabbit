@@ -320,6 +320,7 @@ final class SettingsSidebarController: NSViewController {
 
     private var mainTable:   NSTableView!
     private var bottomTable: NSTableView!
+    private var quitButton:  NSButton!
 
     private var mainTop:      NSLayoutConstraint!
     private var mainHeight:   NSLayoutConstraint!
@@ -337,6 +338,28 @@ final class SettingsSidebarController: NSViewController {
         bottomTable.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(mainTable)
         container.addSubview(bottomTable)
+
+        // Always-visible Quit at the sidebar's foot. The Dock icon is always
+        // hidden and the menu bar icon can be hidden too (Advanced pane) —
+        // which also removes the dropdown's quit item. A quit that lives on
+        // one pane is invisible from the others; the sidebar shows on every
+        // pane, in particular for hidden-icon users whose relaunch
+        // deep-links to Advanced (issue #58).
+        quitButton = NSButton(title: L("menu.quit"), target: self,
+                              action: #selector(quitApp))
+        quitButton.isBordered       = false
+        quitButton.font             = .systemFont(ofSize: 13)
+        quitButton.contentTintColor = .secondaryLabelColor
+        if let icon = NSImage(systemSymbolName: "power", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(
+                pointSize: Layout.sidebarSymbolSize, weight: .medium)) {
+            icon.isTemplate           = true
+            quitButton.image          = icon
+            quitButton.imagePosition  = .imageLeading
+            quitButton.imageHugsTitle = true
+        }
+        quitButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(quitButton)
 
         view = container
         mainTable.reloadData()
@@ -362,9 +385,17 @@ final class SettingsSidebarController: NSViewController {
 
             bottomTable.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             bottomTable.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            bottomTable.bottomAnchor.constraint(equalTo: container.bottomAnchor,
-                                                constant: -8),
+            bottomTable.bottomAnchor.constraint(equalTo: quitButton.topAnchor,
+                                                constant: -6),
             bottomHeight,
+
+            // Inset to line up with the source-list rows' icon column.
+            quitButton.leadingAnchor.constraint(equalTo: container.leadingAnchor,
+                                                constant: 14),
+            quitButton.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor,
+                                                 constant: -10),
+            quitButton.bottomAnchor.constraint(equalTo: container.bottomAnchor,
+                                               constant: -12),
         ])
     }
 
@@ -394,6 +425,12 @@ final class SettingsSidebarController: NSViewController {
                        - mainTable.rect(ofRow: 0).minY
             if abs(mainTop.constant - topFit) > 0.5 { mainTop.constant = topFit }
         }
+    }
+
+    /// Quits the app, the same way the menu bar's Quit item does (the
+    /// termination handler flushes statistics and tears the taps down).
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
     }
 
     /// Selects the given pane's row in whichever list owns it (fires `onSelect`).
@@ -870,8 +907,7 @@ class SettingsPaneViewController: NSViewController {
 
 // MARK: - Auto-Start Pane
 
-/// The "Auto-Start" pane: Launch at Login toggle, its warning banner, and
-/// the Quit button (the only way out for users who hid the menu bar icon).
+/// The "Auto-Start" pane: Launch at Login toggle and its warning banner.
 final class AutoStartPaneController: SettingsPaneViewController {
 
     /// When `true`, the launch warning banner will flash on next appearance.
@@ -903,36 +939,6 @@ final class AutoStartPaneController: SettingsPaneViewController {
             subtitle: launchStatusLabel
         )])
         return [launchWarningBanner, group]
-    }
-
-    /// The Quit group sits on the pane's bottom edge, away from the settings.
-    override func buildBottomContent() -> [NSView] {
-        [buildQuitGroup()]
-    }
-
-    /// Builds the group holding the Quit button.
-    ///
-    /// The menu bar icon can be hidden from the Advanced pane, which also
-    /// removes the dropdown's "Quit Space Rabbit" item — this is then the only
-    /// in-app way to stop the app.
-    private func buildQuitGroup() -> NSView {
-        let quitButton = NSButton(title: L("settings.autoStart.quitNow"),
-                                  target: self, action: #selector(quitApp))
-        quitButton.bezelStyle = .rounded
-
-        if let icon = NSImage(systemSymbolName: "power", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11,
-                                                                 weight: .medium)) {
-            icon.isTemplate           = true
-            quitButton.image          = icon
-            quitButton.imagePosition  = .imageLeading
-            quitButton.imageHugsTitle = true
-        }
-
-        return groupBox([settingsRow(
-            label:   L("settings.autoStart.quit"),
-            control: quitButton
-        )])
     }
 
     override func viewDidLoad() {
@@ -1051,12 +1057,6 @@ final class AutoStartPaneController: SettingsPaneViewController {
             fputs("Space Rabbit: launch at login: \(error)\n", stderr)
             updateLaunchAtLoginUI(errorMessage: msg)
         }
-    }
-
-    /// Quits the app, the same way the menu bar's Quit item does (the
-    /// termination handler flushes statistics and tears the taps down).
-    @objc private func quitApp() {
-        NSApp.terminate(nil)
     }
 }
 
