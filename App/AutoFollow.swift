@@ -57,6 +57,71 @@ let kAutoFollowSelfChangeWindow: TimeInterval = 1.5
 /// reaching for Cmd+Tab or the Dock.
 private let kAutoFollowIgnoredHotkeyWindow: TimeInterval = 0.3
 
+/// How recently a mouse-down (either button) must have occurred for an
+/// activation to be attributed to a click, paired with the pointer sitting inside one of
+/// the activated app's onscreen windows (see
+/// `pointerInsideOnscreenWindow`).
+///
+/// Click-to-activation is normally a few tens of milliseconds; 0.5s covers
+/// a slow app response without catching activations that merely happen
+/// some time after an unrelated click. A miss in either direction falls
+/// back to behavior that already exists: macOS's native handling, or
+/// today's chase.
+private let kAutoFollowClickWindow: TimeInterval = 0.5
+
+// MARK: - Clicked-Window Detection
+
+/// Whether the pointer currently sits inside one of the process's onscreen
+/// windows, at any window layer.
+///
+/// Used to recognize activations caused by clicking a visible window of
+/// the app. The clicked window is right where the user is, so no
+/// navigation is needed — and native activation performs none either.
+/// Layer-agnostic on purpose: the windows this matters for are exactly the
+/// ones `findSpaceForPid`'s census cannot credit — Arc's floating video
+/// popup sits at layer 3 and is assigned to every space, so it neither
+/// counts as a normal window nor contributes a location as an anchored
+/// one, and auto-follow would chase the app's main window on another
+/// space, yanking the user away from the very thing they clicked.
+///
+/// - Parameter pid: The Unix process ID of the activated app.
+/// - Returns: `true` when the pointer is inside one of its onscreen
+///   windows.
+private func pointerInsideOnscreenWindow(of pid: pid_t) -> Bool {
+    // Global display coordinates (top-left origin), matching
+    // kCGWindowBounds. A sourceless CGEvent reads the current pointer
+    // position without an event tap.
+    guard let location = CGEvent(source: nil)?.location,
+          let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, 0)
+              as? [[String: Any]]
+    else { return false }
+
+    for window in windows
+    where (window["kCGWindowOwnerPID"] as? NSNumber)?.int32Value == pid {
+        // Fully transparent windows are invisible helpers (event-catching
+        // overlays some apps park over the whole screen, offscreen
+        // buffers); the user cannot have clicked what they cannot see, and
+        // counting them would suppress wanted follows — e.g. a Dock click
+        // landing "inside" an invisible overlay that happens to cover the
+        // Dock. Semi-transparent windows still count.
+        if ((window["kCGWindowAlpha"] as? NSNumber)?.doubleValue ?? 1) <= 0 {
+            continue
+        }
+
+        guard let bounds = window["kCGWindowBounds"] as? [String: Any],
+              let x = (bounds["X"]      as? NSNumber)?.doubleValue,
+              let y = (bounds["Y"]      as? NSNumber)?.doubleValue,
+              let w = (bounds["Width"]  as? NSNumber)?.doubleValue,
+              let h = (bounds["Height"] as? NSNumber)?.doubleValue
+        else { continue }
+
+        if CGRect(x: x, y: y, width: w, height: h).contains(location) {
+            return true
+        }
+    }
+    return false
+}
+
 // MARK: - App Activation Observer
 
 /// Watches for `NSWorkspace.didActivateApplicationNotification` and
@@ -107,6 +172,25 @@ final class SwoopObserver: NSObject {
         // A Mission Control overview handles navigation itself and our
         // gestures land back where they started — see isMissionControlActive()
         guard !isMissionControlActive() else { return }
+
+        // A click just landed (either button) and the pointer sits inside
+        // one of the activated app's onscreen windows: the user clicked a
+        // visible window of this app — a floating video popup, a status
+        // item, a palette. The clicked window is right where the user is;
+        // native activation performs no navigation for it, and chasing
+        // the app's other windows would yank the user away from the very
+        // thing they clicked (see pointerInsideOnscreenWindow). The cheap
+        // timing check runs first; the window scan only follows a fresh
+        // click.
+        let sinceClick = min(
+            CGEventSource.secondsSinceLastEventType(
+                .combinedSessionState, eventType: .leftMouseDown),
+            CGEventSource.secondsSinceLastEventType(
+                .combinedSessionState, eventType: .rightMouseDown))
+        if sinceClick < kAutoFollowClickWindow,
+           pointerInsideOnscreenWindow(of: pid) {
+            return
+        }
 
         // Find which space the app's windows are on.
         // Returns 0 if the app is already on a visible space (no switch needed).
