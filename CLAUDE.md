@@ -27,7 +27,7 @@ Technique borrowed from [InstantSpaceSwitcher](https://github.com/jurplel/Instan
 
 Exact initialization order — getting this wrong causes subtle bugs:
 
-1. `app.delegate = AppDelegate()` — reopen handler (relaunching the app shows Preferences — the recovery path when the menu bar icon is hidden, deep-linking to the Advanced pane in that case). `applicationDidFinishLaunching` also opens Preferences when the icon is hidden and the launch was manual — login-item launches are exempted via `isLaunchedAsLoginItem()`, which reads the launch Apple event's `keyAELaunchedAsLogInItem` flag. That check is only valid while the launch event is current (inside `finishLaunching`) — it must NOT be called from top-level `main.swift` code, where it always returns false.
+1. `app.delegate = AppDelegate()` — reopen handler (relaunching the app shows Preferences — the recovery path when the menu bar icon is hidden, deep-linking to the Auto-Start pane in that case). `applicationDidFinishLaunching` also opens Preferences when the icon is hidden and the launch was manual — login-item launches are exempted via `isLaunchedAsLoginItem()`, which reads the launch Apple event's `keyAELaunchedAsLogInItem` flag. That check is only valid while the launch event is current (inside `finishLaunching`) — it must NOT be called from top-level `main.swift` code, where it always returns false.
 2. `NSApplication.shared.setActivationPolicy(.accessory)` — hide from Dock
 3. **Accessibility check** — `AXIsProcessTrustedWithOptions` with prompt; exits if denied
 4. `loadSpaceSwitchShortcuts()` — reads keycodes/modifiers from system prefs into `gKeyLeft`/`gKeyRight`/`gModMask`

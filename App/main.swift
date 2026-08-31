@@ -33,15 +33,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the launch Apple event is only current while it is dispatched,
         // which happens during finishLaunching.
         if gMenu?.isMenuBarIconVisible == false, !isLaunchedAsLoginItem() {
-            SettingsWindowController.shared.show(pane: .advanced)
+            SettingsWindowController.shared.show(pane: .autoStart)
         }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication,
                                        hasVisibleWindows flag: Bool) -> Bool {
-        // Deep-link to the Advanced pane (where the icon toggle lives) only
-        // when the icon is hidden; otherwise open the default pane.
-        let pane: SettingsPane? = gMenu?.isMenuBarIconVisible == false ? .advanced : nil
+        // Deep-link to the Auto-Start pane only when the icon is hidden;
+        // otherwise open the default pane.
+        let pane: SettingsPane? = gMenu?.isMenuBarIconVisible == false ? .autoStart : nil
         SettingsWindowController.shared.show(pane: pane)
         return false
     }
