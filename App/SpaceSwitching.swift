@@ -407,8 +407,12 @@ private struct WindowGroup {
 /// every other window is resolved to its space via the private
 /// `SLSCopySpacesForWindows` API, and windows that cannot be resolved to
 /// a valid space are skipped. A window that resolves to MORE than one
-/// space is on every space ("All Desktops" assignment) — it only sets the
-/// group's `hasAllSpacesWindow` flag and contributes no chase target.
+/// space sets the group's `hasAllSpacesWindow` flag only when it spans
+/// every user desktop (a genuine "All Desktops" assignment); a partial
+/// multi-space window — macOS grows a window's space list as it gets
+/// displayed, so Finder's desktop-icons window accumulates the desktops
+/// it has been shown on — contributes its spaces like any located
+/// window.
 ///
 /// - Parameter pid: The Unix process ID of the target application.
 /// - Returns: The process's normal and anchored window groups.
@@ -422,6 +426,12 @@ private func visibleWindowSpaces(for pid: pid_t) -> (normal: WindowGroup, anchor
     guard let windowList = CGWindowListCopyWindowInfo(.optionAll, 0) as? [[String: Any]]
     else { return (WindowGroup(), WindowGroup()) }
 
+    // For telling genuine "All Desktops" windows from partially-spanning
+    // ones below. Empty when the layout cannot be read — isSuperset(of: [])
+    // is true, so that failure falls back to the safe "All Desktops"
+    // reading (stand down rather than chase).
+    let allUserDesktops = Set(getUserDesktops())
+
     var normal   = WindowGroup()
     var anchored = WindowGroup()
 
@@ -429,7 +439,8 @@ private func visibleWindowSpaces(for pid: pid_t) -> (normal: WindowGroup, anchor
         // Only consider windows owned by the target process
         guard (window["kCGWindowOwnerPID"] as? NSNumber)?.int32Value == pid else { continue }
 
-        let isNormal = ((window["kCGWindowLayer"] as? NSNumber)?.int32Value ?? 0) == 0
+        let layer    = (window["kCGWindowLayer"] as? NSNumber)?.int32Value ?? 0
+        let isNormal = layer == 0
 
         // Onscreen — the app is visible right now, no lookup needed
         if (window["kCGWindowIsOnscreen"] as? NSNumber)?.boolValue == true {
@@ -447,13 +458,33 @@ private func visibleWindowSpaces(for pid: pid_t) -> (normal: WindowGroup, anchor
                 .takeRetainedValue() as? [NSNumber]
         else { continue }
 
-        // A window on more than one space is assigned to "All Desktops"
-        // (Dock icon > Options), or is a status/desktop window tagged onto
-        // every space. It is reachable wherever the user is — chasing its
-        // first listed (last-used) space would yank them away (issue #10).
+        // A window listed on more than one space is not necessarily
+        // assigned to "All Desktops" (Dock icon > Options): macOS also
+        // grows a window's space list as it gets displayed on more
+        // spaces — Finder's desktop-icons window accumulates every
+        // desktop it has been shown on. Only a window spanning every
+        // user desktop is location-free and reachable wherever the user
+        // is (issue #10). A partial one still lives in real places —
+        // native activation navigates to its first-listed space — so it
+        // contributes its spaces like any located window; treating it as
+        // "All Desktops" handed windowless-Finder switches back to the
+        // native animation once a few desktops had been visited.
         if spaces.count > 1 {
-            if isNormal { normal.hasAllSpacesWindow   = true }
-            else        { anchored.hasAllSpacesWindow = true }
+            let windowSpaces = spaces.map(\.uint64Value)
+            // Desktop-level windows (negative layers: wallpaper, Finder's
+            // desktop icons) are never "assigned to All Desktops" — their
+            // multi-space lists come purely from accumulation, and once
+            // the user has toured every desktop the space set alone can no
+            // longer tell them apart. Their level can: only windows at
+            // layer >= 0 qualify for the All-Desktops reading.
+            if layer >= 0, Set(windowSpaces).isSuperset(of: allUserDesktops) {
+                if isNormal { normal.hasAllSpacesWindow   = true }
+                else        { anchored.hasAllSpacesWindow = true }
+            } else if isNormal {
+                normal.offscreenSpaces.append(contentsOf: windowSpaces)
+            } else {
+                anchored.offscreenSpaces.append(contentsOf: windowSpaces)
+            }
             continue
         }
 
