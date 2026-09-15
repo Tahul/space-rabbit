@@ -1214,10 +1214,12 @@ private let kMissionControlAnimationDurationFast: TimeInterval = 0.08
 /// the three ticks 0.04 s apart, which is below what the eye resolves on a
 /// space slide — measured on 26A428, Fast, Faster and Fastest were
 /// indistinguishable from each other. These endpoints spread the same three
-/// ticks across 0.30 / 0.20 / 0.10 s, between macOS's own transition and the
-/// instant jump at the right end cap.
+/// ticks across 0.30 / 0.18 / 0.06 s, between macOS's own transition and the
+/// instant jump at the right end cap. The 0.06 s fast end is the shortest ramp
+/// that still reads as a clean slide rather than a jump — chosen by eye on
+/// 26A428, where it looked cleaner than the one-shot boundary jump.
 private let kHorizontalAnimationDurationSlow: TimeInterval = 0.30
-private let kHorizontalAnimationDurationFast: TimeInterval = 0.10
+private let kHorizontalAnimationDurationFast: TimeInterval = 0.06
 private let kMissionControlAnimationQueue = DispatchQueue(
     label: "app.spacerabbit.mission-control-animation",
     qos: .userInteractive
@@ -1705,7 +1707,15 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
                                     velocity: Double) -> CGEvent? {
     guard let ev = CGEvent(source: nil) else { return nil }
 
-    let sign = augmentedHorizontalSign(isRight: isRight)
+    // Began carries only an epsilon of progress; Changed and Ended carry the
+    // full ±1.0. Committing the whole travel on Began too made macOS 27 act on
+    // the gesture twice — once on Began and again on Changed — which showed up
+    // as an intermittent stutter mid-switch. The switch stays fully instant:
+    // Changed still reaches the boundary in the same instant. This mirrors what
+    // the vertical Mission Control path already does with its Began.
+    let fullSign = augmentedHorizontalSign(isRight: isRight)
+    let sign = phase == kCGSGesturePhaseBegan
+        ? fullSign * kMissionControlEpsilon : fullSign
 
     ev.setIntegerValueField(kCGSEventTypeField,          value: kCGSEventDockControl)
     ev.setIntegerValueField(kCGEventGestureHIDType,      value: kIOHIDEventTypeDockSwipe)
@@ -1719,7 +1729,7 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
 
     if phase == kCGSGesturePhaseEnded {
         ev.setDoubleValueField(kCGEventGestureSwipeVelocityX,
-                               value: sign * velocity)
+                               value: fullSign * velocity)
     }
     return ev
 }
@@ -1874,6 +1884,7 @@ func postSwitchGesture(direction: Int,
                                            direction: direction,
                                            velocityOverride: velocity)
         }
+
         return postAugmentedSwitchGesture(isRight: isRight, velocity: velocity)
     }
 
