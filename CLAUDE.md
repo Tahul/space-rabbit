@@ -355,8 +355,26 @@ and its field-4205 payload, matching the horizontal interceptor's cleanup withou
 leaving contradictory serialized motion. If that rebuild fails, the ordinary fields
 alone are zeroed and the Ended still goes through — dropping it would leave the
 Dock's gesture state open, which is the worse failure.
-The interceptor is limited to the known macOS 15–27 schemas; an unknown future
-major release leaves the option inert and the physical gesture native.
+**Vertical transitions are inert on macOS 27** (`supportsInstantMissionControlInterception()`
+covers macOS 15–26 only). The synthetic vertical stream is still *accepted* there
+— the overview does open from it — but WindowManager, which took the overview over
+from the Dock, animates the transition regardless of what the gesture carries.
+Measured on 26A428 across four recipes: the shipping one; terminal velocity
+mirrored into `VelocityY`; terminal velocity in `VelocityY` alone; and full
+progress on Began. All four animated. `com.apple.dock expose-animation-duration`
+does nothing either — the string no longer appears anywhere in 27's Dock binary.
+Intercepting there would swallow the user's swipe and key press to buy nothing,
+so the path stands down and macOS runs its own transition. Do not re-enable it
+for 27 without a recipe measured to actually remove the animation.
+
+The **horizontal in-overview carousel is tracked separately**
+(`supportsOverviewSpaceSwitchInterception()`, macOS 15–27) and still works on 27,
+verified on 26A428 by both the trackpad swipe and the Space bindings inside the
+overview — the horizontal axis still honors the high-velocity DockSwipe there,
+which is also why desktop space switching is unaffected.
+
+Both interceptors are limited to known schemas; an unknown future major release
+leaves the option inert and the physical gesture native.
 
 **Horizontal swipes inside the overview.** Mission Control navigates spaces from
 the same horizontal 3-finger swipe the desktop uses, so this toggle also owns
@@ -425,12 +443,42 @@ rather than the desktop's: the screen blanks, swipes, and lands back on the
 space the user started from (issue #16).
 
 Detection is a synchronous `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` scan
-for a **Dock-owned window at `kCGWindowLayer` 18** — the display-sized overlay the
-Dock keeps up for the whole duration of the overview, and the same marker yabai
-uses (`src/mission_control.c`). `kCGWindowName` is deliberately *not* part of the
-test (yabai additionally requires it to be nil): it needs Screen Recording
-permission, which Space Rabbit never asks for, so it reads as `nil` for every
-window regardless of state.
+(`scanOverviewWindows()`), and **which window it looks for changed in macOS 27**:
+
+| | macOS 15–26 | macOS 27+ |
+|---|---|---|
+| Owner | `Dock` | `WindowManager` |
+| Mission Control / App Exposé | layer **18** | layer **19**, display-sized |
+| Show Desktop | layer **18** | layer **18**, display-sized |
+| Mission Control vs App Exposé | `SLSSpaceCopyName` | the **layer-14 spaces bar**, present only for Mission Control |
+
+Through macOS 26 the marker is the display-sized overlay the Dock keeps up for the
+whole duration of the overview — the same one yabai uses
+(`src/mission_control.c`). macOS 27 moved every overview from the Dock to
+WindowManager: the overlay went to layer 19, Show Desktop kept layer 18 under the
+new owner, and the two overviews that share layer 19 are told apart by the spaces
+bar WindowManager draws across the top of Mission Control (2560×96 collapsed,
+2560×226 with its space thumbnails expanded) and never draws for App Exposé —
+verified with App Exposé on apps with one and with several windows. The modern
+markers additionally require the overlay to be display-sized, since WindowManager
+owns plenty of small windows at those layers.
+
+The macOS 27 rule is also assumed for later majors: it is the newer arrangement
+and the better default until a future release is measured.
+
+**On macOS 27 the OS-space names identify nothing** and are not consulted. The
+`mission-control` and `show-front` spaces still exist, but they no longer appear
+in the current-space mask (`kCurrentOSSpacesMask`) — measured on 26A428, the list
+is byte-identical on the desktop and inside the overview, so `SLSSpaceCopyName`
+cannot distinguish any state there. Do not restore a name-based check for 27
+without re-measuring; it silently answers "desktop" for every overview, which is
+exactly the issue #16 failure mode (Features 1 and 3 stop standing down and post
+desktop jumps into a live overview).
+
+`kCGWindowName` is deliberately *not* part of the test on either path (yabai
+additionally requires it to be nil): it needs Screen Recording permission, which
+Space Rabbit never asks for, so it reads as `nil` for every window regardless of
+state.
 
 Where the check runs matters — it copies the window list, so it is only reached
 once an action is about to happen, never per event:
@@ -451,10 +499,12 @@ once an action is about to happen, never per event:
   resolve the exact overview state, so the desktop path still costs one lookup.
 - **Instant Mission Control** — before holding vertical Began, and (for the
   keyboard triggers) only after the Mission Control key or hotkey has matched.
-  An absent layer-18 marker identifies the desktop. When a marker exists,
-  `SLSCopySpaces` and `SLSSpaceCopyName` must identify the OS space as either
-  `mission-control` or `show-front` (App Exposé) — the vertical gesture drives
-  both; Show Desktop, conflicts, and failed private-state reads remain native.
+  An absent overlay marker identifies the desktop. When one exists, the state
+  must resolve to Mission Control or App Exposé — the vertical gesture drives
+  both; Show Desktop, conflicts, and failed reads remain native. (Through macOS
+  26 that resolution is `SLSCopySpaces` + `SLSSpaceCopyName`; on 27 it is the
+  spaces-bar marker. The vertical path itself is inert on 27 — see below — so
+  there the answer only feeds the stand-down guards and the carousel.)
   The keyboard path needs the same answer for a second reason: the press is a
   toggle, so the state *is* its direction — and it keeps standing down on App
   Exposé, where the Mission Control key crosses to Mission Control rather than
@@ -472,8 +522,8 @@ once an action is about to happen, never per event:
 | `CGSGetActiveSpace` | `cgsGetActiveSpace` | `(cid) -> UInt64` | Active space ID on main display |
 | `CGSCopyManagedDisplaySpaces` | `cgsCopyDisplaySpaces` | `(cid, displayUUID?) -> CFArray?` | All displays + their spaces |
 | `SLSCopySpacesForWindows` | `slsCopySpacesForWindows` | `(cid, spaceType, windowIDs) -> CFArray?` | Maps window IDs → space IDs |
-| `SLSCopySpaces` | `slsCopySpaces` | `(cid, mask) -> CFArray?` | Current OS-managed spaces used to identify overview state |
-| `SLSSpaceCopyName` | `slsSpaceCopyName` | `(cid, spaceID) -> CFString?` | Internal OS-space names such as `mission-control` and `show-front` |
+| `SLSCopySpaces` | `slsCopySpaces` | `(cid, mask) -> CFArray?` | Current OS-managed spaces used to identify overview state (**macOS 15–26 only** — see "Mission Control stand-down") |
+| `SLSSpaceCopyName` | `slsSpaceCopyName` | `(cid, spaceID) -> CFString?` | Internal OS-space names such as `mission-control` and `show-front` (**macOS 15–26 only**) |
 
 **Do not use `CGSManagedDisplaySetCurrentSpace`:** it was tried for instant cross-display switching and reverted. It flips the window server's current-space pointer without running the real transition, desyncing state — target-space windows composite on top of the still-displayed space (worst with fullscreen spaces), and subsequent edge bounds-checks read the stale pointer and overshoot into a black non-existent space.
 
@@ -534,7 +584,7 @@ Post order: dock event first, then gesture envelope. Both go to `.cgSessionEvent
 macOS 27's Dock **rejects** the bare gesture pairs above (the user hears the error sound). `postSwitchGesture` routes to an augmented path, gated by `requiresEventAugmentation()` (`ProcessInfo` major version ≥ 27). Technique reverse-engineered in [joshuarli/iss](https://github.com/joshuarli/iss) commit `09beeb6`. Three differences from the legacy path:
 
 1. **Extra dock-event fields**: field 134 (`kCGEventGesturePhase2`) mirrors the phase, 138 (`kCGEventGestureFlavor`) = 3.0 (`kIOHIDGestureFlavorDockPrimary`), 169 (`kCGEventGestureTimestamp`) = `mach_absolute_time()` as a double, 125 (`kCGEventGesturePositionX`) = 0.1 (must be non-zero or the Dock discards the event). Progress (124) = ±1.0 on **every** phase; Ended-phase velocity = ±9999 (`kAugmentedInstantVelocity`). Fields 135/119/139 from the legacy recipe are not set.
-2. **Preference- and build-dependent sign convention**: which sign moves right is resolved per posted switch by `requiresInvertedAugmentedSigns()`. Two regimes exist, split by the OS build (`kern.osversion`). "26A" builds below 5416 (the early 27.0 seeds) are unconditionally INVERTED — negative progress/velocity moves right, opposite of the legacy path (measured on 26A5388g: `+1.0/+9999` moves left; issue #19, whose bare un-invert in PR #15 was correctly reverted). From 26A5416 on — and, assumed, on 26B+ trains, later majors, and unparseable build strings — the Dock's interpretation follows **"Natural scrolling"** (`com.apple.swipescrolldirection`): ON (the macOS default) means inverted, OFF means the legacy orientation. Measured on 26A5416b by posting the augmented sequence and reading the index back from `CGSCopyManagedDisplaySpaces`, and verified *causally* on one machine — toggling the preference and restarting the Dock deterministically swaps which convention works. Do **not** collapse this to a hardcoded sign or a pure build gate: issue #54 (fixed by PR #55's build gate, then reproduced in the opposite direction by a natural-scrolling-ON machine on the same build) proved two machines on the identical build can need opposite signs. Posting the wrong convention makes every switch travel the wrong way: Ctrl+Arrow walks to the first/last space instead of stepping, and at either edge the Dock flashes black and rubber-bands back to the starting space. One operational caveat, measured: the Dock samples the preference at launch (`defaults write` changes nothing until `killall Dock`), so Space Rabbit's live cache-flushed read can transiently disagree with a stale Dock. The preference is read per constructed event — a mid-stream flip could in theory mix conventions, accepted because the flip only takes effect at a Dock relaunch anyway. This is the *posting* convention only — reading a real trackpad gesture's direction has its own separate rule (`isRightSwipe`, see Feature 3).
+2. **Preference- and build-dependent sign convention**: which sign moves right is resolved per posted switch by `requiresInvertedAugmentedSigns()`. Two regimes exist, split by the OS build (`kern.osversion`). "26A" builds **in the seed range** (5000 and up) below 5416 — the early 27.0 betas — are unconditionally INVERTED — negative progress/velocity moves right, opposite of the legacy path (measured on 26A5388g: `+1.0/+9999` moves left; issue #19, whose bare un-invert in PR #15 was correctly reverted). From 26A5416 on — and, assumed, on the public release (26A428 and any other sub-5000 "26A" build), 26B+ trains, later majors, and unparseable build strings — the Dock's interpretation follows **"Natural scrolling"** (`com.apple.swipescrolldirection`): ON (the macOS default) means inverted, OFF means the legacy orientation. Measured on 26A5416b by posting the augmented sequence and reading the index back from `CGSCopyManagedDisplaySpaces`, and verified *causally* on one machine — toggling the preference and restarting the Dock deterministically swaps which convention works. Apple numbers pre-release seeds from 5000 up (26A5388g, 26A5416b) and ships the public release from a much *lower* number (macOS 27.0 is 26A428), so the seed-range floor is load-bearing: a bare `< 5416` test reads the shipping release as an early beta, which is the opposite of the truth. Do **not** collapse this to a hardcoded sign or a pure build gate: issue #54 (fixed by PR #55's build gate, then reproduced in the opposite direction by a natural-scrolling-ON machine on the same build) proved two machines on the identical build can need opposite signs. Posting the wrong convention makes every switch travel the wrong way: Ctrl+Arrow walks to the first/last space instead of stepping, and at either edge the Dock flashes black and rubber-bands back to the starting space. One operational caveat, measured: the Dock samples the preference at launch (`defaults write` changes nothing until `killall Dock`), so Space Rabbit's live cache-flushed read can transiently disagree with a stale Dock. The preference is read per constructed event — a mid-stream flip could in theory mix conventions, accepted because the flip only takes effect at a Dock relaunch anyway. This is the *posting* convention only — reading a real trackpad gesture's direction has its own separate rule (`isRightSwipe`, see Feature 3).
 3. **Serialized IOHID payload under field 4205**: the Dock validates the event against a packed little-endian IOHID queue payload — `IOHIDSystemQueueElementHeader` (28 B) + `IOHIDFluidTouchGestureData` (40 B) + `IOHIDVelocityEventData` (28 B, appended only when velocity ≠ 0 or phase = Ended) — mirroring the event's gesture fields (positions/progress/velocity as signed 16.16 fixed-point, phase in the high byte of the gesture's `options`). Field 4205 can NOT be set via the normal field-setter API: the event is flattened with `CGEventCreateData`, any existing field-4205 record is replaced with a current packed payload, and the event is rebuilt with `CGEventCreateFromData`. The serialized header must be `00 00 00 02` — anything else means Apple changed the format and `augmentDockSwipeEvent` bails (gesture not posted). Replacing the record means walking every record in the blob, and an unrecognized record shape would otherwise disable the whole path; for the freshly-built events (which carry no payload of their own) it therefore falls back to plain appending, the behavior that shipped before the walker existed. Only the macOS 27 vertical-cleanup event — a *copy of a physical gesture*, which may already hold a payload — passes `mayCarryExistingPayload: true` and stays strict, since a second contradictory payload would be worse than none. Swift structs make no layout guarantees, so the payload is serialized field-by-field (`Data.appendLE`), not by casting structs — the layout was verified byte-identical against the packed C structs.
 
 The augmented sequence is **Began + Changed + Ended** (three pairs, not two — macOS 27 requires the Changed phase). All three events are built and augmented up front so a mid-sequence failure posts nothing (a Began without its Ended would leave the Dock's gesture state half-open). Animated slider velocities (50–70) pass through unclamped — **uncalibrated on macOS 27**; only the instant velocity (9999) is confirmed working upstream. Anything ≥ `kInstantSwitchVelocity` (400) is mapped to 9999.
@@ -638,7 +688,11 @@ Persistence strategy: `flushSwitchCount()` writes to disk only if `gSwitchCount 
 | `kAutoFollowSuppressionWindow` | AutoFollow | `0.3` (TimeInterval) | Grace period after a *user-driven* space switch before auto-follow kicks in |
 | `kAutoFollowEchoWindow` | AutoFollow | `0.3` (TimeInterval) | Window in which a repeat activation of the **same** app reads as the echo of our own follow |
 | `kAutoFollowSelfChangeWindow` | AutoFollow | `1.5` (TimeInterval) | How long `gAutoFollowTargetSpace` stays credible as the cause of a space-change notification |
-| `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the Mission Control marker |
+| `kMissionControlWindowLayer` | SpaceSwitching | `18` (Int32) | `kCGWindowLayer` of the Dock's overview overlay — the macOS 15–26 marker |
+| `kOverviewOverlayWindowLayer` | SpaceSwitching | `19` (Int32) | Layer of WindowManager's display-sized overview overlay on macOS 27+ |
+| `kShowDesktopOverlayWindowLayer` | SpaceSwitching | `18` (Int32) | Layer of WindowManager's Show Desktop overlay on macOS 27+ |
+| `kSpacesBarWindowLayer` | SpaceSwitching | `14` (Int32) | Layer of the macOS 27 Mission Control spaces bar — absent in App Exposé, which is what tells them apart |
+| `kFirstSeedOSBuildNumber` | SpaceSwitching | `5000` | Smallest build number Apple gives a pre-release seed; below it a `26A` build is the public release (26A428), not an early 27.0 beta |
 | `kCurrentOSSpacesMask` | SpaceSwitching | `(1 << 0) \| (1 << 3)` | Private mask used to query the active Dock-managed overview space |
 | `kGestureMotionHorizontal` / `kGestureMotionVertical` | SwipeIntercept | `1` / `2` (Int64) | `kCGEventGestureSwipeMotion` values for Space and Mission Control swipes |
 | `kGestureDirectionThreshold` | SwipeIntercept | `0.05` | Smallest `kCGEventGestureSwipeProgress` magnitude whose sign is trusted as the user's intended direction, on both axes. Below it the sample is touchdown wobble (issue #43) |
@@ -1145,6 +1199,12 @@ local.env               — git-ignored; signing credentials
   them, plus the dedicated Mission Control key and the "Mission Control" system
   hotkey — but not Show Desktop by any trigger, and not App Exposé by keyboard
   (only by trackpad; see the keyboard-trigger note above).
+- **On macOS 27 the vertical half of that toggle does nothing**: Mission Control
+  and App Exposé entry and dismissal are always animated, by every trigger,
+  because WindowManager took the overview over from the Dock and animates the
+  transition regardless of the gesture posted. The toggle still owns the
+  horizontal carousel inside the Mission Control overview there. See "Optional
+  Instant Mission Control" for the recipes measured before standing it down.
 - Inside the Mission Control overview, only the one-step "Move left/right a
   space" bindings are converted to the segmented carousel stream. "Switch to
   Desktop N" and the cycle shortcut are multi-step and still stand down to

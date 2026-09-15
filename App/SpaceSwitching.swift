@@ -257,8 +257,127 @@ func getAllCurrentSpaces() -> [CGSSpaceID] {
 
 /// Window layer of the full-screen overlay windows the Dock puts up while
 /// a Mission Control-style overview is on screen (`kCGWindowLayer` 18).
-/// Nothing else the Dock owns sits at that layer.
+/// Nothing else the Dock owns sits at that layer. macOS 15 through 26 only —
+/// see `kOverviewOverlayWindowLayer` for what replaced it.
 private let kMissionControlWindowLayer: Int32 = 18
+
+/// Window layer of the display-sized overlay WindowManager puts up on macOS 27
+/// while Mission Control or App Exposé is on screen.
+private let kOverviewOverlayWindowLayer: Int32 = 19
+
+/// Window layer of the display-sized overlay WindowManager puts up on macOS 27
+/// while Show Desktop is on screen — a different layer from the other two
+/// overviews, which is what keeps Show Desktop native without a name lookup.
+private let kShowDesktopOverlayWindowLayer: Int32 = 18
+
+/// Window layer of the spaces bar WindowManager puts across the top of the
+/// macOS 27 Mission Control overview. App Exposé has no such bar, so its
+/// presence alongside the overlay is what tells the two overviews apart.
+private let kSpacesBarWindowLayer: Int32 = 14
+
+/// `kCGWindowOwnerName` of the process owning the overview overlay: the Dock
+/// through macOS 26, WindowManager from macOS 27.
+private let kLegacyOverviewOwner = "Dock"
+private let kModernOverviewOwner = "WindowManager"
+
+/// Whether this release exposes the macOS 27 WindowManager overview markers
+/// instead of the Dock's layer-18 overlay.
+///
+/// macOS 27 moved every overview from the Dock to WindowManager: the overlay
+/// went to layer 19, Show Desktop kept layer 18 under the new owner, and the
+/// `mission-control` / `show-front` OS spaces stopped appearing in the current
+/// space mask entirely (they still exist, but read identically on the desktop
+/// and inside the overview, so they no longer identify anything). Later majors
+/// are assumed to keep the new arrangement — the best available default.
+private func usesWindowManagerOverviewMarkers() -> Bool {
+    ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
+}
+
+/// The overview-identifying windows found in a single window-list pass.
+private struct OverviewWindowMarkers {
+    /// Dock-owned layer-18 overlay — every overview, macOS 15 through 26.
+    var legacyOverlay = false
+    /// WindowManager-owned layer-19 overlay — Mission Control or App Exposé.
+    var overviewOverlay = false
+    /// WindowManager-owned layer-18 overlay — Show Desktop.
+    var showDesktopOverlay = false
+    /// WindowManager-owned spaces bar — Mission Control only.
+    var spacesBar = false
+}
+
+/// Whether `bounds` covers a whole display.
+///
+/// The modern markers are matched on layer and owner alone otherwise, and
+/// WindowManager owns plenty of small windows at those layers (window
+/// thumbnails, tiling affordances). Only the display-sized overlay means an
+/// overview is up.
+///
+/// - Parameter bounds: A `kCGWindowBounds` rectangle.
+/// - Returns: `true` when it matches the size of any active display.
+private func isDisplaySized(_ bounds: CGRect) -> Bool {
+    var count: UInt32 = 0
+    guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0
+    else { return false }
+
+    var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+    guard CGGetActiveDisplayList(count, &displays, &count) == .success
+    else { return false }
+
+    for display in displays.prefix(Int(count)) {
+        let frame = CGDisplayBounds(display)
+        if abs(frame.width - bounds.width) <= 1,
+           abs(frame.height - bounds.height) <= 1 { return true }
+    }
+    return false
+}
+
+/// Single window-list pass collecting every overview marker both schemes use.
+///
+/// One pass serves both callers: the cheap "is any overview up" stand-down
+/// test and the exact state lookup. `kCGWindowName` is deliberately not read —
+/// it requires Screen Recording permission, which Space Rabbit never asks for.
+///
+/// - Returns: The markers found, or `nil` when the window list is unavailable.
+private func scanOverviewWindows() -> OverviewWindowMarkers? {
+    guard let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
+            as? [[String: Any]]
+    else { return nil }
+
+    var markers = OverviewWindowMarkers()
+
+    for window in windowList {
+        guard let layer = (window["kCGWindowLayer"] as? NSNumber)?.int32Value,
+              let owner = window["kCGWindowOwnerName"] as? String
+        else { continue }
+
+        if owner == kLegacyOverviewOwner, layer == kMissionControlWindowLayer {
+            markers.legacyOverlay = true
+            continue
+        }
+
+        guard owner == kModernOverviewOwner else { continue }
+
+        if layer == kSpacesBarWindowLayer {
+            markers.spacesBar = true
+            continue
+        }
+
+        guard layer == kOverviewOverlayWindowLayer
+                || layer == kShowDesktopOverlayWindowLayer,
+              let boundsDict = window["kCGWindowBounds"] as? [String: Any],
+              let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+              isDisplaySized(bounds)
+        else { continue }
+
+        if layer == kOverviewOverlayWindowLayer {
+            markers.overviewOverlay = true
+        } else {
+            markers.showDesktopOverlay = true
+        }
+    }
+
+    return markers
+}
 
 /// Private `CGSSpaceMask` selecting current OS-managed spaces:
 /// `CGSSpaceIncludesCurrent | CGSSpaceIncludesOS`.
@@ -283,19 +402,12 @@ private let kCurrentOSSpacesMask: Int32 = (1 << 0) | (1 << 3)
 ///
 /// - Returns: The overview state, or `nil` when the window list is unavailable.
 private func missionControlOverviewActive() -> Bool? {
-    guard let windowList = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)
-            as? [[String: Any]]
-    else { return nil }
+    guard let markers = scanOverviewWindows() else { return nil }
 
-    for window in windowList {
-        guard (window["kCGWindowLayer"] as? NSNumber)?.int32Value == kMissionControlWindowLayer,
-              (window["kCGWindowOwnerName"] as? String) == "Dock"
-        else { continue }
-
-        return true
+    if usesWindowManagerOverviewMarkers() {
+        return markers.overviewOverlay || markers.showDesktopOverlay
     }
-
-    return false
+    return markers.legacyOverlay
 }
 
 /// Whether a Mission Control-style overview is currently on screen.
@@ -358,8 +470,18 @@ private func namedDockOverviewState() -> DockOverviewState? {
 /// identify Mission Control or App Exposé; Show Desktop and conflicting state
 /// remain native.
 func currentDockOverviewState() -> DockOverviewState? {
-    guard let layerActive = missionControlOverviewActive() else { return nil }
-    if !layerActive { return .desktop }
+    guard let markers = scanOverviewWindows() else { return nil }
+
+    // macOS 27: the OS-space names no longer identify anything, so the state
+    // comes entirely from which WindowManager overlay is up, and — between the
+    // two overviews that share layer 19 — whether the spaces bar is with it.
+    if usesWindowManagerOverviewMarkers() {
+        if markers.showDesktopOverlay { return nil }
+        if !markers.overviewOverlay { return .desktop }
+        return markers.spacesBar ? .missionControl : .appExpose
+    }
+
+    if !markers.legacyOverlay { return .desktop }
 
     guard let namedState = namedDockOverviewState() else { return nil }
 
@@ -772,8 +894,18 @@ func requiresInvertedAugmentedSigns() -> Bool {
 /// to measure; if one turns up wrong, move this boundary to it.
 private let kFirstPreferenceDependentSignOSBuild = 5416
 
+/// Smallest build number Apple issues to a *pre-release* seed of a train.
+///
+/// Apple numbers seeds from 5000 up (26A5388g, 26A5416b) and ships the public
+/// release from a much lower number — macOS 27.0 is 26A428. A bare `< 5416`
+/// test therefore reads the shipping release as an early seed, which is the
+/// opposite of the truth: the release is newer than every build the
+/// preference-dependent convention was measured on.
+private let kFirstSeedOSBuildNumber = 5000
+
 /// The unconditional inverted convention existed only inside the early
-/// macOS 27.0 beta train ("26A" builds below the boundary), where
+/// macOS 27.0 beta seeds ("26A" builds in the 5000-and-up seed range, below
+/// the boundary), where
 /// v2.3.3's always-inverted posting worked regardless of preferences.
 /// Later 26A builds follow "Natural scrolling" (measured on 26A5416b);
 /// later trains (26B+), later majors, and unparseable build strings are
@@ -782,7 +914,8 @@ private let kFirstPreferenceDependentSignOSBuild = 5416
 private let gAlwaysInvertedAugmentedSigns: Bool = {
     guard gAugmentationRequired,
           let build = parseOSBuild(osBuildString()),
-          build.train == 26, build.letter == "A"
+          build.train == 26, build.letter == "A",
+          build.number >= kFirstSeedOSBuildNumber
     else { return false }
     return build.number < kFirstPreferenceDependentSignOSBuild
 }()
@@ -817,11 +950,36 @@ private func parseOSBuild(_ build: String)
     return (train, String(letters), number)
 }
 
-/// Whether this release uses a vertical DockSwipe schema known to the Instant
-/// Mission Control interceptor. Unknown future private schemas stay native.
+/// Whether vertical Mission Control / App Exposé transitions can be replaced
+/// on this release.
 ///
-/// - Returns: `true` for the app's supported macOS 15 through macOS 27 range.
+/// macOS 27 is deliberately excluded. It still *accepts* the synthetic vertical
+/// stream — the overview opens from it — but WindowManager, which took the
+/// overview over from the Dock, animates the transition no matter what the
+/// gesture carries. Measured on 26A428 across four recipes: the shipping one,
+/// terminal velocity mirrored into `VelocityY`, terminal velocity in
+/// `VelocityY` alone, and full progress on Began. All four animated, as did
+/// `com.apple.dock expose-animation-duration` — a key 27's Dock binary no
+/// longer even contains. Intercepting there would swallow the user's gesture
+/// and key press to buy nothing, so the vertical path stands down and macOS
+/// runs its own transition.
+///
+/// - Returns: `true` for macOS 15 through macOS 26.
 func supportsInstantMissionControlInterception() -> Bool {
+    let majorVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    return (15...26).contains(majorVersion)
+}
+
+/// Whether the horizontal space carousel *inside* the Mission Control overview
+/// can be driven on this release.
+///
+/// Tracked separately from the vertical transitions above: the horizontal axis
+/// still honors the high-velocity DockSwipe on macOS 27 (desktop space
+/// switching is unaffected there), so the in-overview carousel keeps working
+/// after the vertical path stands down.
+///
+/// - Returns: `true` for macOS 15 through macOS 27.
+func supportsOverviewSpaceSwitchInterception() -> Bool {
     let majorVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
     return (15...27).contains(majorVersion)
 }

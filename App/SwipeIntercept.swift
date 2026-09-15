@@ -121,9 +121,11 @@ private let kGestureReversalThreshold: Double = 0.2
 /// menu bar dropdown, the master switch, and the settings window). Safe to
 /// call redundantly — it no-ops when the tap already matches the state.
 func updateSwipeTap() {
+    // The wider of the two ranges: the tap must exist wherever either the
+    // vertical transitions or the in-overview carousel can still be driven.
     let missionControlEnabled = gInstantMissionControlEnabled
         && !isNativeSwitchSpeed()
-        && supportsInstantMissionControlInterception()
+        && supportsOverviewSpaceSwitchInterception()
     let shouldRun = gEnabled
         && (gTrackpadSwipeEnabled || missionControlEnabled)
 
@@ -701,7 +703,7 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     let desktopSwipeEnabled  = gTrackpadSwipeEnabled && !isNativeSwitchSpeed()
     let overviewSwipeEnabled = gInstantMissionControlEnabled
         && !isNativeSwitchSpeed()
-        && supportsInstantMissionControlInterception()
+        && supportsOverviewSpaceSwitchInterception()
 
     guard desktopSwipeEnabled || overviewSwipeEnabled else {
         endHorizontalSwipeTracking()

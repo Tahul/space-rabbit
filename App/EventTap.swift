@@ -325,7 +325,7 @@ private func cycleToNextSpace() -> Bool {
 ///   available.
 private func canDriveOverviewSpaceSwitch() -> Bool {
     gInstantMissionControlEnabled
-        && supportsInstantMissionControlInterception()
+        && supportsOverviewSpaceSwitchInterception()
         && currentDockOverviewState() == .missionControl
 }
 
