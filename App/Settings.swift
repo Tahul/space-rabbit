@@ -382,18 +382,30 @@ final class SettingsSidebarController: NSViewController {
 
         // Cancel out the style's internal padding above the first row so
         // the first row's visual top sits exactly at the intended inset.
-        // Pre-macOS 26 the sidebar panel is not offset below the title bar
-        // by the split view, so clear the title-bar height manually — the
-        // traffic lights would otherwise overlap the first row.
+        // Whether the split view already offsets the sidebar panel below the
+        // title bar is release-dependent (macOS 26 does, 15 and 27 do not),
+        // so the clearance is *measured* rather than version-gated: how far
+        // the panel's own top edge sits above the window's content layout
+        // rect is exactly the overlap the traffic lights would cause.
         if mainTable.numberOfRows > 0 {
-            var clearance: CGFloat = 0
-            if #unavailable(macOS 26.0), let window = view.window {
-                clearance = window.frame.height - window.contentLayoutRect.height
-            }
-            let topFit = clearance + Layout.sidebarTopInset
+            let topFit = titleBarClearance() + Layout.sidebarTopInset
                        - mainTable.rect(ofRow: 0).minY
             if abs(mainTop.constant - topFit) > 0.5 { mainTop.constant = topFit }
         }
+    }
+
+    /// Measures how far this sidebar panel extends above the window's content
+    /// layout rect (the area the title bar and its traffic lights occupy).
+    ///
+    /// - Returns: The overlap in points, or `0` when the panel is already
+    ///            placed clear of the title bar (or has no window yet).
+    private func titleBarClearance() -> CGFloat {
+        guard let window = view.window, let contentView = window.contentView else { return 0 }
+
+        let panelTop  = view.convert(NSPoint(x: 0, y: view.bounds.maxY), to: contentView).y
+        let layoutTop = window.contentLayoutRect.maxY
+
+        return max(0, panelTop - layoutTop)
     }
 
     /// Selects the given pane's row in whichever list owns it (fires `onSelect`).
