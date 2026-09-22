@@ -534,6 +534,14 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
 
     let subtype = event.getIntegerValueField(kCGSEventTypeField)
 
+    // A new physical gesture supersedes a pending Cmd-Tab focus repair even
+    // before it commits a Space change. Our marked synthetic gestures have
+    // already returned above, so auto-follow cannot cancel its own request.
+    if subtype == kCGSEventDockControl,
+       event.getIntegerValueField(kCGEventGesturePhase) == kCGSGesturePhaseBegan {
+        cancelAutoFollowFocusRepair()
+    }
+
     // Finish a claimed vertical stream even if a toggle changed mid-gesture.
     // On macOS 27+, mirror the established horizontal cleanup contract: Dock
     // receives the physical Ended with all motion zeroed so its state closes

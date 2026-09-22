@@ -10,6 +10,7 @@
  */
 
 import AppKit
+import ApplicationServices
 
 // MARK: - Constants
 
@@ -68,6 +69,194 @@ private let kAutoFollowIgnoredHotkeyWindow: TimeInterval = 0.3
 /// back to behavior that already exists: macOS's native handling, or
 /// today's chase.
 private let kAutoFollowClickWindow: TimeInterval = 0.5
+
+/// Poll only while a follow is outstanding; successful switches get no AX
+/// messages, and the focus state bounds the entire watch to 1.5 seconds.
+private let kAutoFollowFocusPollInterval: TimeInterval = 0.025
+
+/// An unresponsive target must not block the main run loop (and its event
+/// taps) for Accessibility's default multi-second messaging timeout.
+private let kAutoFollowAXTimeout: Float = 0.05
+
+// MARK: - Arrival Focus Recovery
+
+/// Inputs that supersede a pending follow. Modifier releases are deliberately
+/// excluded: releasing Command is part of the Cmd-Tab that started it.
+private func autoFollowInputCounts() -> [UInt32] {
+    [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel].map {
+        CGEventSource.counterForEventType(.combinedSessionState, eventType: $0)
+    }
+}
+
+/// A concrete window and the user intent that authorized following it. Main
+/// thread only; identity also invalidates callbacks from superseded follows.
+private final class AutoFollowFocusRequest {
+    let app: NSRunningApplication
+    let space: CGSSpaceID
+    let windowID: CGWindowID
+    let transitSpaces: Set<CGSSpaceID>
+    let inputCounts = autoFollowInputCounts()
+    var state: AutoFollowFocusState
+
+    init(app: NSRunningApplication, space: CGSSpaceID, windowID: CGWindowID,
+         transitSpaces: Set<CGSSpaceID>) {
+        self.app = app
+        self.space = space
+        self.windowID = windowID
+        self.transitSpaces = transitSpaces
+        state = AutoFollowFocusState(pid: app.processIdentifier,
+                                     startedAt: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// Rechecked immediately before AX writes as well as on each timer tick.
+    var intentIsCurrent: Bool {
+        gEnabled && gAutoFollowEnabled && !isNativeSwitchSpeed()
+            && !app.isTerminated && !app.isHidden
+            && inputCounts == autoFollowInputCounts()
+    }
+}
+
+private var gAutoFollowFocusRequest: AutoFollowFocusRequest?
+
+/// Abandons recovery when a physical gesture starts or a later follow wins.
+/// Old scheduled callbacks compare request identity and become harmless.
+func cancelAutoFollowFocusRepair() {
+    gAutoFollowFocusRequest = nil
+}
+
+/// Only desktops on the target display and strictly between source and
+/// destination can produce intermediate arrival activations belonging to us.
+private func autoFollowTransitSpaces(to target: CGSSpaceID) -> Set<CGSSpaceID> {
+    guard let connection = cgsMainConnection?(),
+          let displays = cgsCopyDisplaySpaces?(connection, nil)?.takeRetainedValue()
+              as? [[String: Any]] else { return [] }
+    for display in displays {
+        guard let spaces = display["Spaces"] as? [[String: Any]],
+              let current = display["Current Space"] as? [String: Any],
+              let source = (current["id64"] as? NSNumber)?.uint64Value else { continue }
+        let ids = spaces.compactMap { ($0["id64"] as? NSNumber)?.uint64Value }
+        guard let start = ids.firstIndex(of: source), let end = ids.firstIndex(of: target),
+              abs(end - start) > 1 else { continue }
+        return Set(ids[(min(start, end) + 1)..<max(start, end)])
+    }
+    return []
+}
+
+/// Captures the frontmost normal window on the chosen destination before
+/// posting the gesture. Windowless apps and All Desktops helpers keep their
+/// native behavior; this repair never unminimizes or moves a window.
+private func prepareAutoFollowFocusRepair(app: NSRunningApplication,
+                                         space: CGSSpaceID) -> AutoFollowFocusRequest? {
+    guard axWindowID != nil,
+          let connection = cgsMainConnection?(),
+          let spacesFor = slsCopySpacesForWindows,
+          let windows = CGWindowListCopyWindowInfo(.optionAll, 0) as? [[String: Any]]
+    else { return nil }
+
+    for window in windows {
+        guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier,
+              (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+              ((window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0,
+              let windowID = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+              let spaces = spacesFor(connection, kSLSSpaceTypeAll, [NSNumber(value: windowID)] as CFArray)?
+                  .takeRetainedValue() as? [NSNumber],
+              spaces.count == 1, spaces[0].uint64Value == space
+        else { continue }
+        return AutoFollowFocusRequest(app: app, space: space, windowID: windowID,
+                                      transitSpaces: autoFollowTransitSpaces(to: space))
+    }
+    return nil
+}
+
+/// Tests the captured window again at repair time. A close, minimize, hide,
+/// move to another Space or unknown window-server state cancels recovery.
+private func followedWindowIsVisible(_ request: AutoFollowFocusRequest) -> Bool {
+    guard getAllCurrentSpaces().contains(request.space),
+          let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, 0) as? [[String: Any]],
+          windows.contains(where: {
+              ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == request.windowID
+                  && ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == request.app.processIdentifier
+                  && (($0[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0
+          }),
+          let connection = cgsMainConnection?(),
+          let spaces = slsCopySpacesForWindows?(connection, kSLSSpaceTypeAll,
+              [NSNumber(value: request.windowID)] as CFArray)?.takeRetainedValue() as? [NSNumber]
+    else { return false }
+    return spaces.count == 1 && spaces[0].uint64Value == request.space
+}
+
+/// Uses Accessibility to focus only the captured window. In particular, do
+/// not resurrect app.activate() / activateAllWindows: their Apple Event and
+/// cross-Space side effects were removed for Picture-in-Picture in 6625f63.
+private func restoreAutoFollowFocus(_ request: AutoFollowFocusRequest) {
+    guard request.intentIsCurrent, followedWindowIsVisible(request),
+          !isMissionControlActive(), let getWindowID = axWindowID,
+          let displacedPID = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+          displacedPID != request.app.processIdentifier
+    else { return }
+
+    let application = AXUIElementCreateApplication(request.app.processIdentifier)
+    guard AXUIElementSetMessagingTimeout(application, kAutoFollowAXTimeout) == .success else { return }
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
+          let windows = value as? [AXUIElement]
+    else { return }
+
+    for window in windows {
+        var windowID: CGWindowID = 0
+        guard getWindowID(window, &windowID) == .success, windowID == request.windowID else { continue }
+        guard AXUIElementSetMessagingTimeout(window, kAutoFollowAXTimeout) == .success else { return }
+        var minimized: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized) == .success,
+              (minimized as? Bool) == false,
+              request.intentIsCurrent, followedWindowIsVisible(request),
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == displacedPID
+        else { return }
+
+        guard AXUIElementSetAttributeValue(application, kAXFrontmostAttribute as CFString,
+                                          kCFBooleanTrue) == .success,
+              request.intentIsCurrent, followedWindowIsVisible(request)
+        else { return }
+        let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard frontmostPID == displacedPID || frontmostPID == request.app.processIdentifier else { return }
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        return
+    }
+}
+
+/// Waits for arrival without imposing a fixed delay on every app switch.
+private func checkAutoFollowFocus(_ request: AutoFollowFocusRequest) {
+    guard gAutoFollowFocusRequest === request else { return }
+    let action = request.state.step(
+        now: ProcessInfo.processInfo.systemUptime,
+        targetVisible: getAllCurrentSpaces().contains(request.space),
+        frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+        inputUnchanged: request.intentIsCurrent)
+    switch action {
+    case .wait:
+        DispatchQueue.main.asyncAfter(deadline: .now() + kAutoFollowFocusPollInterval) {
+            checkAutoFollowFocus(request)
+        }
+    case .restore:
+        cancelAutoFollowFocusRepair()
+        restoreAutoFollowFocus(request)
+    case .finish:
+        cancelAutoFollowFocusRepair()
+    }
+}
+
+/// Keeps an arrival-induced activation out of the regular auto-follow path.
+/// New input invalidates the request even when it selects the same app that
+/// macOS would have restored on arrival.
+private func handleAutoFollowFocusActivation(_ app: NSRunningApplication) -> Bool {
+    guard let request = gAutoFollowFocusRequest else { return false }
+    let currentSpaces = getAllCurrentSpaces()
+    return request.state.appActivated(
+        app.processIdentifier, now: ProcessInfo.processInfo.systemUptime,
+        targetVisible: currentSpaces.contains(request.space),
+        inputUnchanged: request.intentIsCurrent,
+        transitVisible: !request.transitSpaces.isDisjoint(with: currentSpaces))
+}
 
 // MARK: - Clicked-Window Detection
 
@@ -145,6 +334,8 @@ final class SwoopObserver: NSObject {
                         as? NSRunningApplication else { return }
         let pid = app.processIdentifier
 
+        if handleAutoFollowFocusActivation(app) { return }
+
         // Echo of the follow we just performed for this very app — ignore it
         // (see kAutoFollowEchoWindow). Any other app activating means the
         // user moved on, so the echo window ends there and then.
@@ -197,6 +388,8 @@ final class SwoopObserver: NSObject {
         let targetSpace = findSpaceForPid(pid)
         guard targetSpace != 0 else { return }
 
+        let focusRequest = prepareAutoFollowFocusRepair(app: app, space: targetSpace)
+
         // Switch to the target space and record it for statistics.
         //
         // We intentionally do NOT call app.activate() after switching.
@@ -205,10 +398,10 @@ final class SwoopObserver: NSObject {
         // "user has brought me to the foreground" — causing them to exit
         // special background modes such as Picture-in-Picture.
         //
-        // This is unnecessary: the system activation already in progress
-        // (from Cmd+Tab or Dock click that triggered this notification)
-        // brings the app and its frontmost window to focus. Our space
-        // switch is the only missing piece.
+        // Native activation normally finishes the job. If arrival instead
+        // reactivates the destination's previous app (#72), the bounded AX
+        // repair below restores only the selected window, unless new input
+        // or navigation has already superseded this follow.
         // .declined means macOS's native (animated) switch takes over —
         // nothing to record. .alreadyThere cannot normally happen here
         // since findSpaceForPid only returns non-visible spaces.
@@ -222,6 +415,8 @@ final class SwoopObserver: NSObject {
             gAutoFollowTargetSpace = targetSpace
 
             gMenu?.recordSwitch()
+            gAutoFollowFocusRequest = focusRequest
+            if let focusRequest { checkAutoFollowFocus(focusRequest) }
         }
     }
 }

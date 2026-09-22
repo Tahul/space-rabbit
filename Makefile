@@ -52,9 +52,16 @@ APPLE_APP_PASSWORD ?=
 VERSION   ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
 .PHONY: build assets app app-dev dmg notarize release clean \
-        verify-macos-min verify-localizations
+        verify-macos-min verify-localizations test-auto-follow
 
 build: $(BIN) verify-macos-min verify-localizations
+
+# Replays focus-loss and cancellation sequences without changing desktop state.
+test-auto-follow:
+	@mkdir -p .build/tests
+	$(SWIFTC) $(SWIFTFLAGS) -o .build/tests/auto-follow-focus \
+		App/AutoFollowFocus.swift Tests/AutoFollowFocus/main.swift
+	@.build/tests/auto-follow-focus
 
 $(BIN): $(SRCS) Makefile
 	$(SWIFTC) $(SWIFTFLAGS) -target $(SWIFT_TARGET) -o $@ $(SRCS) $(LDFLAGS)
