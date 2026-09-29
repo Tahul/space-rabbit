@@ -419,10 +419,12 @@ private func pendingMissionControlDirection(forPhysicalSign sign: Double) -> Int
 
     let direction = verticalDirection(forPhysicalSign: sign)
 
+    let appExposeNative = isMissionControlOnlyVerticalInterception()
+
     switch overviewState {
-    case .desktop:        return direction
+    case .desktop:        return appExposeNative && direction < 0 ? nil : direction
     case .missionControl: return direction < 0 ? direction : nil
-    case .appExpose:      return direction > 0 ? direction : nil
+    case .appExpose:      return !appExposeNative && direction > 0 ? direction : nil
     }
 }
 
@@ -533,6 +535,12 @@ func swipeTapCallback(proxy: CGEventTapProxy, type: CGEventType,
     if isSyntheticGesture(event) { return passthrough }
 
     let subtype = event.getIntegerValueField(kCGSEventTypeField)
+
+    // A new physical gesture means a Space change that follows is wanted.
+    if subtype == kCGSEventDockControl,
+       event.getIntegerValueField(kCGEventGesturePhase) == kCGSGesturePhaseBegan {
+        cancelMissionControlSpaceGuard()
+    }
 
     // Finish a claimed vertical stream even if a toggle changed mid-gesture.
     // On macOS 27+, mirror the established horizontal cleanup contract: Dock

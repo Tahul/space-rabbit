@@ -56,6 +56,16 @@ VERSION   ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
 build: $(BIN) verify-macos-min verify-localizations
 
+# Pure logic tests; they never touch the desktop.
+.PHONY: test test-mc-guard
+test: test-mc-guard
+
+test-mc-guard:
+	@mkdir -p .build/tests
+	$(SWIFTC) $(SWIFTFLAGS) -o .build/tests/mc-space-guard \
+		App/MissionControlSpaceGuardPlan.swift Tests/MissionControlSpaceGuard/main.swift
+	@.build/tests/mc-space-guard
+
 $(BIN): $(SRCS) Makefile
 	$(SWIFTC) $(SWIFTFLAGS) -target $(SWIFT_TARGET) -o $@ $(SRCS) $(LDFLAGS)
 

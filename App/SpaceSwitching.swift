@@ -969,10 +969,28 @@ private func parseOSBuild(_ build: String)
 /// and key press to buy nothing, so the vertical path stands down and macOS
 /// runs its own transition.
 ///
-/// - Returns: `true` for macOS 15 through macOS 26.
+/// Exception: at the Instant tick, macOS 27 is admitted for Mission Control
+/// itself. Its transition still animates, but WindowManager shortens it for a
+/// high-velocity release: the Instant recipe with vertical-only terminal
+/// velocity measured ~85-115 ms against ~315 ms native (overview marker
+/// removal on 26A428). Slower ticks gain nothing and stay native. A synthetic
+/// close can rarely select another Space on 27, so every vertical transition
+/// arms `armMissionControlSpaceGuard()`.
+///
+/// - Returns: `true` for macOS 15 through macOS 26, and for macOS 27 at the
+///   Instant tick.
 func supportsInstantMissionControlInterception() -> Bool {
     let majorVersion = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    if majorVersion == 27 { return currentSwitchVelocity() >= kInstantSwitchVelocity }
     return (15...26).contains(majorVersion)
+}
+
+/// Whether App Exposé must stay native while Mission Control is driven.
+/// The macOS 27 exception above was measured for Mission Control only.
+///
+/// - Returns: `true` on macOS 27 and later.
+func isMissionControlOnlyVerticalInterception() -> Bool {
+    ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
 }
 
 /// Whether the horizontal space carousel *inside* the Mission Control overview
@@ -1327,9 +1345,13 @@ private func makeMissionControlDockEvent(phase: Int64,
                               value: sign * progressMagnitude)
 
     if let velocityMagnitude {
+        // The macOS 27 vertical recipe that shortened Mission Control carries
+        // its terminal velocity on Y only.
+        let verticalOnly = augmented && motion == kGestureMotionVertical
         event.setDoubleValueField(kCGEventGestureSwipeVelocityX,
-                                  value: sign * velocityMagnitude)
-        event.setDoubleValueField(kCGEventGestureSwipeVelocityY, value: 0)
+                                  value: verticalOnly ? 0 : sign * velocityMagnitude)
+        event.setDoubleValueField(kCGEventGestureSwipeVelocityY,
+                                  value: verticalOnly ? sign * velocityMagnitude : 0)
     }
 
     if augmented {
@@ -1578,8 +1600,11 @@ private func finishAnimatedMissionControlTransitionIfNeeded(
 ///            successfully started; otherwise `false` without claiming it.
 func postMissionControlTransition(proxy: CGEventTapProxy,
                                   direction: Int) -> Bool {
-    postControlledDockSwipe(proxy: proxy, motion: kGestureMotionVertical,
-                            direction: direction)
+    let spacesBefore = getAllCurrentSpaces()
+    guard postControlledDockSwipe(proxy: proxy, motion: kGestureMotionVertical,
+                                  direction: direction) else { return false }
+    if requiresEventAugmentation() { armMissionControlSpaceGuard(spacesBefore) }
+    return true
 }
 
 /// Posts a controlled horizontal gesture that moves the Mission Control

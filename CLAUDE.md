@@ -357,17 +357,36 @@ and its field-4205 payload, matching the horizontal interceptor's cleanup withou
 leaving contradictory serialized motion. If that rebuild fails, the ordinary fields
 alone are zeroed and the Ended still goes through — dropping it would leave the
 Dock's gesture state open, which is the worse failure.
-**Vertical transitions are inert on macOS 27** (`supportsInstantMissionControlInterception()`
-covers macOS 15–26 only). The synthetic vertical stream is still *accepted* there
-— the overview does open from it — but WindowManager, which took the overview over
-from the Dock, animates the transition regardless of what the gesture carries.
-Measured on 26A428 across four recipes: the shipping one; terminal velocity
-mirrored into `VelocityY`; terminal velocity in `VelocityY` alone; and full
-progress on Began. All four animated. `com.apple.dock expose-animation-duration`
-does nothing either — the string no longer appears anywhere in 27's Dock binary.
-Intercepting there would swallow the user's swipe and key press to buy nothing,
-so the path stands down and macOS runs its own transition. Do not re-enable it
-for 27 without a recipe measured to actually remove the animation.
+**On macOS 27, vertical transitions are shortened, not removed.**
+WindowManager, which took the overview over from the Dock, always animates the
+transition. Measured on 26A428 across four recipes (the shipping one; terminal
+velocity mirrored into `VelocityY`; terminal velocity in `VelocityY` alone; full
+progress on Began), none removed the animation, and `com.apple.dock
+expose-animation-duration` no longer exists in 27's Dock. WindowManager does,
+however, shorten its spring for a high-velocity release: with terminal velocity
+on `VelocityY` alone (`VelocityX` = 0), the close finishes in ~85-115 ms against
+~315 ms native (overview-marker removal, not rendered frames), and opening
+recordings showed ~110 ms against ~400 ms. So `supportsInstantMissionControlInterception()`
+admits macOS 27 at the **Instant tick only**, for **Mission Control only**
+(`isMissionControlOnlyVerticalInterception()` keeps App Exposé native, since it
+was not measured). The timed ticks gain nothing on 27 and stay native.
+WindowManager's own preferences (`ExposeSpringResponse`,
+`ExposeTrackpadSpringResponseScale`, `AnimationSpeed`) are ignored on release
+builds, measured by timing.
+
+**Space guard (macOS 27).** A synthetic close very rarely lands on a
+different Space (1 in ~320 scripted closes on 26A428, inside WindowManager; the
+cause was not found). Every synthetic vertical transition therefore arms
+`armMissionControlSpaceGuard()` (`MissionControlSpaceGuard.swift`): for 1.5 s it
+polls the current spaces, and if they change with no user input and no
+auto-follow, it switches back with `switchToSpace`. Any key press
+(`eventTapCallback`), physical DockSwipe Began (`swipeTapCallback`), click or
+scroll (input counters), or auto-follow switch cancels the watch, since the
+change was then wanted. Key presses need the explicit cancel because the
+counters never see the shortcut keys the keyboard tap swallows. The decision
+logic is pure (`MissionControlSpaceGuardPlan.swift`) and covered by `make test`.
+Each restore logs to the unified log, subsystem `app.spacerabbit`, category
+`MissionControlGuard`.
 
 The **horizontal in-overview carousel is tracked separately**
 (`supportsOverviewSpaceSwitchInterception()`, macOS 15–27) and still works on 27,
@@ -508,8 +527,8 @@ once an action is about to happen, never per event:
   must resolve to Mission Control or App Exposé — the vertical gesture drives
   both; Show Desktop, conflicts, and failed reads remain native. (Through macOS
   26 that resolution is `SLSCopySpaces` + `SLSSpaceCopyName`; on 27 it is the
-  spaces-bar marker. The vertical path itself is inert on 27 — see below — so
-  there the answer only feeds the stand-down guards and the carousel.)
+  spaces-bar marker. On 27 the vertical path runs at the Instant tick only, for
+  Mission Control only; see "On macOS 27, vertical transitions are shortened".)
   The keyboard path needs the same answer for a second reason: the press is a
   toggle, so the state *is* its direction — and it keeps standing down on App
   Exposé, where the Mission Control key crosses to Mission Control rather than
@@ -1058,6 +1077,7 @@ Everything goes through the `Makefile`. No Xcode project.
 | Target | What it does |
 |---|---|
 | `make build` | Compiles `App/*.swift` → `spacerabbit` binary, then verifies the min-macOS target and the localization tables (see "Localization") |
+| `make test` | Builds and runs the pure-logic tests in `Tests/` (the Mission Control Space guard); they never touch the desktop |
 | `make assets` | Regenerates both build-time assets: `Tools/Icon/AppIcon.icns` (from `Tools/Icon/CreateIcon.swift`) and `Tools/Dmg/Background.tiff` (from `Tools/Dmg/CreateBackground.swift`) |
 | `make app` | `build` + assembles `Space Rabbit.app` bundle + code-signs |
 | `make app-dev` | `app` + kills any running instance + relaunches — **use this during development** |
@@ -1157,6 +1177,9 @@ App/
   AutoFollow.swift      — app-activation observer (Feature 2: auto-follow)
   SwipeIntercept.swift  — shared gesture tap for horizontal Space swipes and
                           Mission Control entry/dismissal
+  MissionControlSpaceGuard.swift — macOS 27: undoes a Space change a synthetic
+                          Mission Control transition caused
+  MissionControlSpaceGuardPlan.swift — pure decision logic for that guard
   MenuBar.swift         — SwoopMenu status item and dropdown menu
   Settings.swift        — preferences window (General + About tabs) — largest file
   UpdateCheck.swift     — GitHub release version checking
@@ -1166,6 +1189,8 @@ App/
     en.lproj/           — Localizable.strings + .stringsdict + InfoPlist.strings
     fr.lproj/ es.lproj/ de.lproj/ pt.lproj/ zh-Hans.lproj/ ru.lproj/
                         — same three files, same keys (enforced by the build)
+Tests/
+  MissionControlSpaceGuard/main.swift — `make test` checks for the guard logic
 Tools/                  — build-time asset generators (not compiled into the app)
   Localization/
     Validate.swift      — cross-language key check run by `make build`
@@ -1212,12 +1237,11 @@ local.env               — git-ignored; signing credentials
   them, plus the dedicated Mission Control key and the "Mission Control" system
   hotkey — but not Show Desktop by any trigger, and not App Exposé by keyboard
   (only by trackpad; see the keyboard-trigger note above).
-- **On macOS 27 the vertical half of that toggle does nothing**: Mission Control
-  and App Exposé entry and dismissal are always animated, by every trigger,
-  because WindowManager took the overview over from the Dock and animates the
-  transition regardless of the gesture posted. The toggle still owns the
-  horizontal carousel inside the Mission Control overview there. See "Optional
-  Instant Mission Control" for the recipes measured before standing it down.
+- **On macOS 27 the vertical half of that toggle only shortens Mission
+  Control**: at the Instant tick, entry and dismissal take ~100 ms instead of
+  ~300-400 ms, but WindowManager always animates. App Exposé, the timed ticks,
+  and exiting by clicking a window stay native. See "On macOS 27, vertical
+  transitions are shortened" for the measurements and the Space guard.
 - Inside the Mission Control overview, the "Move left/right a space" bindings
   are converted to the segmented carousel stream, and so is "Switch to Desktop
   N" at the Instant tick. The cycle shortcut, and Desktop N at slower ticks,
