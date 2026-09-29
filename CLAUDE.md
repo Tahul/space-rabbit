@@ -414,11 +414,12 @@ gesture; vertical entry into and dismissal of App Exposé do work and ship.
 **Space shortcuts inside the overview.** The system "Move left/right a space"
 bindings navigate the same carousel, so Feature 1 hands them to
 `postOverviewSpaceSwitch` too rather than standing down, gated on the identical
-condition (`canDriveOverviewSpaceSwitch()` in `EventTap.swift`). Only these two
-one-step bindings are converted. "Switch to Desktop N" and the cycle shortcut
-are multi-step and still stand down — one segmented stream moves the carousel by
-exactly one space, so those would need a chained sequence to be correct, and an
-animated native jump is better than a wrong instant one.
+condition (`canDriveOverviewSpaceSwitch()` in `EventTap.swift`). "Switch to
+Desktop N" is converted too at the Instant tick: `postOverviewSpaceJump` posts
+one segmented stream per step, back to back, which lands exactly (14 of 14
+multi-step jumps on 26A428) without drawing the spaces in between. At slower
+ticks the timed streams would cancel one another, so Desktop N stands down
+there, as does the cycle shortcut at every tick.
 
 ### Feature interaction (suppression guard)
 
@@ -1217,10 +1218,11 @@ local.env               — git-ignored; signing credentials
   transition regardless of the gesture posted. The toggle still owns the
   horizontal carousel inside the Mission Control overview there. See "Optional
   Instant Mission Control" for the recipes measured before standing it down.
-- Inside the Mission Control overview, only the one-step "Move left/right a
-  space" bindings are converted to the segmented carousel stream. "Switch to
-  Desktop N" and the cycle shortcut are multi-step and still stand down to
-  macOS (animated) — see "Space shortcuts inside the overview".
+- Inside the Mission Control overview, the "Move left/right a space" bindings
+  are converted to the segmented carousel stream, and so is "Switch to Desktop
+  N" at the Instant tick. The cycle shortcut, and Desktop N at slower ticks,
+  still stand down to macOS (animated). See "Space shortcuts inside the
+  overview".
 - Space switches inside App Exposé or Show Desktop are left to macOS (animated).
 - A reversed gesture is undone by posting the inverse transition, not by
   scrubbing the replacement backwards under the fingers: the transition is
