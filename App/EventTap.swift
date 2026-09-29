@@ -626,8 +626,10 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         // Mission Control navigates its own carousel — see
         // isMissionControlActive(). Checked only once a shortcut has
         // matched: the lookup scans the window list, too heavy to run
-        // for every keystroke passing through the tap.
-        guard !isMissionControlActive() else { return passthrough }
+        // for every keystroke passing through the tap. At the Instant tick
+        // the carousel jumps straight there; otherwise macOS slides natively.
+        let inOverview = isMissionControlActive()
+        guard !inOverview || canDriveOverviewSpaceSwitch() else { return passthrough }
 
         let desktops = getUserDesktops()
 
@@ -635,7 +637,10 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         // let macOS decide natively instead of eating the shortcut.
         guard idx < desktops.count else { return passthrough }
 
-        switch switchToSpace(desktops[idx]) {
+        let result = inOverview
+            ? postOverviewSpaceJump(proxy: proxy, to: desktops[idx])
+            : switchToSpace(desktops[idx])
+        switch result {
         case .switched:
             gLastSpaceSwitchTime = Date()
             gMenu?.recordSwitch()

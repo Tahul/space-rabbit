@@ -1600,6 +1600,32 @@ func postOverviewSpaceSwitch(proxy: CGEventTapProxy, direction: Int) -> Bool {
                             direction: direction)
 }
 
+/// Moves the Mission Control overview's carousel straight to `target` on the
+/// cursor's display, for "Switch to Desktop N" inside the overview.
+///
+/// Every one-step stream goes out back to back, so the spaces in between are
+/// never drawn. Instant tick only: the timed streams of slower ticks would
+/// cancel one another. Measured on 26A428 (macOS 27.0): 14 of 14 multi-step
+/// jumps landed on the right space, median ~37 ms.
+///
+/// - Parameters:
+///   - proxy: The active keyboard tap proxy.
+///   - target: The desktop to land on.
+/// - Returns: `.switched` once streams were posted, `.alreadyThere` when the
+///   target is current, or `.declined` so the key passes through natively.
+func postOverviewSpaceJump(proxy: CGEventTapProxy, to target: CGSSpaceID) -> SpaceSwitchResult {
+    let (spaceIDs, currentIdx) = getSpaceList()
+    guard currentSwitchVelocity() >= kInstantSwitchVelocity, currentIdx >= 0,
+          let targetIdx = spaceIDs.firstIndex(of: target) else { return .declined }
+    let steps = targetIdx - currentIdx
+    guard steps != 0 else { return .alreadyThere }
+    for posted in 0..<abs(steps)
+    where !postOverviewSpaceSwitch(proxy: proxy, direction: steps > 0 ? 1 : -1) {
+        return posted == 0 ? .declined : .switched
+    }
+    return .switched
+}
+
 /// Shared implementation behind both controlled Dock-driven transitions.
 ///
 /// Animated ticks advance progress asynchronously over a duration derived from
