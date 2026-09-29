@@ -59,6 +59,11 @@ private let kIOHIDSwipeDown: Int64 = 2
 /// section.
 private let kAugmentedInstantVelocity: Double = 9999.0
 
+/// Progress magnitude of every phase of an Instant macOS 27 horizontal gesture.
+/// Near zero so no intermediate frame is drawn, but well above the 16.16
+/// payload's smallest step so the direction survives serialization.
+private let kInstantTravelMagnitude: Double = 0.0001
+
 /// Velocity range for animated (non-instant) switches, mapped from the
 /// user's transition-speed slider. Calibrated against InstantSpaceSwitcher's
 /// speed presets (Fast=50, Faster=60, Fastest=80): the slider's animated
@@ -1638,13 +1643,18 @@ private func postControlledDockSwipe(proxy: CGEventTapProxy?,
                   kCGSGesturePhaseEnded]
     var events = [CGEvent]()
 
+    // The macOS 27 in-overview carousel takes the same near-zero-travel recipe
+    // as the desktop (see makeAugmentedDockEvent): full Changed travel flickers
+    // there too.
+    let nearZeroTravel = motion == kGestureMotionHorizontal && needsAugmentation
+
     for phase in phases {
         guard let event = prepareMissionControlDockEvent(
             phase: phase,
             motion: motion,
             direction: direction,
-            progressMagnitude: phase == kCGSGesturePhaseBegan
-                ? kMissionControlEpsilon : 1,
+            progressMagnitude: nearZeroTravel ? kInstantTravelMagnitude
+                : (phase == kCGSGesturePhaseBegan ? kMissionControlEpsilon : 1),
             velocityMagnitude: phase == kCGSGesturePhaseEnded
                 ? kAugmentedInstantVelocity : nil,
             augmented: needsAugmentation
@@ -1682,9 +1692,8 @@ func makeMissionControlCleanupEvent(from physicalEvent: CGEvent) -> CGEvent? {
 
 /// Signed multiplier the augmented horizontal path applies to progress and
 /// velocity. Which sign moves right is build- and preference-dependent — see
-/// the "macOS 27 Gesture Augmentation" section. Read per constructed event on
-/// purpose: a mid-stream preference flip could in theory mix conventions, but
-/// the flip only takes effect at a Dock relaunch anyway.
+/// the "macOS 27 Gesture Augmentation" section. Read once per gesture, so the
+/// three phases of one switch can never disagree about direction.
 ///
 /// - Parameter isRight: `true` to move to the next space (right).
 /// - Returns: `+1.0` or `-1.0`.
@@ -1696,26 +1705,28 @@ private func augmentedHorizontalSign(isRight: Bool) -> Double {
 /// Creates one phase of the macOS 27 dock swipe, with the extra fields
 /// the 27 Dock validates (phase mirror, flavor, timestamp, non-zero
 /// position). Progress/velocity signs follow the build- and
-/// preference-dependent convention of `augmentedHorizontalSign(isRight:)`.
+/// preference-dependent convention, sampled once for the whole gesture.
 ///
 /// - Parameters:
 ///   - phase: `kCGSGesturePhaseBegan`, `...Changed`, or `...Ended`.
 ///   - isRight: `true` to move to the next space (right).
 ///   - velocity: Velocity magnitude applied on the Ended phase.
+///   - sign: `augmentedHorizontalSign(isRight:)`, sampled once per gesture.
 /// - Returns: The dock control event (not yet augmented), or `nil`.
 private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
-                                    velocity: Double) -> CGEvent? {
+                                    velocity: Double, sign fullSign: Double) -> CGEvent? {
     guard let ev = CGEvent(source: nil) else { return nil }
 
-    // Began carries only an epsilon of progress; Changed and Ended carry the
-    // full ±1.0. Committing the whole travel on Began too made macOS 27 act on
-    // the gesture twice — once on Began and again on Changed — which showed up
-    // as an intermittent stutter mid-switch. The switch stays fully instant:
-    // Changed still reaches the boundary in the same instant. This mirrors what
-    // the vertical Mission Control path already does with its Began.
-    let fullSign = augmentedHorizontalSign(isRight: isRight)
-    let sign = phase == kCGSGesturePhaseBegan
-        ? fullSign * kMissionControlEpsilon : fullSign
+    // Instant commits through terminal velocity alone, with near-zero travel
+    // in every phase. Full travel on Changed exposed a brief intermediate
+    // sliding frame on macOS 27 (a visible flicker). The magnitude must stay
+    // representable in the 16.16 IOHID payload: zero would drop the direction.
+    // Slower ticks keep the epsilon-Began, full-travel recipe; committing full
+    // travel on Began too made macOS 27 act on the gesture twice.
+    let progressMagnitude = velocity >= kAugmentedInstantVelocity
+        ? kInstantTravelMagnitude
+        : (phase == kCGSGesturePhaseBegan ? kMissionControlEpsilon : 1.0)
+    let sign = fullSign * progressMagnitude
 
     ev.setIntegerValueField(kCGSEventTypeField,          value: kCGSEventDockControl)
     ev.setIntegerValueField(kCGEventGestureHIDType,      value: kIOHIDEventTypeDockSwipe)
@@ -1755,9 +1766,10 @@ private func postAugmentedSwitchGesture(isRight: Bool, velocity: Double) -> Bool
     let phases = [kCGSGesturePhaseBegan, kCGSGesturePhaseChanged, kCGSGesturePhaseEnded]
     var events = [(dock: CGEvent, gesture: CGEvent)]()
 
+    let sign = augmentedHorizontalSign(isRight: isRight)
     for phase in phases {
         guard let dockEvent = makeAugmentedDockEvent(phase: phase, isRight: isRight,
-                                                     velocity: magnitude)
+                                                     velocity: magnitude, sign: sign)
         else { return false }
 
         guard let augmented    = augmentDockSwipeEvent(dockEvent),
