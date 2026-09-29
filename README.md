@@ -71,6 +71,9 @@ make app
 # Build and launch immediately (kills any running instance first, used for development)
 make app-dev
 
+# Replay auto-follow focus regression tests without desktop interaction
+make test-auto-follow
+
 # Clean all build artefacts
 make clean
 ```

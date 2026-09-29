@@ -121,8 +121,38 @@ Listens for `NSWorkspace.didActivateApplicationNotification`. When an app is act
      deliberately do not stamp (see below)
 2. `findSpaceForPid(_:)` uses `visibleWindowSpaces(for:)` to find the app's window spaces, returns 0 if already reachable (falls back to space-anchored helper windows for windowless apps — see "Window filtering criteria")
 3. `switchToSpace(_:)` computes direction + steps and posts that many gestures
+4. **Arrival focus repair** (`AutoFollowFocusState`, issue #72) — capture the
+   selected normal window before posting. For at most 1.5 seconds, check every
+   25 ms whether the destination's arrival has activated a different app.
+   Keep observing a correct activation for 300 ms after arrival: the previous
+   app can take focus slightly later (measured at 67–151 ms on macOS 27).
 
-The app is intentionally **never activated by us** (`app.activate()` is not called): the system activation already in progress brings the app to focus, and sending a `kAEActivate` Apple Event makes some apps (e.g. Safari) exit background modes like Picture-in-Picture.
+**Do not call `app.activate()` or use `.activateAllWindows`.** Their Apple Event
+and cross-Space effects caused the Picture-in-Picture regression fixed in
+`6625f63`. Native activation usually completes without help and gets no AX
+writes. Only an observed arrival activation that actually displaces the target
+allows one repair: set the application's AX frontmost attribute and raise the
+captured window. `_AXUIElementGetWindow` (isolated in `PrivateAPI.swift`) matches
+the Accessibility object to that exact CG window ID; an unreadable, closed,
+minimized, hidden, moved or all-Spaces window is never repaired. AX messaging
+has a 50 ms timeout so an unresponsive target cannot stall the keyboard taps
+for the default multi-second timeout.
+
+New key-downs, mouse-downs, scrolling, user Space navigation, an intercepted
+physical gesture, a third app's activation, or disabling the feature abandon
+the request. Input counters are checked again just before the AX writes;
+modifier releases are excluded because releasing Command completes the
+original Cmd-Tab. Activations on intermediate desktops of a multi-step jump
+are consumed without replacing the intended target. Do not use changes to
+`gLastSpaceSwitchTime` alone to cancel recovery: intermediate notifications
+from our own jump also stamp it. Pending callbacks check request identity, so
+a later follow supersedes them. Arrival activations consumed by this repair do not
+clear the original PID echo guard or trigger another auto-follow. There are
+no new event taps and no polling when no follow is pending.
+
+`make test-auto-follow` replays the measured ordering and cancellation cases
+against the production state machine without changing desktop state. Live
+Cmd-Tab/PiP verification is still needed to exercise the window server and AX.
 
 ### Feature 3: Instant trackpad swipe (`swipeTapCallback` in `SwipeIntercept.swift`)
 
@@ -1058,6 +1088,7 @@ Everything goes through the `Makefile`. No Xcode project.
 | Target | What it does |
 |---|---|
 | `make build` | Compiles `App/*.swift` → `spacerabbit` binary, then verifies the min-macOS target and the localization tables (see "Localization") |
+| `make test-auto-follow` | Replays arrival focus-loss and cancellation sequences against `AutoFollowFocusState` without desktop interaction |
 | `make assets` | Regenerates both build-time assets: `Tools/Icon/AppIcon.icns` (from `Tools/Icon/CreateIcon.swift`) and `Tools/Dmg/Background.tiff` (from `Tools/Dmg/CreateBackground.swift`) |
 | `make app` | `build` + assembles `Space Rabbit.app` bundle + code-signs |
 | `make app-dev` | `app` + kills any running instance + relaunches — **use this during development** |
@@ -1155,6 +1186,7 @@ App/
                           plus the configurable cycle shortcut)
   ShortcutRecorder.swift — Preferences control that records the cycle shortcut
   AutoFollow.swift      — app-activation observer (Feature 2: auto-follow)
+  AutoFollowFocus.swift — bounded arrival-focus state, independent of AppKit
   SwipeIntercept.swift  — shared gesture tap for horizontal Space swipes and
                           Mission Control entry/dismissal
   MenuBar.swift         — SwoopMenu status item and dropdown menu
@@ -1178,6 +1210,7 @@ Tools/                  — build-time asset generators (not compiled into the a
     CreateBackground.swift — generates the 1x/2x background programmatically
     Layout.applescript  — drives Finder to lay out the mounted DMG window
 Makefile
+Tests/AutoFollowFocus/  — standalone Swift regression cases for arrival focus
 Package.swift           — LSP stub only, NOT used for building
 README.md
 CLAUDE.md               — this file

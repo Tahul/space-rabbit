@@ -19,6 +19,7 @@
  */
 
 import CoreGraphics
+import ApplicationServices
 import Darwin
 
 // MARK: - Undocumented CGEvent Field IDs
@@ -196,6 +197,10 @@ typealias FnCopySpaces       = @convention(c) (CGSConnectionID, Int32) -> Unmana
 /// Returns an OS-managed space name such as `mission-control` or `show-front`.
 typealias FnSpaceCopyName    = @convention(c) (CGSConnectionID, CGSSpaceID) -> Unmanaged<CFString>?
 
+/// `_AXUIElementGetWindow(element, windowID) -> AXError`
+/// Matches an Accessibility window to the exact CG window chosen for a follow.
+typealias FnAXWindowID = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+
 // MARK: - Runtime Symbol Resolution
 //
 // We load private symbols from the WindowServer framework using dlsym
@@ -234,6 +239,9 @@ let slsCopySpaces:           FnCopySpaces?         = loadSymbol("SLSCopySpaces")
 
 /// Returns the internal name of an OS-managed space.
 let slsSpaceCopyName:        FnSpaceCopyName?      = loadSymbol("SLSSpaceCopyName")
+
+/// Returns the CG window ID underlying an Accessibility window, if supported.
+let axWindowID:              FnAXWindowID?         = loadSymbol("_AXUIElementGetWindow")
 
 // NOTE: CGSManagedDisplaySetCurrentSpace was tried for cross-display
 // switching and removed — it desyncs window-server state (see the
