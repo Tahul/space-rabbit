@@ -19,7 +19,7 @@ The app runs as an `LSUIElement` (no Dock icon, no app menu), living entirely in
 
 ## How it works
 
-The core trick: macOS's Dock processes high-velocity `DockSwipe` gesture events and switches spaces immediately without animation when the velocity is high enough. Space Rabbit posts synthetic `CGEvent` pairs (Began + Ended) with extreme velocity/progress values directly into the session event tap, bypassing the normal animated space switch.
+The core trick: macOS's Dock processes high-velocity `DockSwipe` gesture events and switches spaces immediately without animation when the velocity is high enough. Space Rabbit posts synthetic `CGEvent` pairs (Began + Changed + Ended) with extreme velocity/progress values directly into the session event tap, bypassing the normal animated space switch.
 
 Technique borrowed from [InstantSpaceSwitcher](https://github.com/jurplel/InstantSpaceSwitcher).
 
@@ -49,7 +49,7 @@ Exact initialization order — getting this wrong causes subtle bugs:
 A `CGEvent` tap at `.cgSessionEventTap` / `.headInsertEventTap` listens for `keyDown` events. When the user's configured modifier+arrow shortcut is detected:
 
 1. The original key event is **swallowed** (callback returns `nil`).
-2. `postSwitchGesture(direction:)` posts a Began+Ended gesture pair using the
+2. `postSwitchGesture(direction:)` posts a Began+Changed+Ended gesture using the
    global transition velocity.
 3. The Dock handles the gesture at the selected speed (with no animation at
    the Instant tick).
@@ -583,7 +583,7 @@ Key: `"id64"` is cast to `UInt64` via `(space["id64"] as? NSNumber)?.uint64Value
 
 ### Synthetic gesture event anatomy
 
-Each space switch requires posting **two gesture pairs** (Began + Ended). Each pair consists of two `CGEvent` objects posted back-to-back:
+Each pre-27 space switch requires posting **three gesture pairs** (Began + Changed + Ended). Each pair consists of two `CGEvent` objects posted back-to-back:
 
 **Event 1 — Generic gesture envelope:**
 - `kCGSEventTypeField` (field 55) = `kCGSEventGesture` (29)
@@ -591,17 +591,21 @@ Each space switch requires posting **two gesture pairs** (Began + Ended). Each p
 **Event 2 — Dock control payload:**
 - `kCGSEventTypeField` (55) = `kCGSEventDockControl` (30)
 - `kCGEventGestureHIDType` (110) = `kIOHIDEventTypeDockSwipe` (23)
-- `kCGEventGesturePhase` (132) = Began (1) or Ended (4)
+- `kCGEventGesturePhase` (132) = Began (1), Changed (2) or Ended (4)
 - `kCGEventScrollGestureFlagBits` (135) = 0 (left) or 1 (right)
 - `kCGEventGestureSwipeMotion` (123) = 1
 - `kCGEventGestureScrollY` (119) = 0.0
 - `kCGEventGestureZoomDeltaX` (139) = `Float.leastNonzeroMagnitude` (non-zero epsilon so the Dock doesn't discard it)
+- *(Changed phase only:)*
+  - `kCGEventGestureSwipeProgress` (124) = ±1.0 (`kChangedPhaseProgress`)
 - *(Ended phase only:)*
   - `kCGEventGestureSwipeProgress` (124) = ±2.0 (`kInstantSwitchProgress`)
   - `kCGEventGestureSwipeVelocityX` (129) = ±400.0 (`kInstantSwitchVelocity`)
   - `kCGEventGestureSwipeVelocityY` (130) = 0.0
 
 Post order: dock event first, then gesture envelope. Both go to `.cgSessionEventTap`.
+
+**Why the Changed pair exists.** WindowServer builds the destination space's compositing surfaces as swipe progress advances. A gesture that goes straight from Began to Ended commits with no travel on the way, so it can land on a space whose surfaces were never built: every window on it is still in the window list (alpha 1, not minimized) but does not paint until Mission Control or an app activation forces a redraw (issue #51, "windows disappear"). Carrying ±1.0 on Changed makes WindowServer build the surfaces before the commit; the switch is still instant. Measured on macOS 26.6.2 (M4 Pro, 5 spaces) with a `screencapture -l <wid>` probe ("could not create image from window" = wedged), 6 rounds, 0.35 s settle: Began+Ended as above wedged 11/24 window probes; adding Changed ±1.0 wedged 0/24; adding Changed at ±2.0 instead wedged 24/60, so the Changed value must be the one-step travel, not the commit magnitude. Hits Chrome, kitty, Google Chat alike — not app-specific.
 
 ### macOS 27+ gesture augmentation
 
@@ -611,7 +615,7 @@ macOS 27's Dock **rejects** the bare gesture pairs above (the user hears the err
 2. **Preference- and build-dependent sign convention**: which sign moves right is resolved per posted switch by `requiresInvertedAugmentedSigns()`. Two regimes exist, split by the OS build (`kern.osversion`). "26A" builds **in the seed range** (5000 and up) below 5416 — the early 27.0 betas — are unconditionally INVERTED — negative progress/velocity moves right, opposite of the legacy path (measured on 26A5388g: `+1.0/+9999` moves left; issue #19, whose bare un-invert in PR #15 was correctly reverted). From 26A5416 on — and, assumed, on the public release (26A428 and any other sub-5000 "26A" build), 26B+ trains, later majors, and unparseable build strings — the Dock's interpretation follows **"Natural scrolling"** (`com.apple.swipescrolldirection`): ON (the macOS default) means inverted, OFF means the legacy orientation. Measured on 26A5416b by posting the augmented sequence and reading the index back from `CGSCopyManagedDisplaySpaces`, and verified *causally* on one machine — toggling the preference and restarting the Dock deterministically swaps which convention works. Apple numbers pre-release seeds from 5000 up (26A5388g, 26A5416b) and ships the public release from a much *lower* number (macOS 27.0 is 26A428), so the seed-range floor is load-bearing: a bare `< 5416` test reads the shipping release as an early beta, which is the opposite of the truth. Do **not** collapse this to a hardcoded sign or a pure build gate: issue #54 (fixed by PR #55's build gate, then reproduced in the opposite direction by a natural-scrolling-ON machine on the same build) proved two machines on the identical build can need opposite signs. Posting the wrong convention makes every switch travel the wrong way: Ctrl+Arrow walks to the first/last space instead of stepping, and at either edge the Dock flashes black and rubber-bands back to the starting space. One operational caveat, measured: the Dock samples the preference at launch (`defaults write` changes nothing until `killall Dock`), so Space Rabbit's live cache-flushed read can transiently disagree with a stale Dock. The preference is read per constructed event — a mid-stream flip could in theory mix conventions, accepted because the flip only takes effect at a Dock relaunch anyway. This is the *posting* convention only — reading a real trackpad gesture's direction has its own separate rule (`isRightSwipe`, see Feature 3).
 3. **Serialized IOHID payload under field 4205**: the Dock validates the event against a packed little-endian IOHID queue payload — `IOHIDSystemQueueElementHeader` (28 B) + `IOHIDFluidTouchGestureData` (40 B) + `IOHIDVelocityEventData` (28 B, appended only when velocity ≠ 0 or phase = Ended) — mirroring the event's gesture fields (positions/progress/velocity as signed 16.16 fixed-point, phase in the high byte of the gesture's `options`). Field 4205 can NOT be set via the normal field-setter API: the event is flattened with `CGEventCreateData`, any existing field-4205 record is replaced with a current packed payload, and the event is rebuilt with `CGEventCreateFromData`. The serialized header must be `00 00 00 02` — anything else means Apple changed the format and `augmentDockSwipeEvent` bails (gesture not posted). Replacing the record means walking every record in the blob, and an unrecognized record shape would otherwise disable the whole path; for the freshly-built events (which carry no payload of their own) it therefore falls back to plain appending, the behavior that shipped before the walker existed. Only the macOS 27 vertical-cleanup event — a *copy of a physical gesture*, which may already hold a payload — passes `mayCarryExistingPayload: true` and stays strict, since a second contradictory payload would be worse than none. Swift structs make no layout guarantees, so the payload is serialized field-by-field (`Data.appendLE`), not by casting structs — the layout was verified byte-identical against the packed C structs.
 
-The augmented sequence is **Began + Changed + Ended** (three pairs, not two — macOS 27 requires the Changed phase). All three events are built and augmented up front so a mid-sequence failure posts nothing (a Began without its Ended would leave the Dock's gesture state half-open). Anything ≥ `kInstantSwitchVelocity` (400) is mapped to 9999.
+The augmented sequence is **Began + Changed + Ended** (three pairs, like the pre-27 path since the surface fix — but macOS 27 *requires* the Changed phase, and uses a different progress recipe). All three events are built and augmented up front so a mid-sequence failure posts nothing (a Began without its Ended would leave the Dock's gesture state half-open). Anything ≥ `kInstantSwitchVelocity` (400) is mapped to 9999.
 
 4. **The animated band does not use this recipe at all on macOS 27.** It commits progress fully (±1.0) on *every* phase, so the Dock has already reached the boundary before it reads a velocity — Fast/Faster/Fastest all landed as instant jumps and the middle of the slider collapsed onto its right end. On macOS 27 `postSwitchGesture` therefore routes any velocity below `kInstantSwitchVelocity` to the **timed horizontal stream** (`postControlledDockSwipe` on `motion = 1`) instead, the same machinery the Mission Control carousel uses. Two properties make it work, both measured on 26A428:
    - **The ramp must end at instant velocity.** Ending near zero (`kMissionControlEpsilon`, what the vertical path uses) lets macOS 27 run its own settle animation on top of the ramp, and every tick then looks exactly like Space Rabbit being off.
