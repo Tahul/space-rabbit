@@ -473,6 +473,11 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType,
         return passthrough
     }
 
+    // A key press means a Space change that follows is wanted. The guard's
+    // input counters never see the shortcut keys this tap swallows, so without
+    // this it would undo a Space shortcut used just after Mission Control closed.
+    if type == .keyDown { cancelMissionControlSpaceGuard() }
+
     // At the "Normal" transition speed the user wants macOS's native
     // animated switch — let every shortcut through untouched so the OS
     // handles it exactly as if Space Rabbit weren't running.
