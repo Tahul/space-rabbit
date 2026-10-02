@@ -11,7 +11,7 @@
  * The synthetic gesture technique works because macOS's Dock process
  * handles high-velocity DockSwipe events by switching spaces immediately
  * without playing the slide animation. We exploit this by posting
- * a Began+Ended gesture pair with extreme velocity values.
+ * a Began+Changed+Ended gesture with extreme velocity values.
  */
 
 import AppKit
@@ -30,6 +30,16 @@ private let kSLSSpaceTypeAll: Int32 = 7
 /// fully committed (i.e. the user has dragged all the way through).
 /// Positive = right, negative = left.
 private let kInstantSwitchProgress: Double = 2.0
+
+/// Progress carried by the Changed phase of a pre-27 instant switch.
+/// WindowServer builds the destination space's compositing surfaces as
+/// swipe progress advances; a gesture that commits with no travel on
+/// the way (Began straight to Ended) can land on a space whose surfaces
+/// were never built, leaving every window blank until Mission Control or
+/// an app activation forces a redraw (#51). One full step of travel on
+/// Changed makes WindowServer build them before the commit; the switch is
+/// still instant.
+private let kChangedPhaseProgress: Double = 1.0
 
 /// Absolute swipe velocity that exceeds the Dock's threshold for
 /// triggering an instant (non-animated) space switch.
@@ -1808,7 +1818,7 @@ private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
 }
 
 /// Posts a complete augmented Began+Changed+Ended swipe sequence — the
-/// macOS 27 equivalent of `postSwitchGesture`'s legacy Began+Ended pair.
+/// macOS 27 equivalent of `postSwitchGesture`'s legacy Began+Changed+Ended gesture.
 ///
 /// All three events are built (and augmented) up front so a mid-sequence
 /// allocation failure posts nothing at all — a Began without its Ended
@@ -1862,11 +1872,13 @@ private func postAugmentedSwitchGesture(isRight: Bool, velocity: Double) -> Bool
 // slide animation. We exploit this by posting synthetic CGEvents
 // directly into the session event tap.
 //
-// Each space switch requires a Began+Ended gesture pair:
-//   1. Began  — tells the Dock a swipe started (velocity/progress = 0)
-//   2. Ended  — tells the Dock the swipe finished (extreme velocity triggers instant switch)
+// Each pre-27 space switch is a Began+Changed+Ended gesture:
+//   1. Began   — tells the Dock a swipe started (velocity/progress = 0)
+//   2. Changed — carries one step of travel so WindowServer composites the destination space
+//   3. Ended   — tells the Dock the swipe finished (extreme velocity triggers instant switch)
 
-/// Posts a single gesture event pair (one "gesture" + one "dock control" event).
+/// Posts a single gesture event pair (one "gesture" + one "dock control" event)
+/// for one phase of a pre-27 space switch.
 ///
 /// Each gesture consists of two CGEvents posted back-to-back:
 ///   - A generic gesture event (`kCGSEventGesture`) that acts as an envelope
@@ -1876,9 +1888,10 @@ private func postAugmentedSwitchGesture(isRight: Bool, velocity: Double) -> Bool
 ///
 /// - Parameters:
 ///   - flagDirection: `0` for left, `1` for right.
-///   - phase: `kCGSGesturePhaseBegan` (1) or `kCGSGesturePhaseEnded` (4).
-///   - progress: How far the swipe has gone (only matters for Ended phase).
-///   - velocity: How fast the swipe is moving (only matters for Ended phase).
+///   - phase: `kCGSGesturePhaseBegan` (1), `kCGSGesturePhaseChanged` (2) or
+///     `kCGSGesturePhaseEnded` (4).
+///   - progress: How far the swipe has gone (Changed and Ended phases).
+///   - velocity: How fast the swipe is moving (Ended phase only).
 /// - Returns: `true` if the events were created and posted successfully.
 private func postGesturePair(flagDirection: Int64, phase: Int64,
                              progress: Double, velocity: Double) -> Bool {
@@ -1902,9 +1915,13 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
     // discarding the event as a no-op (it checks for zero and ignores it)
     dockEvent.setDoubleValueField(kCGEventGestureZoomDeltaX, value: Double(Float.leastNonzeroMagnitude))
 
-    // Velocity and progress only matter when the gesture ends —
-    // that's when the Dock decides whether to animate or snap instantly
-    if phase == kCGSGesturePhaseEnded {
+    // Progress on Changed tells WindowServer to build the destination
+    // space's surfaces (see `kChangedPhaseProgress`). Velocity and the
+    // committing progress go on Ended — that's when the Dock decides
+    // whether to animate or snap instantly.
+    if phase == kCGSGesturePhaseChanged {
+        dockEvent.setDoubleValueField(kCGEventGestureSwipeProgress, value: progress)
+    } else if phase == kCGSGesturePhaseEnded {
         dockEvent.setDoubleValueField(kCGEventGestureSwipeProgress,  value: progress)
         dockEvent.setDoubleValueField(kCGEventGestureSwipeVelocityX, value: velocity)
         dockEvent.setDoubleValueField(kCGEventGestureSwipeVelocityY, value: 0)
@@ -1921,9 +1938,11 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
     return true
 }
 
-/// Posts a complete Began+Ended gesture pair that triggers an instant space switch.
+/// Posts a complete Began+Changed+Ended gesture that triggers an instant space switch.
 ///
 /// The "Began" event tells the Dock a swipe started (with zero velocity).
+/// The "Changed" event carries one full step of travel so WindowServer
+/// builds the destination space's surfaces before the commit.
 /// The "Ended" event tells it the swipe finished with extreme velocity,
 /// which makes the Dock switch spaces instantly without animation.
 ///
@@ -1934,7 +1953,7 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
 /// - Parameters:
 ///   - direction: `-1` for left, `+1` for right.
 ///   - velocity: Magnitude of the Ended-phase velocity.
-/// - Returns: `true` if both gesture phases were posted successfully.
+/// - Returns: `true` if all gesture phases were posted successfully.
 func postSwitchGesture(direction: Int,
                        velocity: Double = currentSwitchVelocity(),
                        allowTimedStream: Bool = true) -> Bool {
@@ -1964,6 +1983,7 @@ func postSwitchGesture(direction: Int,
 
     let flagDirection: Int64 = isRight ? 1 : 0
     let progress             = isRight ? kInstantSwitchProgress : -kInstantSwitchProgress
+    let changedProgress      = isRight ? kChangedPhaseProgress : -kChangedPhaseProgress
     let signedVelocity       = isRight ? velocity : -velocity
 
     // Phase 1: Begin the swipe (zero velocity/progress — just a start signal)
@@ -1974,7 +1994,15 @@ func postSwitchGesture(direction: Int,
         velocity: 0
     )
 
-    // Phase 2: End the swipe with extreme values (triggers instant switch)
+    // Phase 2: One step of travel so the destination space gets composited
+    let changedOK = postGesturePair(
+        flagDirection: flagDirection,
+        phase: kCGSGesturePhaseChanged,
+        progress: changedProgress,
+        velocity: 0
+    )
+
+    // Phase 3: End the swipe with extreme values (triggers instant switch)
     let endedOK = postGesturePair(
         flagDirection: flagDirection,
         phase: kCGSGesturePhaseEnded,
@@ -1982,7 +2010,7 @@ func postSwitchGesture(direction: Int,
         velocity: signedVelocity
     )
 
-    return beganOK && endedOK
+    return beganOK && changedOK && endedOK
 }
 
 /// Posts N consecutive space-switch gestures in the given direction.
