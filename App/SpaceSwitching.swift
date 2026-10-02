@@ -72,6 +72,17 @@ private let kInstantTravelMagnitude: Double = 0.0001
 private let kAnimatedVelocityMin: Double = 40.0
 private let kAnimatedVelocityMax: Double = 80.0
 
+/// Whether the transition-speed slider is offered on this release.
+///
+/// macOS 27 does not honor the animated ticks reliably, so there every
+/// transition is instant: the slider is hidden and the persisted speed is
+/// ignored (but left untouched, so it is not lost to a downgrade).
+///
+/// - Returns: `true` through macOS 26.
+func supportsTransitionSpeedSetting() -> Bool {
+    !requiresEventAugmentation()
+}
+
 /// Whether switches should use macOS's native animation (slider at the
 /// "Normal" tick). At this setting Space Rabbit posts no gestures at all:
 /// the event tap passes shortcuts through and auto-follow stands down,

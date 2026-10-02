@@ -9,6 +9,10 @@
 - **Authors:** Yaël Guilloux (@tahul) and Valerian Saliou (@valeriansaliou)
 - **Website:** https://space-rabbit.app
 
+## Git workflow
+
+- **Always commit on `main`, don't create git branches.** (The default branch is `main`; there is no `master`.)
+
 ## What this project is
 
 A macOS menu bar utility that removes the slide animation when switching Spaces (virtual desktops). It makes space transitions instant.
@@ -255,6 +259,16 @@ The persisted slider value is normalized at launch to the supported
 `0.0...1.0` quarter-step ticks. Non-finite or corrupt values reset to Instant,
 preventing invalid velocities or animation durations from reaching either
 gesture path.
+
+**macOS 27+ is always Instant.** The animated ticks do not work reliably there,
+so `supportsTransitionSpeedSetting()` (false whenever `requiresEventAugmentation()`
+is true) hides the slider from the Features pane, and `SwoopMenu.init` forces
+`gSwitchSpeed = 1.0` *after* loading and normalizing the stored value. The stored
+`spacerabbit.switchSpeed` is deliberately left untouched, so a user who picked
+Normal or an animated tick on macOS 26 keeps that choice if they go back. Because
+`gSwitchSpeed` is never below 1.0 on 27, the Normal stand-downs, the cycle
+shortcut's "Normal" warning and the timed horizontal stream (item 4 under
+"macOS 27+ gesture augmentation") are all unreachable there.
 
 ### Optional Instant Mission Control (`SwipeIntercept.swift`, `EventTap.swift`)
 
@@ -875,7 +889,8 @@ SettingsWindowController (singleton, NSWindowDelegate)
        │    group of its own for the optional "Cycle spaces shortcut" recorder
        │    + enable switch, then Transition speed slider (5 ticks, snapping:
        │    Normal = native macOS animation / Fast / Faster / Fastest / right
-       │    end cap = "Instant", the default)
+       │    end cap = "Instant", the default; hidden on macOS 27+, which is
+       │    always Instant)
        ├─ AdvancedPaneController — Instant Dock hide (writes com.apple.dock
        │    autohide-time-modifier, killall Dock) + Show menu bar icon toggle
        │    (statusItem.isVisible; when hidden, relaunching the app reopens
@@ -1255,4 +1270,5 @@ local.env               — git-ignored; signing credentials
   macOS's continuous rubber-banding.
 - Synthetic DockSwipe gestures carry no display information — the Dock applies them to the display under the cursor. For a target space on a *different* display: at the "Instant" speed setting, `switchOnOtherDisplay` warps the cursor to that display, posts the gesture, and restores the cursor after `kCursorWarpRestoreDelay` (skipping the restore if the user moved it); at animated speeds it stands down and macOS's native animated switch handles it. Direct APIs are not an option (see the `CGSManagedDisplaySetCurrentSpace` warning above).
 - Uses undocumented CGEvent fields and private CGS symbols — may break on macOS updates. macOS 27 already did this once: it rejects bare synthetic DockSwipe events, requiring the augmented path (see "macOS 27+ gesture augmentation").
+- On macOS 27+ the transition-speed slider is hidden and every transition is instant (see "macOS 27+ is always Instant"); the timed-stream note that follows describes code that is now unreachable there.
 - On macOS 27+ the slider's animated ticks are produced by a timed progress stream rather than by terminal velocity, since that release's augmented recipe reaches the space boundary before it reads a velocity. The three ticks are timed (0.30/0.18/0.06 s) rather than calibrated against macOS's own transition, and multi-step auto-follow jumps traverse instantly at every tick.

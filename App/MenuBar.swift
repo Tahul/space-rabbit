@@ -127,6 +127,11 @@ final class SwoopMenu: NSObject {
         if !hasNumericSwitchSpeed || persistedSwitchSpeed != gSwitchSpeed {
             defaults.set(gSwitchSpeed, forKey: Defaults.switchSpeed)
         }
+        // macOS 27+ hides the slider and always switches instantly. The
+        // stored preference is deliberately not overwritten.
+        if !supportsTransitionSpeedSetting() {
+            gSwitchSpeed = 1.0
+        }
         gSwitchCount             = defaults.integer(forKey: Defaults.switchCount)
         gSwitchCountSaved        = gSwitchCount
 
