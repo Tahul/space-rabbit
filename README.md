@@ -6,6 +6,8 @@ Space Rabbit removes animations when switching macOS Spaces. Reclaim hours of yo
 
 ⬇️ **[Download Space Rabbit for macOS here](https://space-rabbit.app)**
 
+https://github.com/user-attachments/assets/6406b7f8-f70d-4ede-a553-485cba271600
+
 ## Features
 
 - ✅ **Instant space switch** - your keyboard shortcut switches spaces with zero animation
