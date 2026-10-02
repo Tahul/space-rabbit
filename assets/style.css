@@ -942,6 +942,23 @@ p.hero-sub {
   border: 1px solid var(--border);
 }
 
+/* Video author credit below the introduction video */
+.introduction-credit {
+  font-size: 12.5px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 14px;
+}
+
+.introduction-credit a {
+  color: inherit;
+  transition: color 0.15s;
+}
+
+.introduction-credit a:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+
 /* =====================================================================
    9. Features Section
    =====================================================================
@@ -1323,6 +1340,15 @@ body.light .section-eyebrow {
   color: #1c1c2e;
   background: rgba(0, 0, 0, 0.05);
   border-color: rgba(0, 0, 0, 0.10);
+}
+
+/* Introduction video credit in light mode */
+body.light .introduction-credit {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+body.light .introduction-credit a:hover {
+  color: rgba(0, 0, 0, 0.9);
 }
 
 /* Comparison panel card background */
