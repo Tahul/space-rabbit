@@ -551,6 +551,7 @@ p.hero-sub {
    ===================================================================== */
 
 .comparison,
+.introduction,
 .traybar,
 .features {
   /* Semi-transparent dark overlay with a subtle backdrop blur */
@@ -923,11 +924,17 @@ p.hero-sub {
    8. Tray Bar Section
    ===================================================================== */
 
+.introduction-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
 .traybar-inner {
   max-width: 900px;
   margin: 0 auto;
 }
 
+.introduction-video,
 .traybar-screenshot {
   display: block;
   width: 100%;
@@ -1300,6 +1307,7 @@ body.light .btn-download:active {
 
 /* Section backgrounds: nearly transparent white tint */
 body.light .comparison,
+body.light .introduction,
 body.light .traybar,
 body.light .features {
   background: #ffffff1a;
