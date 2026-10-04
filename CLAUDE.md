@@ -40,7 +40,7 @@ Exact initialization order — getting this wrong causes subtle bugs:
 7. `Timer` for `flushSwitchCount()` — every 300 seconds
 8. **Event tap creation** — `installEventTap()` (EventTap.swift) creates `gTap` (listens for `keyDown` only, source stored in `gTapSource`). `installAuxiliaryKeyboardTaps()` immediately adds the two on-demand companions carrying the other three event forms the cycle shortcut (including bare Fn) and the system Space bindings need — see "Three keyboard taps" under Feature 1. Failure of the primary tap is fatal; failure of an auxiliary one is logged and tolerated
 9. **Gesture-intercept tap** — `updateSwipeTap()` installs the shared tap pair if either persisted gesture toggle is on (must run after step 5, which loads the toggles; creation failure is non-fatal, unlike step 8)
-10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification`
+10. **SwoopObserver registration** — `didActivateApplicationNotification` + `activeSpaceDidChangeNotification` (the latter runs `guardEmptySpaceLanding()` first — see `EmptySpaceGuard.swift`)
 11. **Tap revival observers** — `NSWorkspace.didWakeNotification` + distributed `com.apple.screenIsUnlocked` → `reviveKeyboardTapsIfNeeded()` + `reviveSwipeTapIfNeeded()` (see "Event tap lifetime" under Feature 1); the step 7 timer runs the same checks as a safety net
 12. **Cleanup handler** — `willTerminateNotification`: flush stats, remove the three observers (`SwoopObserver`'s, plus the two revival ones from step 11 — the wake one via `NSWorkspace`, the unlock one via `DistributedNotificationCenter`), disable both taps
 13. **Signal handlers** — SIGINT/SIGTERM → `NSApp.terminate`

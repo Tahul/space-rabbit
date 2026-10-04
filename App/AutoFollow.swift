@@ -145,6 +145,11 @@ final class SwoopObserver: NSObject {
                         as? NSRunningApplication else { return }
         let pid = app.processIdentifier
 
+        // Space Rabbit activating itself is the empty-Space guard holding the
+        // user where they landed (EmptySpaceGuard.swift) — never a request to
+        // go anywhere. Following it would chase our own status-item window.
+        guard pid != ProcessInfo.processInfo.processIdentifier else { return }
+
         // Echo of the follow we just performed for this very app — ignore it
         // (see kAutoFollowEchoWindow). Any other app activating means the
         // user moved on, so the echo window ends there and then.

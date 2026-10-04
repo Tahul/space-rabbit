@@ -174,6 +174,11 @@ NSWorkspace.shared.notificationCenter.addObserver(
     forName: NSWorkspace.activeSpaceDidChangeNotification,
     object: nil, queue: .main
 ) { _ in
+    // Landing on a Space with no windows: take activation before macOS's
+    // pick can yank the user to another Space (issue #49). Runs first and
+    // synchronously — it is racing that yank.
+    guardEmptySpaceLanding()
+
     // A multi-step follow reports intermediate spaces first; only the
     // notification that actually lands on the destination counts as ours
     // and retires the record. Anything older than the grace window is
