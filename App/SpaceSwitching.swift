@@ -24,7 +24,7 @@ import Foundation
 /// Space type bitmask passed to `SLSCopySpacesForWindows`.
 /// Value 7 means "all space types" (user spaces, fullscreen, etc.).
 /// This is an undocumented constant from the private SkyLight framework.
-private let kSLSSpaceTypeAll: Int32 = 7
+let kSLSSpaceTypeAll: Int32 = 7
 
 /// Absolute swipe progress value that tells the Dock the swipe is
 /// fully committed (i.e. the user has dragged all the way through).
