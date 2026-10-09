@@ -1153,11 +1153,6 @@ final class FeaturesPaneController: SettingsPaneViewController {
                         control: makeSpeedControl()),
         ])
         updateCycleShortcutAvailability()
-        // macOS 27+ always switches instantly (see
-        // supportsTransitionSpeedSetting()), so the slider is not offered there.
-        guard supportsTransitionSpeedSetting() else {
-            return [togglesGroup, cycleGroup]
-        }
         return [togglesGroup, cycleGroup, speedGroup]
     }
 

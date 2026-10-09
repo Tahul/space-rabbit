@@ -919,7 +919,7 @@ private func reverseMissionControlTransitionIfNeeded(proxy: CGEventTapProxy,
 /// Real trackpad DockSwipe events report horizontal progress/velocity with
 /// positive = right on every macOS release this app runs on. macOS 27
 /// (including build 26A5388g) inverts only the POSTING-side convention
-/// (`makeAugmentedDockEvent` in SpaceSwitching.swift): the augmented
+/// (`postAugmentedHorizontalFlick` in SpaceSwitching.swift): the augmented
 /// synthetic events the Dock accepts carry negative signs for rightward
 /// movement. That inversion does NOT extend to real events — assuming it
 /// does makes `isRightSwipe` read every physical swipe backwards, so a

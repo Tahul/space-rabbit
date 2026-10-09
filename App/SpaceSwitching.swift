@@ -59,7 +59,7 @@ private let kIOHIDSwipeDown: Int64 = 2
 /// section.
 private let kAugmentedInstantVelocity: Double = 9999.0
 
-/// Progress magnitude of every phase of an Instant macOS 27 horizontal gesture.
+/// Near-zero travel used by macOS 27 horizontal flicks.
 /// Near zero so no intermediate frame is drawn, but well above the 16.16
 /// payload's smallest step so the direction survives serialization.
 private let kInstantTravelMagnitude: Double = 0.0001
@@ -71,17 +71,6 @@ private let kInstantTravelMagnitude: Double = 0.0001
 /// velocities well above that band as instant.
 private let kAnimatedVelocityMin: Double = 40.0
 private let kAnimatedVelocityMax: Double = 80.0
-
-/// Whether the transition-speed slider is offered on this release.
-///
-/// macOS 27 does not honor the animated ticks reliably, so there every
-/// transition is instant: the slider is hidden and the persisted speed is
-/// ignored (but left untouched, so it is not lost to a downgrade).
-///
-/// - Returns: `true` through macOS 26.
-func supportsTransitionSpeedSetting() -> Bool {
-    !requiresEventAugmentation()
-}
 
 /// Whether switches should use macOS's native animation (slider at the
 /// "Normal" tick). At this setting Space Rabbit posts no gestures at all:
@@ -1238,22 +1227,6 @@ private let kMissionControlAnimationFPS: Double = 120.0
 private let kMissionControlAnimationDurationSlow: TimeInterval = 0.24
 private let kMissionControlAnimationDurationFast: TimeInterval = 0.08
 
-/// Duration endpoints for the *horizontal* timed stream on macOS 27+, which is
-/// where that release's animated slider ticks are produced. Pre-27 releases
-/// never use this band: their horizontal animated ticks go through the legacy
-/// terminal-velocity recipe, and the only pre-27 caller of the timed stream is
-/// the in-overview carousel, which keeps the vertical endpoints.
-///
-/// A wider band than the vertical one on purpose. The vertical endpoints put
-/// the three ticks 0.04 s apart, which is below what the eye resolves on a
-/// space slide — measured on 26A428, Fast, Faster and Fastest were
-/// indistinguishable from each other. These endpoints spread the same three
-/// ticks across 0.30 / 0.18 / 0.06 s, between macOS's own transition and the
-/// instant jump at the right end cap. The 0.06 s fast end is the shortest ramp
-/// that still reads as a clean slide rather than a jump — chosen by eye on
-/// 26A428, where it looked cleaner than the one-shot boundary jump.
-private let kHorizontalAnimationDurationSlow: TimeInterval = 0.30
-private let kHorizontalAnimationDurationFast: TimeInterval = 0.06
 private let kMissionControlAnimationQueue = DispatchQueue(
     label: "app.spacerabbit.mission-control-animation",
     qos: .userInteractive
@@ -1267,16 +1240,6 @@ private func missionControlAnimationDuration(for velocity: Double) -> TimeInterv
     animationDuration(for: velocity,
                       slow: kMissionControlAnimationDurationSlow,
                       fast: kMissionControlAnimationDurationFast)
-}
-
-/// Maps the same velocity band to the horizontal timed stream's duration.
-///
-/// - Parameter velocity: The slider's resolved velocity.
-/// - Returns: How long the ramp should take.
-private func horizontalAnimationDuration(for velocity: Double) -> TimeInterval {
-    animationDuration(for: velocity,
-                      slow: kHorizontalAnimationDurationSlow,
-                      fast: kHorizontalAnimationDurationFast)
 }
 
 /// Linear interpolation of the shared velocity band onto a duration range.
@@ -1386,7 +1349,7 @@ private func makeMissionControlDockEvent(phase: Int64,
     return event
 }
 
-/// Builds and IOHID-augments one complete vertical event, then marks the
+/// Builds and IOHID-augments one complete DockSwipe event, then marks the
 /// rebuilt result so the shared swipe tap recognizes it as synthetic.
 private func prepareMissionControlDockEvent(phase: Int64,
                                             motion: Int64,
@@ -1416,14 +1379,6 @@ private func prepareMissionControlAnimationTerminal(
     direction: Int,
     augmented: Bool
 ) -> MissionControlTerminalEvents? {
-    // On the horizontal axis of an augmented release the stream's own ramp is
-    // the whole visible transition, so it must end committed at instant
-    // velocity: ending near zero invites macOS 27 to run its own settle
-    // animation on top, which swallows the ramp and makes every animated tick
-    // look exactly like no interception at all. Vertical transitions and the
-    // pre-27 carousel keep the epsilon terminal they were calibrated with.
-    let terminalVelocity = augmented && motion == kGestureMotionHorizontal
-        ? kAugmentedInstantVelocity : kMissionControlEpsilon
     guard let changed = prepareMissionControlDockEvent(
         phase: kCGSGesturePhaseChanged,
         motion: motion,
@@ -1435,7 +1390,7 @@ private func prepareMissionControlAnimationTerminal(
         motion: motion,
         direction: direction,
         progressMagnitude: 1,
-        velocityMagnitude: terminalVelocity,
+        velocityMagnitude: kMissionControlEpsilon,
         augmented: augmented
     ) else { return nil }
 
@@ -1621,11 +1576,10 @@ func postMissionControlTransition(proxy: CGEventTapProxy,
 /// Posts a controlled horizontal gesture that moves the Mission Control
 /// overview's space carousel.
 ///
-/// The desktop's horizontal recipe (`postSwitchGesture`) cannot be reused here:
-/// the overview evaluates a fully-committed boundary jump against its own state,
-/// so the screen blanks and lands back where it started (issue #16). The
-/// segmented Began → progress → Ended stream the vertical Mission Control path
-/// already uses drives the carousel instead, on the axis the overview navigates.
+/// On macOS 27, the carousel uses the same near-zero-travel flick as the
+/// desktop. Earlier releases retain the segmented progress stream: a
+/// fully-committed desktop boundary jump blanks the overview and returns to
+/// its starting space (issue #16).
 ///
 /// - Parameters:
 ///   - proxy: The active swipe-intercept tap proxy.
@@ -1664,10 +1618,8 @@ func postOverviewSpaceJump(proxy: CGEventTapProxy, to target: CGSSpaceID) -> Spa
 
 /// Shared implementation behind both controlled Dock-driven transitions.
 ///
-/// Animated ticks advance progress asynchronously over a duration derived from
-/// the shared speed control. Instant keeps the proven back-to-back boundary
-/// jump with hardened terminal velocity. These events carry field 4205 on
-/// macOS 26 as well; macOS 27 additionally receives its mirrored fields.
+/// Horizontal macOS 27 transitions use a native flick. Other controlled
+/// transitions retain their timed progress stream or instant boundary jump.
 ///
 /// - Parameters:
 ///   - proxy: The active swipe-intercept tap proxy.
@@ -1677,21 +1629,20 @@ func postOverviewSpaceJump(proxy: CGEventTapProxy, to target: CGSSpaceID) -> Spa
 ///            successfully started; otherwise `false` without claiming it.
 private func postControlledDockSwipe(proxy: CGEventTapProxy?,
                                      motion: Int64,
-                                     direction: Int,
-                                     velocityOverride: Double? = nil) -> Bool {
+                                     direction: Int) -> Bool {
     guard direction == -1 || direction == 1,
           !isNativeSwitchSpeed() else { return false }
 
-    let velocity = velocityOverride ?? currentSwitchVelocity()
+    let velocity = currentSwitchVelocity()
     let needsAugmentation = requiresEventAugmentation()
 
+    if motion == kGestureMotionHorizontal, needsAugmentation {
+        return postAugmentedHorizontalFlick(direction: direction, velocity: velocity, proxy: proxy)
+    }
+
     if velocity < kInstantSwitchVelocity {
-        // The wider band belongs to the macOS 27 horizontal path only. Pre-27
-        // releases reach this stream solely for the in-overview carousel,
-        // which was calibrated against the vertical endpoints — leave it be.
-        let duration = motion == kGestureMotionHorizontal && needsAugmentation
-            ? horizontalAnimationDuration(for: velocity)
-            : missionControlAnimationDuration(for: velocity)
+        let duration = missionControlAnimationDuration(for: velocity)
+
         return postAnimatedMissionControlTransition(
             proxy: proxy,
             motion: motion,
@@ -1705,18 +1656,12 @@ private func postControlledDockSwipe(proxy: CGEventTapProxy?,
                   kCGSGesturePhaseEnded]
     var events = [CGEvent]()
 
-    // The macOS 27 in-overview carousel takes the same near-zero-travel recipe
-    // as the desktop (see makeAugmentedDockEvent): full Changed travel flickers
-    // there too.
-    let nearZeroTravel = motion == kGestureMotionHorizontal && needsAugmentation
-
     for phase in phases {
         guard let event = prepareMissionControlDockEvent(
             phase: phase,
             motion: motion,
             direction: direction,
-            progressMagnitude: nearZeroTravel ? kInstantTravelMagnitude
-                : (phase == kCGSGesturePhaseBegan ? kMissionControlEpsilon : 1),
+            progressMagnitude: phase == kCGSGesturePhaseBegan ? kMissionControlEpsilon : 1,
             velocityMagnitude: phase == kCGSGesturePhaseEnded
                 ? kAugmentedInstantVelocity : nil,
             augmented: needsAugmentation
@@ -1764,94 +1709,58 @@ private func augmentedHorizontalSign(isRight: Bool) -> Double {
                                      : (isRight ? 1.0 : -1.0)
 }
 
-/// Creates one phase of the macOS 27 dock swipe, with the extra fields
-/// the 27 Dock validates (phase mirror, flavor, timestamp, non-zero
-/// position). Progress/velocity signs follow the build- and
-/// preference-dependent convention, sampled once for the whole gesture.
-///
-/// - Parameters:
-///   - phase: `kCGSGesturePhaseBegan`, `...Changed`, or `...Ended`.
-///   - isRight: `true` to move to the next space (right).
-///   - velocity: Velocity magnitude applied on the Ended phase.
-///   - sign: `augmentedHorizontalSign(isRight:)`, sampled once per gesture.
-/// - Returns: The dock control event (not yet augmented), or `nil`.
-private func makeAugmentedDockEvent(phase: Int64, isRight: Bool,
-                                    velocity: Double, sign fullSign: Double) -> CGEvent? {
-    guard let ev = CGEvent(source: nil) else { return nil }
-
-    // Instant commits through terminal velocity alone, with near-zero travel
-    // in every phase. Full travel on Changed exposed a brief intermediate
-    // sliding frame on macOS 27 (a visible flicker). The magnitude must stay
-    // representable in the 16.16 IOHID payload: zero would drop the direction.
-    // Slower ticks keep the epsilon-Began, full-travel recipe; committing full
-    // travel on Began too made macOS 27 act on the gesture twice.
-    let progressMagnitude = velocity >= kAugmentedInstantVelocity
-        ? kInstantTravelMagnitude
-        : (phase == kCGSGesturePhaseBegan ? kMissionControlEpsilon : 1.0)
-    let sign = fullSign * progressMagnitude
-
-    ev.setIntegerValueField(kCGSEventTypeField,          value: kCGSEventDockControl)
-    ev.setIntegerValueField(kCGEventGestureHIDType,      value: kIOHIDEventTypeDockSwipe)
-    ev.setIntegerValueField(kCGEventGesturePhase,        value: phase)
-    ev.setDoubleValueField(kCGEventGestureSwipeProgress, value: sign)
-    ev.setIntegerValueField(kCGEventGestureSwipeMotion,  value: kGestureMotionHorizontal)
-    ev.setIntegerValueField(kCGEventGesturePhase2,       value: phase)
-    ev.setDoubleValueField(kCGEventGestureFlavor,        value: Double(kIOHIDGestureFlavorDockPrimary))
-    ev.setDoubleValueField(kCGEventGestureTimestamp,     value: Double(mach_absolute_time()))
-    ev.setDoubleValueField(kCGEventGesturePositionX,     value: 0.1)
-
-    if phase == kCGSGesturePhaseEnded {
-        ev.setDoubleValueField(kCGEventGestureSwipeVelocityX,
-                               value: fullSign * velocity)
+/// Prepares a near-zero horizontal swipe for macOS 27 without posting it.
+/// All phases are built before posting so allocation or augmentation failure
+/// cannot leave the Dock with an open gesture. Animated releases retain the
+/// requested velocity; Instant uses the macOS 27 terminal velocity.
+func prepareAugmentedHorizontalFlick(direction: Int, velocity: Double) -> [CGEvent]? {
+    guard (direction == -1 || direction == 1), velocity.isFinite, velocity > 0 else {
+        return nil
     }
-    return ev
+
+    let instant = velocity >= kInstantSwitchVelocity
+    let releaseVelocity = instant ? kAugmentedInstantVelocity : velocity
+    let phases = [kCGSGesturePhaseBegan, kCGSGesturePhaseChanged, kCGSGesturePhaseEnded]
+    var events = [CGEvent]()
+
+    for phase in phases {
+        let progress = !instant && phase == kCGSGesturePhaseBegan
+            ? kMissionControlEpsilon : kInstantTravelMagnitude
+
+        guard let event = prepareMissionControlDockEvent(
+            phase: phase,
+            motion: kGestureMotionHorizontal,
+            direction: direction,
+            progressMagnitude: progress,
+            velocityMagnitude: phase == kCGSGesturePhaseEnded ? releaseVelocity : nil,
+            augmented: true
+        ) else {
+            return nil
+        }
+
+        events.append(event)
+    }
+
+    return events
 }
 
-/// Posts a complete augmented Began+Changed+Ended swipe sequence — the
-/// macOS 27 equivalent of `postSwitchGesture`'s legacy Began+Ended pair.
-///
-/// All three events are built (and augmented) up front so a mid-sequence
-/// allocation failure posts nothing at all — a Began without its Ended
-/// would leave the Dock's gesture state half-open.
-///
-/// - Parameters:
-///   - isRight: `true` to move to the next space (right).
-///   - velocity: Velocity magnitude requested by the caller. Values in
-///     the legacy instant range map to `kAugmentedInstantVelocity`;
-///     animated-range values pass through unchanged (best effort — the
-///     animated band is uncalibrated on macOS 27).
-/// - Returns: `true` if the full sequence was posted.
-private func postAugmentedSwitchGesture(isRight: Bool, velocity: Double) -> Bool {
-    let magnitude = velocity >= kInstantSwitchVelocity
-        ? kAugmentedInstantVelocity : velocity
-
-    let phases = [kCGSGesturePhaseBegan, kCGSGesturePhaseChanged, kCGSGesturePhaseEnded]
-    var events = [(dock: CGEvent, gesture: CGEvent)]()
-
-    let sign = augmentedHorizontalSign(isRight: isRight)
-    for phase in phases {
-        guard let dockEvent = makeAugmentedDockEvent(phase: phase, isRight: isRight,
-                                                     velocity: magnitude, sign: sign)
-        else { return false }
-
-        guard let augmented    = augmentDockSwipeEvent(dockEvent),
-              let gestureEvent = CGEvent(source: nil)
-        else { return false }
-
-        // CGEventCreateFromData does not preserve eventSourceUserData, so
-        // stamp the rebuilt event before posting it through the swipe tap.
-        markSyntheticGesture(augmented)
-
-        // The companion gesture envelope needs no augmentation
-        gestureEvent.setIntegerValueField(kCGSEventTypeField, value: kCGSEventGesture)
-        markSyntheticGesture(gestureEvent)
-        events.append((augmented, gestureEvent))
+/// Immediately releases a near-zero horizontal swipe so macOS owns the whole
+/// animation, avoiding a timed progress ramp and its abrupt terminal handoff.
+/// Shortcuts, trackpad interception, and app following share this gesture.
+/// An active tap proxy preserves ordering for intercepted input.
+private func postAugmentedHorizontalFlick(direction: Int,
+                                          velocity: Double,
+                                          proxy: CGEventTapProxy? = nil) -> Bool {
+    guard let events = prepareAugmentedHorizontalFlick(direction: direction, velocity: velocity) else {
+        return false
     }
 
-    for (dock, gesture) in events {
-        dock.post(tap: .cgSessionEventTap)
-        gesture.post(tap: .cgSessionEventTap)
+    finishAnimatedMissionControlTransitionIfNeeded(proxy: proxy)
+
+    for event in events {
+        postDockSwipeEvent(event, proxy: proxy)
     }
+
     return true
 }
 
@@ -1928,7 +1837,7 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
 /// which makes the Dock switch spaces instantly without animation.
 ///
 /// On macOS 27 and later, routes to the augmented Began+Changed+Ended
-/// sequence instead — the Dock there rejects bare synthetic gestures
+/// flick instead — the Dock there rejects bare synthetic gestures
 /// (see the "macOS 27 Gesture Augmentation" section above).
 ///
 /// - Parameters:
@@ -1936,8 +1845,7 @@ private func postGesturePair(flagDirection: Int64, phase: Int64,
 ///   - velocity: Magnitude of the Ended-phase velocity.
 /// - Returns: `true` if both gesture phases were posted successfully.
 func postSwitchGesture(direction: Int,
-                       velocity: Double = currentSwitchVelocity(),
-                       allowTimedStream: Bool = true) -> Bool {
+                       velocity: Double = currentSwitchVelocity()) -> Bool {
     guard (direction == -1 || direction == 1),
           !isNativeSwitchSpeed(),
           velocity > 0 else { return false }
@@ -1945,21 +1853,7 @@ func postSwitchGesture(direction: Int,
     let isRight              = direction > 0
 
     if requiresEventAugmentation() {
-        // macOS 27 ignores the Ended-phase velocity here: the augmented recipe
-        // commits progress fully (±1.0) on every phase, so the Dock has already
-        // reached the boundary by the time it reads a velocity — every animated
-        // slider tick lands as an instant jump and the middle of the slider
-        // collapses onto its right end. The timed progress stream that drives
-        // Mission Control and the in-overview carousel does not have that
-        // problem, so the animated band goes out through it instead.
-        if allowTimedStream, velocity < kInstantSwitchVelocity {
-            return postControlledDockSwipe(proxy: nil,
-                                           motion: kGestureMotionHorizontal,
-                                           direction: direction,
-                                           velocityOverride: velocity)
-        }
-
-        return postAugmentedSwitchGesture(isRight: isRight, velocity: velocity)
+        return postAugmentedHorizontalFlick(direction: direction, velocity: velocity)
     }
 
     let flagDirection: Int64 = isRight ? 1 : 0
@@ -1988,7 +1882,8 @@ func postSwitchGesture(direction: Int,
 /// Posts N consecutive space-switch gestures in the given direction.
 ///
 /// Used by auto-follow when the target space is more than one step away.
-/// Velocity is scaled by `steps` so the Dock snaps straight to the target
+/// On macOS 27, multi-space jumps use Instant; elsewhere velocity is scaled
+/// by `steps` so the Dock snaps straight to the target
 /// rather than animating between intermediate spaces on long jumps.
 /// Stops early if any gesture fails (e.g. CGEvent allocation failure).
 ///
@@ -1996,16 +1891,15 @@ func postSwitchGesture(direction: Int,
 ///   - direction: `-1` for left, `+1` for right.
 ///   - steps: How many spaces to traverse.
 private func switchNSpaces(direction: Int, steps: Int) {
-    let velocity = currentSwitchVelocity() * Double(steps)
-    // A multi-step jump posts one gesture per step. The timed stream is a
-    // single animation at a time — a second start cancels the first — so
-    // multi-step jumps keep the fully-committed recipe and traverse instantly,
-    // exactly as they did before the animated band was rerouted.
-    let timed = steps == 1
-    for i in 0..<steps
-    where !postSwitchGesture(direction: direction, velocity: velocity,
-                             allowTimedStream: timed) {
-        fputs("Space Rabbit: gesture failed at step \(i + 1)/\(steps)\n", stderr)
-        break
+    // Distant jumps retain instant traversal; animated flicks are one-space moves.
+    let velocity = requiresEventAugmentation() && steps > 1
+        ? kInstantSwitchVelocity : currentSwitchVelocity() * Double(steps)
+
+    for i in 0..<steps {
+        if !postSwitchGesture(direction: direction, velocity: velocity) {
+            fputs("Space Rabbit: gesture failed at step \(i + 1)/\(steps)\n", stderr)
+
+            break
+        }
     }
 }

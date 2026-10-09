@@ -56,9 +56,15 @@ VERSION   ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
 build: $(BIN) verify-macos-min verify-localizations
 
-# Pure logic tests; they never touch the desktop.
-.PHONY: test test-mc-guard
-test: test-mc-guard
+# Logic and event-construction tests; they never post events to the desktop.
+.PHONY: test test-mc-guard test-horizontal-flick
+test: test-mc-guard test-horizontal-flick
+
+test-horizontal-flick:
+	@mkdir -p .build/tests
+	$(SWIFTC) $(SWIFTFLAGS) -target $(SWIFT_TARGET) -o .build/tests/horizontal-flick \
+		$(filter-out App/main.swift,$(SRCS)) Tests/HorizontalFlick/main.swift $(LDFLAGS)
+	@.build/tests/horizontal-flick
 
 test-mc-guard:
 	@mkdir -p .build/tests
